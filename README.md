@@ -14,6 +14,23 @@ breakdown.
 
 ---
 
+## Further reading
+
+- [`docs/QUICKSTART.md`](./docs/QUICKSTART.md) — bring the repo up
+  locally in five minutes: install, Postgres + Redis, test suites,
+  env-var matrix.
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — the four
+  design principles (BullMQ-as-runtime, DB-first state, step /
+  partition granularity, business vs technical retry) and the
+  tests that enforce them.
+- [`docs/FAQ.md`](./docs/FAQ.md) — common questions (Drizzle,
+  TypeORM 0.3, chunking ownership, JobExecution canonical store,
+  scheduling).
+- [`MIGRATION.md`](./MIGRATION.md) — breaking changes and the
+  explicit "what is NOT in this release" list.
+
+---
+
 ## The `@nest-batch/*` package family
 
 ```
@@ -93,6 +110,12 @@ their own per-package config) for testing.
 
 ## Local development setup
 
+> Looking for the **full** runbook (test commands, e2e suites, env
+> var matrix)? See
+> [`docs/QUICKSTART.md`](./docs/QUICKSTART.md). The section below
+> covers the install + services + migrations path needed to boot
+> the demo; the runbook covers the test suites too.
+
 ### 1. Install dependencies
 
 ```bash
@@ -120,10 +143,12 @@ demo app and the integration tests connect to these.
 ### 3. Run the migrations
 
 The MikroORM migrations ship inside `@nest-batch/mikro-orm` and
-need to be applied to the test database:
+are applied by the demo app's `migration:up` script (which loads
+`@nest-batch/mikro-orm`'s `createBatchMikroOrmConfig` helper
+internally):
 
 ```bash
-pnpm --filter @nest-batch/mikro-orm migration:up
+pnpm --filter @nest-batch/demo migration:up
 ```
 
 The TypeORM migration is bundled with `@nest-batch/typeorm` and is
@@ -296,7 +321,11 @@ of the lifecycle is driven by the worker.
 
 ```bash
 pnpm --filter @nest-batch/demo start
-curl -X POST http://localhost:3000/jobs/import-products
+# In a second terminal, trigger a launch. The body MUST contain a
+# `file` field; the demo's CSV reader uses it as the input path.
+curl -X POST http://localhost:3000/jobs/import-products \
+  -H 'content-type: application/json' \
+  -d '{"file":"sample-data/products-valid.csv"}'
 ```
 
 ---
