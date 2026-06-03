@@ -8,8 +8,6 @@ import type { RawProductRow } from '../reader/csv-product.reader';
 @Injectable()
 export class ProductProcessor implements ItemProcessor<RawProductRow, ProductEntity | null> {
   async process(item: RawProductRow): Promise<ProductEntity | null> {
-    // eslint-disable-next-line no-console
-    console.log('[DEBUG] processor: item=', typeof item, item instanceof Object ? JSON.stringify(Object.keys(item)) : item);
     // Validate
     if (!item.name || item.name.trim() === '') {
       throw new InvalidProductError('name', item.name ?? '', 'Name is required');

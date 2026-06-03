@@ -238,14 +238,10 @@ export class ChunkStepExecutor {
         // checkpoint reflects "we successfully moved past this chunk",
         // and we only reach this line after the write completed
         // (either OK or skipped — both are forward progress).
-        // eslint-disable-next-line no-console
-        console.log(`[DEBUG] chunk-executor: about to save checkpoint chunkIndex=${chunkIndex}`);
         await context.jobRepository.saveExecutionContext(
           { stepExecutionId: context.stepExecutionId },
           { data: { lastChunkIndex: chunkIndex }, version: 0 },
         );
-        // eslint-disable-next-line no-console
-        console.log(`[DEBUG] chunk-executor: checkpoint saved`);
 
         commitCount += 1;
         chunkIndex += 1;
@@ -320,7 +316,6 @@ export class ChunkStepExecutor {
               throw new SkipLimitExceededError(options.skipLimit);
             }
             await options.onSkip(err);
-            console.log('[DBG-RP] about to return skipped');
             return { kind: 'skipped' };
           }
           // Not in the skippable list — fall through to retry/throw.
