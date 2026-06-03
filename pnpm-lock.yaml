@@ -64,7 +64,7 @@ importers:
         version: 6.6.14(@mikro-orm/core@6.6.14)
       '@nest-batch/core':
         specifier: workspace:*
-        version: link:../../packages/nest-batch
+        version: link:../../packages/core
       '@nestjs/common':
         specifier: ^11.0.0
         version: 11.1.24(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -127,7 +127,7 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.19)
 
-  packages/nest-batch:
+  packages/core:
     dependencies:
       '@nestjs/common':
         specifier: ^11.0.0
