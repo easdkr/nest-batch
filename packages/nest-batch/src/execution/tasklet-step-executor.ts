@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { TaskletStepDefinition, ListenerDefinition } from '../core/ir';
+import { RefKind } from '../core/ir';
 import type { Tasklet, TaskletContext } from '../core/item';
 import type {
   JobRepository,
@@ -10,6 +11,7 @@ import type {
 import type { TransactionManager } from '../core/transaction';
 import { StepStatus, JobStatus } from '../core/status';
 import { ListenerInvoker, type ListenerResolver } from './listener-invoker';
+import { resolveProviderToken, type ProviderResolvers } from './ref-resolver';
 
 /**
  * Bundled dependencies + state for a single `TaskletStepExecutor.execute()` call.
@@ -22,6 +24,9 @@ export interface TaskletExecutionContext {
   listenerInvoker: ListenerInvoker;
   /** Map from ListenerRef key (`phase:name`) to actual function. */
   listenerResolvers: Map<string, ListenerResolver>;
+  /** Optional map of provider-token id → already-resolved provider instance
+   *  for `RefKind.ProviderToken` tasklet refs. */
+  providerResolvers?: ProviderResolvers;
 }
 
 /**
@@ -141,18 +146,20 @@ export class TaskletStepExecutor {
   /**
    * Resolve a `TaskletRef` to a `Tasklet` instance.
    *
-   * Supported kinds for Task 17 (Wave 3 MVP):
-   *   - `builder-lambda` — `taskletRef.fn` is the bound tasklet function.
+   * Supported kinds:
+   *   - `builder-lambda`  — `taskletRef.fn` is the bound tasklet function.
+   *   - `provider-token`  — looked up in `context.providerResolvers` against
+   *                         `taskletRef.token`. The bound instance must
+   *                         expose an `execute(ctx)` method.
    *
-   * Method/provider-token kinds are NOT resolved here; the JobExecutor (Task 20)
-   * pre-resolves them via the listenerResolvers map or by injecting an instance
-   * from the NestJS DI container, then wraps them in a `builder-lambda` ref.
+   * Method refs are pre-resolved by the caller and wrapped in a
+   * `builder-lambda` ref before reaching this executor.
    */
   private resolveTasklet(
-    taskletRef: { kind: string; fn?: ListenerResolver; classToken?: string; methodName?: string },
-    _context: TaskletExecutionContext,
+    taskletRef: { kind: string; token?: string; fn?: ListenerResolver; classToken?: string; methodName?: string },
+    context: TaskletExecutionContext,
   ): Tasklet {
-    if (taskletRef.kind === 'builder-lambda' && taskletRef.fn) {
+    if (taskletRef.kind === RefKind.BuilderLambda && taskletRef.fn) {
       const result = taskletRef.fn();
       if (typeof result === 'function') {
         return { execute: result as Tasklet['execute'] };
@@ -161,6 +168,9 @@ export class TaskletStepExecutor {
         return result as Tasklet;
       }
       return { execute: taskletRef.fn as Tasklet['execute'] };
+    }
+    if (taskletRef.kind === RefKind.ProviderToken) {
+      return resolveProviderToken<Tasklet>('tasklet', taskletRef, context.providerResolvers);
     }
     throw new Error(`Tasklet resolution not supported for ref kind: ${taskletRef.kind}`);
   }

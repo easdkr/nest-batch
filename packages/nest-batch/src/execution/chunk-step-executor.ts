@@ -12,6 +12,7 @@ import { compileRetryPolicy } from '../policies/retry-policy';
 import { SkipLimitExceededError, RetryLimitExceededError } from '../core/errors';
 import type { ResolverMap } from './listener-invoker';
 import { ListenerInvoker } from './listener-invoker';
+import { resolveProviderToken, type ProviderResolvers } from './ref-resolver';
 
 export interface ChunkExecutionContext {
   jobExecutionId: string;
@@ -26,6 +27,13 @@ export interface ChunkExecutionContext {
   jobExecutionId2: string; // unique key for listener resolver namespacing
   /** Optional skip listener resolver map. Keys follow the `on-skip:<kind>:<name>` shape. */
   skipListenerResolvers?: ResolverMap;
+  /**
+   * Optional map of provider-token id → already-resolved provider instance.
+   * Populated by the JobExecutor (or test fixtures) so that
+   * `RefKind.ProviderToken` refs on the reader/processor/writer slots can
+   * be looked up without coupling the executor to the Nest DI container.
+   */
+  providerResolvers?: ProviderResolvers;
   /**
    * When set, the executor skips any chunk whose 0-based index is less
    * than or equal to this value. The reader is still advanced by
@@ -86,9 +94,6 @@ export class ChunkStepExecutor {
   ): Promise<ChunkExecutionResult> {
     const skipPolicy = step.skipPolicy ? compileSkipPolicy(step.skipPolicy) : null;
     const retryPolicy = step.retryPolicy ? compileRetryPolicy(step.retryPolicy) : null;
-    const reader = this.resolveReader(step.reader, context);
-    const processor = step.processor ? this.resolveProcessor(step.processor, context) : null;
-    const writer = this.resolveWriter(step.writer, context);
     const skipResolvers: ResolverMap = context.skipListenerResolvers ?? new Map();
 
     const skipLimit = step.skipPolicy?.limit ?? 0;
@@ -104,6 +109,12 @@ export class ChunkStepExecutor {
     let chunkIndex = 0;
 
     try {
+      // Resolve inside the try block so a missing provider-token ref
+      // surfaces as FAILED/{exitMessage: <err>}, matching the tasklet
+      // executor's contract — not as a propagated throw.
+      const reader = this.resolveReader(step.reader, context);
+      const processor = step.processor ? this.resolveProcessor(step.processor, context) : null;
+      const writer = this.resolveWriter(step.writer, context);
       // Outer loop: keep reading chunks until reader returns null
       // eslint-disable-next-line no-constant-condition
       while (true) {
@@ -369,6 +380,9 @@ export class ChunkStepExecutor {
       }
       return { read: ref.fn as ItemReader['read'] };
     }
+    if (ref.kind === RefKind.ProviderToken) {
+      return resolveProviderToken<ItemReader>('reader', ref, context.providerResolvers);
+    }
     if (ref.kind === RefKind.Method && ref.classToken && ref.methodName) {
       const key = `${context.jobExecutionId2}::reader::${ref.classToken}::${ref.methodName}`;
       const fn = context.resolvers.get(key);
@@ -389,6 +403,9 @@ export class ChunkStepExecutor {
       }
       return { process: ref.fn as ItemProcessor['process'] };
     }
+    if (ref.kind === RefKind.ProviderToken) {
+      return resolveProviderToken<ItemProcessor>('processor', ref, context.providerResolvers);
+    }
     if (ref.kind === RefKind.Method && ref.classToken && ref.methodName) {
       const key = `${context.jobExecutionId2}::processor::${ref.classToken}::${ref.methodName}`;
       const fn = context.resolvers.get(key);
@@ -408,6 +425,9 @@ export class ChunkStepExecutor {
         return result as ItemWriter;
       }
       return { write: ref.fn as ItemWriter['write'] };
+    }
+    if (ref.kind === RefKind.ProviderToken) {
+      return resolveProviderToken<ItemWriter>('writer', ref, context.providerResolvers);
     }
     if (ref.kind === RefKind.Method && ref.classToken && ref.methodName) {
       const key = `${context.jobExecutionId2}::writer::${ref.classToken}::${ref.methodName}`;
