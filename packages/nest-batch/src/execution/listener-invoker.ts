@@ -211,23 +211,32 @@ export class ListenerInvoker {
   }
 
   // -------------------------------------------------------------------------
-  // Legacy (Task 17) convenience methods — preserved for backward compat
+  // Legacy (Task 17) convenience methods — preserved for backward compat.
+  // They now delegate to the current (Task 20) API by converting the legacy
+  // `Map<string, ListenerResolver>` shape into a `ResolverMap` and routing
+  // through the shared `invokeMatching` internal path. One source of truth
+  // for listener dispatch, two public surfaces.
   // -------------------------------------------------------------------------
 
   /**
    * Invoke all `before-step:*` resolvers in Map insertion order. Operates on
    * the legacy `Map<string, ListenerResolver>` shape; the current
    * `invokeBefore(resolvers, 'step', ...)` should be preferred for new code.
+   *
+   * Implementation: convert the legacy `before-step:*` entries into the new
+   * `before:step:*` shape and delegate to `invokeBefore` so the dispatch /
+   * `nonCritical` policy is shared with the rest of the invoker.
    */
   async invokeBeforeStep(
     resolvers: Map<string, ListenerResolver>,
     ctx: StepListenerContext,
   ): Promise<void> {
-    for (const [name, fn] of resolvers.entries()) {
-      if (name.startsWith(LISTENER_PHASE_PREFIX.BeforeStep)) {
-        await fn(ctx);
-      }
-    }
+    const newResolvers = this.convertLegacyResolvers(
+      resolvers,
+      LISTENER_PHASE_PREFIX.BeforeStep,
+      LISTENER_PHASE.Before,
+    );
+    await this.invokeBefore(newResolvers, 'step', ctx);
   }
 
   /**
@@ -240,11 +249,12 @@ export class ListenerInvoker {
     ctx: StepListenerContext,
     result: StepListenerResult,
   ): Promise<void> {
-    for (const [name, fn] of resolvers.entries()) {
-      if (name.startsWith(LISTENER_PHASE_PREFIX.AfterStep)) {
-        await fn(ctx, result);
-      }
-    }
+    const newResolvers = this.convertLegacyResolvers(
+      resolvers,
+      LISTENER_PHASE_PREFIX.AfterStep,
+      LISTENER_PHASE.After,
+    );
+    await this.invokeAfter(newResolvers, 'step', ctx, result);
   }
 
   /**
@@ -257,11 +267,38 @@ export class ListenerInvoker {
     ctx: StepListenerContext,
     err: unknown,
   ): Promise<void> {
-    for (const [name, fn] of resolvers.entries()) {
-      if (name.startsWith(LISTENER_PHASE_PREFIX.OnStepError)) {
-        await fn(ctx, err);
-      }
+    const newResolvers = this.convertLegacyResolvers(
+      resolvers,
+      LISTENER_PHASE_PREFIX.OnStepError,
+      LISTENER_PHASE.OnError,
+    );
+    await this.invokeOnError(newResolvers, 'step', ctx, err);
+  }
+
+  /**
+   * Translate legacy `before-step:` / `after-step:` / `on-step-error:` keys
+   * into the new `${phase}:step:${name}` shape. Only entries whose key
+   * starts with the given legacy prefix are forwarded; everything else is
+   * silently dropped (matches the prefix-filter semantics of the original
+   * legacy loops).
+   *
+   * `nonCritical` is not representable in the legacy `ListenerResolver`
+   * shape (bare function values), so the converted entries always carry
+   * `nonCritical: undefined` — i.e. critical propagation. This preserves
+   * the legacy contract exactly.
+   */
+  private convertLegacyResolvers(
+    legacy: Map<string, ListenerResolver>,
+    legacyPrefix: string,
+    newPhase: string,
+  ): ResolverMap {
+    const out: ResolverMap = new Map();
+    for (const [key, fn] of legacy.entries()) {
+      if (!key.startsWith(legacyPrefix)) continue;
+      const newKey = `${newPhase}:step:${key.slice(legacyPrefix.length)}`;
+      out.set(newKey, { fn: fn as ListenerFn });
     }
+    return out;
   }
 
   // -------------------------------------------------------------------------

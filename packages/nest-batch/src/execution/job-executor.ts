@@ -1,12 +1,17 @@
-import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
-import type { JobDefinition } from '../core/ir';
+import { Injectable, Inject, Optional, forwardRef, Logger } from '@nestjs/common';
+import type { JobDefinition, ListenerDefinition } from '../core/ir';
+import { RefKind, type ListenerRef } from '../core/ir';
 import { JobRepository, type JobParameters, type JobExecution } from '../core/repository';
 import { TransactionManager } from '../core/transaction';
 import { StepStatus, JobStatus, FlowExecutionStatus } from '../core/status';
 import { JobNotRestartableError } from '../core/errors';
 import { TaskletStepExecutor, type StepExecutionResult } from './tasklet-step-executor';
 import { ChunkStepExecutor, type ChunkExecutionResult } from './chunk-step-executor';
-import { ListenerInvoker, type ResolverMap } from './listener-invoker';
+import {
+  ListenerInvoker,
+  type ResolverMap,
+  type ListenerResolver,
+} from './listener-invoker';
 import { FlowEvaluator } from '../flow/flow-evaluator';
 import {
   BATCH_EVENT,
@@ -59,6 +64,8 @@ type StepResult = StepExecutionResult | ChunkExecutionResult;
  */
 @Injectable()
 export class JobExecutor {
+  private readonly logger = new Logger(JobExecutor.name);
+
   constructor(
     private readonly repository: JobRepository,
     @Inject(forwardRef(() => TransactionManager))
@@ -110,9 +117,15 @@ export class JobExecutor {
       data: { jobName: jobDef.id },
     });
 
-    // Resolver map is empty in this MVP — job-level listener wiring
-    // lands in a follow-up task. Empty map → invokeBefore is a no-op.
-    await this.listenerInvoker.invokeBefore(this.buildResolverMap(jobDef), 'job', {
+    // Build the full resolver map once. The same map powers both the
+    // job-level `invokeBefore` / `invokeAfter` calls below and the
+    // step-level resolvers handed to the TaskletStepExecutor (derived
+    // by `buildLegacyStepResolvers` into the legacy key shape). Building
+    // it once per execution avoids re-walking the IR on every step.
+    const jobResolvers = this.buildResolverMap(jobDef);
+    const stepResolvers = this.buildLegacyStepResolvers(jobResolvers);
+
+    await this.listenerInvoker.invokeBefore(jobResolvers, 'job', {
       jobExecutionId: execution.id,
       stepExecutionId: '<job>',
     });
@@ -177,7 +190,7 @@ export class JobExecutor {
               jobRepository: this.repository,
               transactionManager: this.transactionManager,
               listenerInvoker: this.listenerInvoker,
-              listenerResolvers: new Map(),
+              listenerResolvers: stepResolvers,
             });
           } else {
             result = await this.chunkExecutor.execute(step, {
@@ -307,10 +320,12 @@ export class JobExecutor {
     }
 
     // `after:job:*` listeners run once the job is in a terminal state.
-    // Resolver map is empty (same caveat as `before`); job listeners
-    // receive `(ctx)` only and read final status from the repository.
+    // They receive the final status as the second positional argument
+    // (the `args` slot in the current API; the legacy builder path used
+    // the same shape). The resolver map is the same one built above;
+    // we re-use it to avoid a second IR walk.
     await this.listenerInvoker.invokeAfter(
-      this.buildResolverMap(jobDef),
+      jobResolvers,
       'job',
       { jobExecutionId: execution.id, stepExecutionId: '<job>' },
       [{ status: finalStatus }],
@@ -328,13 +343,118 @@ export class JobExecutor {
   }
 
   /**
-   * Build a listener resolver map for the given job. Empty for now —
-   * resolving `ListenerDefinition`s (class.method refs) into callable
-   * functions is a follow-up task. The empty map means
-   * `invokeBefore` / `invokeAfter` are no-ops until that wiring ships.
+   * Build a listener resolver map for the given job. Walks every
+   * `ListenerDefinition` in `jobDef.listeners` (job-level + step-level +
+   * chunk-level + item-level + skip-level) and resolves each ref into a
+   * callable `ListenerEntry` keyed by `${phase}:${kind}:${name}`.
+   *
+   * The returned map is consumed by `ListenerInvoker.invokeBefore /
+   * invokeAfter / invokeOnError / invokeOnSkip*` (Task 20 API). The legacy
+   * step-level methods (`invokeBeforeStep` etc.) consume a derived
+   * legacy-shaped map produced by `buildLegacyStepResolvers` — that
+   * conversion happens at the call site, not here, so this method stays
+   * the single source of truth for the new shape.
+   *
+   * Ref resolution rules:
+   *   - `RefKind.BuilderLambda`  → use `ref.fn` directly (the compiler
+   *                                pre-binds decorator-discovered methods
+   *                                and the builder API ships bare fns).
+   *   - `RefKind.Method`         → requires the Jobable instance. Until
+   *                                a `ModuleRef` is wired (Task 9+), this
+   *                                branch logs a warning and is skipped.
+   *   - `RefKind.ProviderToken`  → resolved in Task 9 against a
+   *                                pre-built provider map. Skipped here
+   *                                with a warning.
    */
-  private buildResolverMap(_jobDef: JobDefinition): ResolverMap {
-    return new Map();
+  private buildResolverMap(jobDef: JobDefinition): ResolverMap {
+    const resolvers: ResolverMap = new Map();
+    let lambdaCounter = 0;
+
+    for (const def of jobDef.listeners) {
+      const fn = this.resolveListenerRef(def);
+      if (fn === null) continue;
+
+      const name = this.resolveListenerName(def.ref, lambdaCounter);
+      if (def.ref.kind === RefKind.BuilderLambda) lambdaCounter += 1;
+
+      const key = `${def.phase}:${def.kind}:${name}`;
+      resolvers.set(key, {
+        fn,
+        ...(def.nonCritical !== undefined ? { nonCritical: def.nonCritical } : {}),
+      });
+    }
+
+    return resolvers;
+  }
+
+  /**
+   * Resolve a single `ListenerDefinition` to its callable function, or
+   * `null` if the ref kind is not yet supported. See `buildResolverMap`
+   * for the per-kind resolution contract.
+   */
+  private resolveListenerRef(def: ListenerDefinition): ((...args: any[]) => any) | null {
+    const ref = def.ref;
+    switch (ref.kind) {
+      case RefKind.BuilderLambda:
+        return ref.fn ?? null;
+      case RefKind.Method:
+        this.logger.warn(
+          `JobExecutor: Method-ref listener (classToken=${ref.classToken ?? '<unknown>'}, ` +
+            `methodName=${ref.methodName ?? '<unknown>'}) requires a Jobable instance; ` +
+            'this resolution path lands in a follow-up task. Listener skipped.',
+        );
+        return null;
+      case RefKind.ProviderToken:
+        this.logger.warn(
+          `JobExecutor: ProviderToken-ref listener (token=${ref.token ?? '<empty>'}) ` +
+            'is resolved in Task 9. Listener skipped.',
+        );
+        return null;
+      default: {
+        const _exhaustive: never = ref.kind;
+        void _exhaustive;
+        return null;
+      }
+    }
+  }
+
+  /**
+   * Derive the `name` segment of the resolver key. Method refs carry a
+   * `classToken` + `methodName` pair that uniquely identifies the bound
+   * method; BuilderLambda refs do not carry a name (the compiler drops
+   * the method name when it pre-binds), so we mint a `lambda-N` name
+   * from a per-job counter to guarantee uniqueness.
+   */
+  private resolveListenerName(ref: ListenerRef, lambdaCounter: number): string {
+    if (ref.kind === RefKind.Method) {
+      return `${ref.classToken ?? '<unknown>'}.${ref.methodName ?? '<unknown>'}`;
+    }
+    return `lambda-${lambdaCounter}`;
+  }
+
+  /**
+   * Derive a legacy `Map<string, ListenerResolver>` from a new
+   * `ResolverMap`, containing only the step-level entries with their
+   * keys translated from `${phase}:step:${name}` back to the legacy
+   * `${phase}-step:${name}` shape. The `nonCritical` flag is dropped
+   * (legacy `ListenerResolver` is a bare function with no metadata).
+   *
+   * This is the bridge the `TaskletStepExecutor` (which still consumes
+   * the legacy shape) needs until it migrates to the new API. Kept as
+   * a private helper so the conversion logic is in one place.
+   */
+  private buildLegacyStepResolvers(resolvers: ResolverMap): Map<string, ListenerResolver> {
+    const legacy: Map<string, ListenerResolver> = new Map();
+    for (const [key, entry] of resolvers.entries()) {
+      if (key.startsWith('before:step:')) {
+        legacy.set(`before-step:${key.slice('before:step:'.length)}`, entry.fn as ListenerResolver);
+      } else if (key.startsWith('after:step:')) {
+        legacy.set(`after-step:${key.slice('after:step:'.length)}`, entry.fn as ListenerResolver);
+      } else if (key.startsWith('on-error:step:')) {
+        legacy.set(`on-step-error:${key.slice('on-error:step:'.length)}`, entry.fn as ListenerResolver);
+      }
+    }
+    return legacy;
   }
 
   /**
