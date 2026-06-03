@@ -10,6 +10,7 @@ import {
 } from '@nest-batch/core';
 
 import { BullMqExecutionStrategy } from './bullmq-execution-strategy';
+import { BullmqRuntimeService } from './bullmq-runtime.service';
 import { resolveBullMqConnection } from './connection';
 import {
   BULLMQ_MODULE_OPTIONS,
@@ -90,7 +91,12 @@ export class BullmqBatchModule {
       module: BullmqBatchModule,
       global: true,
       providers: buildStaticProviders(resolved),
-      exports: [EXECUTION_STRATEGY, BULLMQ_MODULE_OPTIONS, BullMqExecutionStrategy],
+      exports: [
+        EXECUTION_STRATEGY,
+        BULLMQ_MODULE_OPTIONS,
+        BullMqExecutionStrategy,
+        BullmqRuntimeService,
+      ],
     };
   }
 
