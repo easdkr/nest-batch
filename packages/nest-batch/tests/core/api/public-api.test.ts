@@ -1,0 +1,43 @@
+import { describe, it, expect } from 'vitest';
+
+import * as publicApi from '../../../src/index';
+
+/**
+ * Typed bag for iterating over module namespace exports. Using `unknown` (not
+ * `any`) keeps this strictly typed; we only inspect identity / defined-ness,
+ * never call into the values.
+ */
+type ExportBag = Record<string, unknown>;
+
+describe('public API of @nest-batch/core', () => {
+  it('the package root barrel resolves and exports at least one top-level name', () => {
+    const keys = Object.keys(publicApi);
+    expect(keys.length).toBeGreaterThan(0);
+  });
+
+  it('every top-level export from the package root is defined (no undefined values)', () => {
+    const bag = publicApi as unknown as ExportBag;
+    const names = Object.keys(bag);
+    expect(names.length).toBeGreaterThan(0);
+
+    for (const name of names) {
+      const value = bag[name];
+      expect(value, `top-level export "${name}" must be defined (not undefined)`).toBeDefined();
+    }
+  });
+
+  it('the BatchDecorators namespace is exported and every member is defined', () => {
+    const bag = publicApi as unknown as ExportBag;
+    const decorators = bag['BatchDecorators'];
+    expect(decorators, 'BatchDecorators namespace must be exported from package root').toBeDefined();
+
+    const members = decorators as ExportBag;
+    const memberNames = Object.keys(members);
+    expect(memberNames.length).toBeGreaterThan(0);
+
+    for (const name of memberNames) {
+      const value = members[name];
+      expect(value, `BatchDecorators.${name} must be defined (not undefined)`).toBeDefined();
+    }
+  });
+});
