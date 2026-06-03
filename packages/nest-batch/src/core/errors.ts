@@ -74,3 +74,22 @@ export class InvalidExecutionContextError extends BatchError {
     super(message, details);
   }
 }
+
+/**
+ * Thrown when a `RefKind.ProviderToken` ref cannot be resolved against
+ * the executor's `providerResolvers` map (Task 9). The message always
+ * carries the unresolved token id and the role (`reader` / `processor`
+ * / `writer` / `tasklet` / `listener`) so log lines and test failures
+ * identify the missing provider deterministically.
+ *
+ * Distinct from `ProviderNotFoundError` in the compiler, which fires
+ * during IR compilation when a chunk step is missing a required item
+ * handler method. This error fires at runtime when the DI binding for
+ * an already-shaped ref cannot be located.
+ */
+export class ProviderTokenNotFoundError extends BatchError {
+  readonly code = 'PROVIDER_TOKEN_NOT_FOUND';
+  constructor(token: string, role: string) {
+    super(`No provider bound for ${role} token: ${token}`, { token, role });
+  }
+}

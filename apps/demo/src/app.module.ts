@@ -1,10 +1,10 @@
-import { Injectable, Logger, Module, OnApplicationBootstrap } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { PostgreSqlDriver } from '@mikro-orm/postgresql';
 import {
   ChunkStepExecutor,
   DefinitionCompiler,
+  InProcessExecutionStrategy,
+  IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
   JobExecutor,
   JobLauncher,
   JobRegistry,
@@ -14,15 +14,13 @@ import {
   TaskletStepExecutor,
   TransactionManager,
 } from '@nest-batch/core';
-import { AppConfigModule } from './config/config.module';
+import { Injectable, Logger, Module, OnApplicationBootstrap } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
 import { MikroORMJobRepository } from './adapters/mikroorm/mikroorm-job-repository';
 import { MikroORMTransactionManager } from './adapters/mikroorm/mikroorm-transaction-manager';
+import { AppConfigModule } from './config/config.module';
 import { BatchController } from './controller/batch.controller';
-import { CsvProductReader } from './jobs/import-products/reader/csv-product.reader';
-import { ProductProcessor } from './jobs/import-products/processor/product.processor';
-import { ProductWriter } from './jobs/import-products/writer/product.writer';
-import { ValidateCsvTasklet } from './jobs/import-products/validate-csv.tasklet';
-import { ImportProductsJob } from './jobs/import-products/import-products.job';
 import {
   JobInstanceEntity,
   JobExecutionEntity,
@@ -32,8 +30,13 @@ import {
   StepExecutionContextEntity,
 } from './entities/job-meta.entities';
 import { ProductEntity } from './entities/product.entity';
+import { ImportProductsJob } from './jobs/import-products/import-products.job';
 import { SkipLoggerListener } from './jobs/import-products/listeners/skip-logger.listener';
 import { StepMetricsListener } from './jobs/import-products/listeners/step-metrics.listener';
+import { ProductProcessor } from './jobs/import-products/processor/product.processor';
+import { CsvProductReader } from './jobs/import-products/reader/csv-product.reader';
+import { ValidateCsvTasklet } from './jobs/import-products/validate-csv.tasklet';
+import { ProductWriter } from './jobs/import-products/writer/product.writer';
 
 const DEFAULT_IMPORT_FILE = 'sample-data/products-valid.csv';
 
@@ -102,6 +105,8 @@ class ImportProductsJobRegistrar implements OnApplicationBootstrap {
     ChunkStepExecutor,
     TaskletStepExecutor,
     ListenerInvoker,
+    InProcessExecutionStrategy,
+    IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
     ProductProcessor,
     ProductWriter,
     SkipLoggerListener,

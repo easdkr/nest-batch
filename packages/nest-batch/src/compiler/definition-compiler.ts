@@ -85,7 +85,7 @@ export class DefinitionCompiler {
       kind: l.kind,
       phase: l.phase,
       nonCritical: l.nonCritical,
-      ref: { kind: RefKind.Method, classToken, methodName: l.methodName },
+      ref: this.buildListenerRef(discovered, classToken, l.methodName),
     }));
 
     const transitions: TransitionDefinition[] = discovered.transitionMethods.map((t) => ({
@@ -139,6 +139,42 @@ export class DefinitionCompiler {
   }
 
   // --- private helpers --------------------------------------------------
+
+  /**
+   * Resolve a listener method on a discovered class to a callable
+   * `ListenerRef`. Mirrors the tasklet-ref resolution in
+   * `buildTaskletStep`: if the DI container has already instantiated
+   * the class (which is the case by the time the explorer walks
+   * providers at `onModuleInit`), the method is pre-bound to the
+   * instance and the returned ref is a `BuilderLambda` carrying the
+   * bound function. This lets the runtime resolver map call the
+   * listener directly without holding onto the instance or a
+   * `ModuleRef`.
+   *
+   * When the instance is not yet available (factory providers that
+   * have not been instantiated, late-bound providers, etc.) the ref
+   * stays as a `Method` and the runtime resolver will throw a
+   * deterministic error if it cannot resolve the class. The
+   * pre-binding is a pure optimisation for the common
+   * `providers: [MyClass]` case — the test suite exercises that path.
+   */
+  private buildListenerRef(
+    discovered: DiscoveredJob,
+    classToken: string,
+    methodName: string,
+  ): ListenerRef {
+    const instance = discovered.instance as
+      | Record<string, (...args: unknown[]) => unknown>
+      | undefined;
+    const method = instance?.[methodName];
+    if (method) {
+      return {
+        kind: RefKind.BuilderLambda,
+        fn: method.bind(discovered.instance) as (...args: any[]) => unknown,
+      };
+    }
+    return { kind: RefKind.Method, classToken, methodName };
+  }
 
   /**
    * Build a `TaskletStepDefinition` for a `@Stepable` + `@Tasklet` method.

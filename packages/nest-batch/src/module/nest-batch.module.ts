@@ -8,15 +8,49 @@ import {
 } from '@nestjs/common';
 import { DiscoveryModule } from '@nestjs/core';
 
-import { BatchExplorer } from '../explorer/batch-explorer';
 import { DefinitionCompiler } from '../compiler/definition-compiler';
-import { JobRegistry } from '../registry/job-registry';
-import { FlowEvaluator } from '../flow/flow-evaluator';
-import { JobLauncher } from '../execution/job-launcher';
-import { JobExecutor } from '../execution/job-executor';
 import { ChunkStepExecutor } from '../execution/chunk-step-executor';
-import { TaskletStepExecutor } from '../execution/tasklet-step-executor';
+import {
+  InProcessExecutionStrategy,
+  IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
+} from '../execution/in-process-execution-strategy';
+import { JobExecutor } from '../execution/job-executor';
+import { JobLauncher } from '../execution/job-launcher';
 import { ListenerInvoker } from '../execution/listener-invoker';
+import { TaskletStepExecutor } from '../execution/tasklet-step-executor';
+import { BatchExplorer } from '../explorer/batch-explorer';
+import { FlowEvaluator } from '../flow/flow-evaluator';
+import { JobRegistry } from '../registry/job-registry';
+
+/**
+ * Re-export the default in-process strategy and its token binding so
+ * apps can wire them up alongside the rest of their `JobRepository` /
+ * `JobExecutor` providers. The strategy is *not* auto-registered by
+ * `NestBatchModule.forRoot()` because its constructor requires
+ * `JobRepository` and `JobExecutor` — runtime deps that the host app
+ * owns (the module's discovery/registry surface intentionally stays
+ * free of runtime-side providers). Apps that want the default
+ * in-process execution target add the strategy to their own
+ * `providers` array, e.g.:
+ *
+ * ```ts
+ * @Module({
+ *   imports: [NestBatchModule.forRoot()],
+ *   providers: [
+ *     { provide: JobRepository, useClass: MikroORMJobRepository },
+ *     JobExecutor,
+ *     InProcessExecutionStrategy,
+ *     IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
+ *   ],
+ * })
+ * class AppModule {}
+ * ```
+ *
+ * Sibling packages (e.g. `@nest-batch/bullmq`) replace the
+ * `IN_PROCESS_EXECUTION_STRATEGY_PROVIDER` binding with their own
+ * transport strategy; `JobLauncher` itself is unchanged.
+ */
+export { InProcessExecutionStrategy, IN_PROCESS_EXECUTION_STRATEGY_PROVIDER };
 
 /**
  * Hook that runs on `OnApplicationBootstrap` to wire together the

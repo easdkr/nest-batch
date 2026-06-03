@@ -4,3 +4,6 @@ export * from './chunk-step-executor';
 export * from './job-executor';
 export * from './job-launcher';
 export * from './job-key';
+export * from './execution-strategy';
+export * from './ref-resolver';
+export * from './in-process-execution-strategy';
