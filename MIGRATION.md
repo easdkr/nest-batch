@@ -294,3 +294,85 @@ worker pools, no tenant isolation. BullMQ uses a single queue
   fails the build.
 - Anything that was an "open question" at plan time and is still
   open is out of scope for this release. Open a follow-up plan.
+
+---
+
+## Validated package boundaries (0.1.0)
+
+Each package in the family was packed with `pnpm pack --pack-destination /tmp/task23-pack --json` and the resulting tarball was inspected. Every package exits 0 and the file list is restricted to runtime + source + README. The full per-package log lives in
+[`.omo/evidence/task-23-pack-dry-run.txt`](.omo/evidence/task-23-pack-dry-run.txt).
+
+### Peer-dependency ranges (declared in `package.json`, verified post-pack)
+
+| Package                  | Peer dep                         | Range          | Notes                          |
+| ------------------------ | -------------------------------- | -------------- | ------------------------------ |
+| `@nest-batch/core`       | `@nestjs/common`                 | `^10 \|\| ^11` |                                |
+|                          | `@nestjs/core`                   | `^10 \|\| ^11` |                                |
+|                          | `reflect-metadata`               | `^0.2`         |                                |
+| `@nest-batch/mikro-orm`  | `@nest-batch/core`               | `workspace:*`  | resolved to `0.1.0` on pack    |
+|                          | `@mikro-orm/core`                | `^6.0.0`       | MikroORM 6.x only              |
+|                          | `@mikro-orm/nestjs`              | `^6.0.0`       |                                |
+|                          | `@mikro-orm/postgresql`          | `^6.0.0`       |                                |
+|                          | `@nestjs/common`                 | `^10 \|\| ^11` |                                |
+| `@nest-batch/typeorm`    | `@nest-batch/core`               | `workspace:*`  | resolved to `0.1.0` on pack    |
+|                          | `@nestjs/common`                 | `^10 \|\| ^11` |                                |
+|                          | `@nestjs/typeorm`                | `^10 \|\| ^11` |                                |
+|                          | `typeorm`                        | `^1.0.0`       | **NOT 0.3.x** — 1.0.0-only     |
+| `@nest-batch/bullmq`     | `@nest-batch/core`               | `workspace:*`  | resolved to `0.1.0` on pack    |
+|                          | `@nestjs/common`                 | `^10 \|\| ^11` |                                |
+|                          | `@nestjs/core`                   | `^10 \|\| ^11` |                                |
+|                          | `bullmq`                         | `^5.0.0`       | BullMQ 5.x only                |
+
+`@nest-batch/drizzle` is **not** in this release. No package directory, no `workspace:*` reference, no import. The full check is in
+[`.omo/evidence/task-23-no-drizzle.txt`](.omo/evidence/task-23-no-drizzle.txt).
+
+### `files` allow-list (what ends up in the tarball)
+
+Every package ships the same shape:
+
+```json
+"files": [
+  "dist/src",          // compiled .js + .js.map + .d.ts
+  "src",               // TypeScript source
+  "README.md"          // package README
+]
+```
+
+`@nest-batch/core` adds `"dist/tests/contracts"` to its list because the `./test-contracts` subpath export is part of the public API (it ships the shared contract suite adapter tests for downstream adapters).
+
+The pack output never contains:
+
+- `node_modules/`
+- `coverage/`
+- `dist/**/*.test.*` (test sources)
+- `tests/**` (test sources — except `dist/tests/contracts` for core, which IS shipped)
+- `tsconfig.json`, `vitest.config.ts`, debug scripts, etc.
+
+### Pack-dry-run result (0.1.0)
+
+| Package                  | Total files | Has dist/ | Has src/ | Has README.md | Test/coverage/node_modules | Exit |
+| ------------------------ | ----------- | --------- | -------- | ------------- | -------------------------- | ---- |
+| `@nest-batch/core`       | 395         | ✓         | ✓        | ✓             | 0                          | 0    |
+| `@nest-batch/mikro-orm`  | 52          | ✓         | ✓        | ✓             | 0                          | 0    |
+| `@nest-batch/typeorm`    | 20          | ✓         | ✓        | ✓             | 0                          | 0    |
+| `@nest-batch/bullmq`     | 33          | ✓         | ✓        | ✓             | 0                          | 0    |
+
+Reproduce locally:
+
+```bash
+mkdir -p /tmp/task23-pack && rm -f /tmp/task23-pack/*.tgz
+for pkg in core mikro-orm typeorm bullmq; do
+  pnpm --filter "@nest-batch/$pkg" pack --pack-destination /tmp/task23-pack --json
+done
+ls -la /tmp/task23-pack/
+```
+
+(`pnpm pack` does not support `--dry-run`. The `--json` flag is the closest equivalent: it prints the full file list, while `--pack-destination` redirects the resulting tarball out of the workspace.)
+
+### Files-allow-list rationale
+
+- `dist/src` is the runtime artifact (`main: "dist/src/index.js"`, `types: "dist/src/index.d.ts"`). It is the only thing an end-user import actually loads.
+- `src` ships so that downstream adapters (and the `@nest-batch/core/test-contracts` consumer) can read the original TypeScript to align with the published public API surface. It is also the source for the `.d.ts.map` source maps.
+- `README.md` is the package's per-package documentation.
+- We deliberately do **not** ship `tests/` (except `dist/tests/contracts` for core). The contract suite is the *interface*, not the test. Downstream adapters import the compiled contracts from `@nest-batch/core/test-contracts`; the raw test sources are not part of the published boundary.
+- `tsconfig.json`, `vitest.config.ts`, `.swcrc`, debug scripts, and editor scratch files are excluded by the `files` allow-list.
