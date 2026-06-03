@@ -40,4 +40,27 @@ describe('public API of @nest-batch/core', () => {
       expect(value, `BatchDecorators.${name} must be defined (not undefined)`).toBeDefined();
     }
   });
+
+  it('the Task 12 adapter tokens are exported from the package root', () => {
+    const bag = publicApi as unknown as ExportBag;
+    // Each new token / class / provider record must be reachable as a
+    // bare top-level name from `@nest-batch/core` (i.e. through the
+    // public barrel), so sibling packages do not have to import from
+    // deep relative paths. Note: type-only exports (interfaces,
+    // type aliases) are erased at runtime and cannot be checked
+    // here; they are validated by `tsc --noEmit` instead.
+    for (const name of [
+      'JOB_REPOSITORY_TOKEN',
+      'TRANSACTION_MANAGER_TOKEN',
+      'BATCH_SCHEDULE_REGISTRY',
+      'MODULE_OPTIONS_TOKEN',
+      'EXECUTION_STRATEGY',
+      'BatchScheduleRegistry',
+      'DuplicateBatchScheduleError',
+      'LEGACY_BATCH_OPTIONS_TOKEN',
+      'NestBatchModule',
+    ]) {
+      expect(bag[name], `top-level export "${name}" must be defined`).toBeDefined();
+    }
+  });
 });
