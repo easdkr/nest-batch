@@ -1,0 +1,102 @@
+=== Task 13: cron decorator metadata — happy-path contract (TDD-RED) ===
+Date: 2026-06-03
+Plan:  .omo/plans/nest-batch-architecture-enhancement.md → "13. Define Spring Batch-like cron decorator API contract"
+
+=== Files under test ===
+  src/decorators/constants.ts                  (added: BATCH_SCHEDULED_OPTIONS = 'nest-batch:scheduled')
+  src/scheduling/batch-scheduled.ts            (NEW — TDD-RED stub: stores metadata + stamps inert flag)
+  tests/scheduling/batch-scheduled.test.ts     (25 contract assertions across 5 describe blocks)
+
+=== Decorator API (RED stub) ===
+  export function BatchScheduled(
+    cronExpression: string,
+    options: BatchScheduledOptions,
+  ): MethodDecorator;
+
+  type BatchOverlapPolicy = 'skip' | 'queue' | 'parallel';
+
+  interface BatchScheduledOptions {
+    name: string;                  // required, unique
+    timezone: string;              // required, IANA
+    overlap?: BatchOverlapPolicy;  // optional; default applied at runtime
+    startAt?: Date;                // optional, absolute lower bound (by reference)
+    endAt?: Date;                  // optional, absolute upper bound (by reference)
+    inert?: boolean;               // optional user-facing knob
+  }
+
+  interface BatchScheduledMetadata {
+    cron: string;
+    options: BatchScheduledOptions;
+    inert: boolean;                // captured from process.env.BATCH_SCHEDULED_DISABLE === '1'
+  }
+
+  Metadata key: BATCH_SCHEDULED_OPTIONS = 'nest-batch:scheduled'
+  Stored shape: { cron: <string>, options: <BatchScheduledOptions>, inert: <boolean> }
+  Stored on:    descriptor.value (the method function reference), via @nestjs/common SetMetadata
+  Read by tests: Reflect.getMetadata(KEY, Job.prototype.run)  // function reference, not (target, key) pair
+
+=== What this evidence captures ===
+The 10 happy-path metadata assertions in
+  "@BatchScheduled — happy-path metadata is discoverable"
+pass against the RED stub. The contract that the decorator MUST set
+BATCH_SCHEDULED_OPTIONS metadata that carries cron / name / timezone /
+overlap / startAt / endAt verbatim, and MUST NOT leak across sibling
+methods, is locked in and is the part of the contract that the
+follow-up GREEN implementation (cron/timezone validation) MUST
+preserve.
+
+The 3 public-surface assertions in
+  "@BatchScheduled — public surface"
+also pass (exported constant, function type, decorator factory shape)
+but are not exercised by the `-t 'happy-path metadata'` filter.
+
+The 4 inert-mode assertions pass as a bonus because the stub already
+captures `process.env.BATCH_SCHEDULED_DISABLE` at decoration time;
+that is a pure metadata capture, not a runtime concern. (The
+follow-up GREEN task is free to keep this behavior unchanged.)
+
+=== Test command ===
+$ pnpm --filter @nest-batch/core test tests/scheduling/batch-scheduled.test.ts \
+    -t "happy-path metadata" --reporter=verbose
+
+=== Captured output ===
+
+> @nest-batch/core@0.1.0 test /Users/june/workspace/personal/nest-batch/packages/nest-batch
+> vitest run tests/scheduling/batch-scheduled.test.ts -t 'happy-path metadata' --reporter=verbose
+
+The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
+
+ RUN  v2.1.9 /Users/june/workspace/personal/nest-batch/packages/nest-batch
+
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > attaches BATCH_SCHEDULED_OPTIONS metadata to the decorated method
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > metadata carries the cron expression verbatim
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > metadata carries the resolved name in options.name
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > metadata carries the resolved IANA timezone in options.timezone
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > metadata carries the overlap policy when one is supplied
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > overlap policy is undefined when the caller omits it (default applied at runtime)
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > preserves startAt / endAt absolute time bounds verbatim (by reference)
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > accepts the 6-field cron form (with seconds)
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > does not leak metadata to a sibling method on the same class
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — happy-path metadata is discoverable > metadata is independent across two decorated methods on the same class
+
+ Test Files  1 passed (1)
+      Tests  10 passed | 15 skipped (25)
+   Start at  14:47:51
+   Duration  333ms (transform 25ms, setup 86ms, collect 86ms, tests 2ms, environment 0ms, prepare 30ms)
+
+=== Acceptance criteria (Task 13 plan) ===
+- [x] Decorator API contract tests exist and fail before implementation.
+      (25 tests: 18 pass against the metadata-storing + inert subset of
+       the contract, 7 fail in the cron/timezone validation sections
+       — see task-13-cron-negative.txt.)
+- [x] Decorator metadata includes job id/name, cron expression, timezone, overlap policy.
+      (Locked by the 10 happy-path tests above + the 3 public-surface
+       tests in section A + the 4 inert-mode tests in section E.)
+- [x] Test mode/inert scheduling behavior is specified.
+      (Captured here: `inert` flag is stamped on the metadata from
+       process.env.BATCH_SCHEDULED_DISABLE; the follow-up runtime
+       scheduler reads it off the stored shape and honors it.)
+- [x] API snapshot is documented.
+      (JSDoc on BatchScheduled, BatchScheduledOptions, BatchOverlapPolicy,
+       BatchScheduledMetadata, plus the "TDD-RED stub" call-out explaining
+       what the follow-up GREEN implementation must add.)

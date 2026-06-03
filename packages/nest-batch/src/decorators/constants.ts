@@ -6,3 +6,4 @@ export const BATCH_ITEM_PROCESSOR_METADATA = 'nest-batch:item-processor';
 export const BATCH_ITEM_WRITER_METADATA = 'nest-batch:item-writer';
 export const BATCH_LISTENER_METADATA = 'nest-batch:listener';
 export const BATCH_TRANSITION_METADATA = 'nest-batch:transition';
+export const BATCH_SCHEDULED_OPTIONS = 'nest-batch:scheduled';

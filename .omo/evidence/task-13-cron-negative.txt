@@ -1,0 +1,95 @@
+=== Task 13: cron decorator — negative / validation contract (TDD-RED) ===
+Date: 2026-06-03
+Plan:  .omo/plans/nest-batch-architecture-enhancement.md → "13. Define Spring Batch-like cron decorator API contract"
+
+=== Files under test ===
+  src/decorators/constants.ts                  (added: BATCH_SCHEDULED_OPTIONS = 'nest-batch:scheduled')
+  src/scheduling/batch-scheduled.ts            (NEW — TDD-RED stub: stores metadata + stamps inert flag)
+  tests/scheduling/batch-scheduled.test.ts     (25 contract assertions across 5 describe blocks)
+
+=== What this evidence captures ===
+The 7 contract assertions in the two negative-path describes
+  "@BatchScheduled — invalid cron expression is rejected"
+  "@BatchScheduled — invalid timezone is rejected"
+FAIL against the RED stub. This is the RED half of the contract: it
+locks in that the GREEN implementation MUST (a) reject ill-formed
+cron expressions (empty / wrong field count / non-token literals)
+and (b) reject invalid IANA timezones (unknown / empty / whitespace)
+without silently registering.
+
+The 5 vacuous / pre-wired assertions in the same negative-path filter
+also pass against the stub and prove the implementation does not
+OVER-reject: the 1 "well-known IANA zones" assertion (UTC / Asia/Seoul
+/ America/New_York) is a positive counter-example inside the
+"invalid timezone" describe, and the 4 inert-mode assertions pass
+because the stub reads `process.env.BATCH_SCHEDULED_DISABLE` at
+decoration time and stamps `inert: true|false` on the metadata.
+
+  1 vacuous pass: well-known IANA zones — stub does not throw, so
+                  `not.toThrow()` holds.
+  4 inert passes:  stub stamps `inert` from the env var verbatim.
+
+The 4 inert-mode assertions are intentionally NOT in the "validation
+tests" category — they test pure metadata capture, not input
+rejection. The follow-up GREEN task is the cron/timezone validation
+half; inert capture is already in place here.
+
+=== Test command ===
+$ pnpm --filter @nest-batch/core test tests/scheduling/batch-scheduled.test.ts \
+    -t "invalid cron expression|invalid timezone|inert mode" --reporter=verbose
+
+=== Captured output ===
+
+> @nest-batch/core@0.1.0 test /Users/june/workspace/personal/nest-batch/packages/nest-batch
+> vitest run tests/scheduling/batch-scheduled.test.ts -t 'invalid cron expression|invalid timezone|inert mode' --reporter=verbose
+
+The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
+
+ RUN  v2.1.9 /Users/june/workspace/personal/nest-batch/packages/nest-batch
+
+ × tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — invalid cron expression is rejected > throws on an empty cron expression
+   → expected [Function] to throw an error
+ × tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — invalid cron expression is rejected > throws when the cron expression has fewer than 5 fields
+   → expected [Function] to throw an error
+ × tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — invalid cron expression is rejected > throws when the cron expression has more than 6 fields
+   → expected [Function] to throw an error
+ × tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — invalid cron expression is rejected > throws when the cron expression contains literal words (not a cron token)
+   → expected [Function] to throw an error
+ × tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — invalid timezone is rejected > throws on an unknown IANA timezone identifier
+   → expected [Function] to throw an error
+ × tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — invalid timezone is rejected > throws on an empty timezone string
+   → expected [Function] to throw an error
+ × tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — invalid timezone is rejected > throws on a timezone that is just whitespace
+   → expected [Function] to throw an error
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — invalid timezone is rejected > accepts well-known IANA zones (UTC, Asia/Seoul, America/New_York)
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — inert mode (BATCH_SCHEDULED_DISABLE=1) > records inert: true on the metadata when BATCH_SCHEDULED_DISABLE=1
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — inert mode (BATCH_SCHEDULED_DISABLE=1) > records inert: false on the metadata when BATCH_SCHEDULED_DISABLE is unset
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — inert mode (BATCH_SCHEDULED_DISABLE=1) > records inert: false on the metadata when BATCH_SCHEDULED_DISABLE=0
+ ✓ tests/scheduling/batch-scheduled.test.ts > @BatchScheduled — inert mode (BATCH_SCHEDULED_DISABLE=1) > does not start any timer (no real scheduling engine) — meta is read-only, inert is a hint
+
+ Test Files  1 failed (1)
+      Tests  7 failed | 5 passed | 13 skipped (25)
+   Start at  14:47:51
+   Duration  312ms (transform 24ms, setup 0ms, collect 82ms, tests 5ms, environment 0ms, prepare 27ms)
+
+ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @nest-batch/core@0.1.0 test: `vitest run tests/scheduling/batch-scheduled.test.ts -t 'invalid cron expression|invalid timezone|inert mode' --reporter=verbose`
+Exit status 1
+
+=== RED summary ===
+  4 cron-shape failures    (decorator must reject empty / wrong field count / non-token literal)
+  3 timezone failures      (decorator must reject unknown / empty / whitespace-only IANA)
+  1 vacuous pass           (well-known IANA zones — stub does not throw, so not.toThrow holds)
+  4 inert-mode passes      (stub already reads BATCH_SCHEDULED_DISABLE and stamps inert: true|false)
+
+=== Boundary guard still green ===
+The boundary test (Task 2) still passes: the new scheduling module does
+NOT introduce any forbidden import (no `cron`, no `bullmq`, no
+`@nestjs/schedule`, no `@mikro-orm/*`, no `typeorm`, no `drizzle`).
+The decorator is implemented purely with `@nestjs/common` SetMetadata
++ reflect-metadata, which the boundary test's allow-list accepts.
+
+Command:
+  $ pnpm --filter @nest-batch/core test tests/core/boundary/no-forbidden-imports.test.ts
+Result:
+  Test Files  1 passed (1)
+  Tests       3 passed (3)
