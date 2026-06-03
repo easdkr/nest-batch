@@ -20,4 +20,5 @@
 export * from './connection';
 export * from './module-options';
 export * from './bullmq-execution-strategy';
+export * from './bullmq-schedule.service';
 export * from './bullmq-batch.module';

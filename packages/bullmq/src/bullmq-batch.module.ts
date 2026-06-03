@@ -11,6 +11,7 @@ import {
 
 import { BullMqExecutionStrategy } from './bullmq-execution-strategy';
 import { BullmqRuntimeService } from './bullmq-runtime.service';
+import { BullmqScheduleService } from './bullmq-schedule.service';
 import { resolveBullMqConnection } from './connection';
 import {
   BULLMQ_MODULE_OPTIONS,
@@ -96,6 +97,7 @@ export class BullmqBatchModule {
         BULLMQ_MODULE_OPTIONS,
         BullMqExecutionStrategy,
         BullmqRuntimeService,
+        BullmqScheduleService,
       ],
     };
   }
@@ -167,7 +169,12 @@ export class BullmqBatchModule {
       global: true,
       imports: [...(asyncOptions.imports ?? [])],
       providers: [factoryProvider, mergedOptionsProvider, ...filtered],
-      exports: [EXECUTION_STRATEGY, BULLMQ_MODULE_OPTIONS, BullMqExecutionStrategy],
+      exports: [
+        EXECUTION_STRATEGY,
+        BULLMQ_MODULE_OPTIONS,
+        BullMqExecutionStrategy,
+        BullmqScheduleService,
+      ],
     };
   }
 }
@@ -186,6 +193,7 @@ function buildStaticProviders(
   const providers: Provider[] = [
     BullMqExecutionStrategy,
     BullmqRuntimeService,
+    BullmqScheduleService,
     {
       provide: EXECUTION_STRATEGY,
       useExisting: BullMqExecutionStrategy,

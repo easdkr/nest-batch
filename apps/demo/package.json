@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:bullmq": "vitest run --config vitest.bullmq-e2e.config.ts",
     "typecheck": "tsc --noEmit",
     "migration:create": "mikro-orm migration:create",
     "migration:up": "mikro-orm migration:up"

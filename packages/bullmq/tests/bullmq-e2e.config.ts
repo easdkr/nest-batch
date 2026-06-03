@@ -128,8 +128,22 @@ export async function buildBullmqE2EModule(options: {
   const app = await NestFactory.createApplicationContext(
     {
       module: class TestRootModule {},
+      global: true,
       imports: [
-        core.NestBatchModule.forRoot(),
+        core.NestBatchModule.forRoot({
+          // Bind the abstract core tokens to the concrete in-memory
+          // implementations via the `forRoot` options. This is the
+          // recommended path (see the `repository` / `transactionManager`
+          // overrides in `NestBatchModuleOptions`) — it makes the
+          // bindings available through `JOB_REPOSITORY_TOKEN` /
+          // `TRANSACTION_MANAGER_TOKEN` so adapter packages can
+          // resolve them by the canonical token.
+          repository: { provide: core.JOB_REPOSITORY_TOKEN, useValue: repository },
+          transactionManager: {
+            provide: core.TRANSACTION_MANAGER_TOKEN,
+            useValue: transactionManager,
+          },
+        }),
         bullmqAdapter.BullmqBatchModule.forRoot({
           connection: {
             host: options.redis.host,
@@ -140,30 +154,47 @@ export async function buildBullmqE2EModule(options: {
         }),
       ],
       providers: [
-        // Bind the abstract core tokens to the concrete in-memory
-        // implementations. This is the same pattern as
-        // `job-launcher-strategy.test.ts` in core — without it, the
-        // launcher cannot resolve `JobRepository` / `TransactionManager`.
-        { provide: core.InMemoryJobRepository, useValue: repository },
-        { provide: core.JobRepository, useValue: repository },
-        { provide: core.InMemoryTransactionManager, useValue: transactionManager },
-        { provide: core.TransactionManager, useValue: transactionManager },
-        // JobExecutor is also not auto-registered (its constructor
-        // needs `forwardRef(JobExecutor)` resolution + the full
-        // executor subgraph). We add it here so the launcher can
-        // wire itself up. The same in-memory repo / tx bindings
-        // flow through, so the executor writes to the test-visible
-        // `repository` instance.
+        // JobExecutor / TaskletStepExecutor / ChunkStepExecutor /
+        // ListenerInvoker / FlowEvaluator / JobLauncher are not
+        // auto-registered by NestBatchModule — their constructors
+        // need runtime deps the host owns. We register them on
+        // the TEST ROOT MODULE and re-export below so the sibling
+        // `BullmqBatchModule` (which is the consumer that needs
+        // them) can resolve them through the module hierarchy.
         core.JobExecutor,
         core.TaskletStepExecutor,
         core.ChunkStepExecutor,
         core.ListenerInvoker,
         core.FlowEvaluator,
-        // The launcher is not auto-registered by NestBatchModule
-        // (its constructor needs runtime deps the host owns). We
-        // add it here as a regular provider so the test can pull
-        // it from the container like any other injectable.
         core.JobLauncher,
+        // Expose the in-memory concrete classes for any consumer
+        // that wants to inspect the test instance directly.
+        { provide: core.InMemoryJobRepository, useValue: repository },
+        { provide: core.InMemoryTransactionManager, useValue: transactionManager },
+        // Also expose the abstract class tokens as providers so
+        // the test root module itself can resolve them via
+        // `moduleRef.get(JobRepository)` (BullmqRuntimeService
+        // resolves by the canonical `JOB_REPOSITORY_TOKEN`, but
+        // the test code may want the abstract-class key).
+        { provide: core.JobRepository, useValue: repository },
+        { provide: core.TransactionManager, useValue: transactionManager },
+      ],
+      // Re-export the providers the child `BullmqBatchModule`
+      // needs at construction time. Without `exports`, Nest
+      // treats the providers as private to the test root module
+      // and the runtime service hits `UnknownDependenciesException`
+      // for every class the test rebinds via `useValue`.
+      exports: [
+        core.JobExecutor,
+        core.TaskletStepExecutor,
+        core.ChunkStepExecutor,
+        core.ListenerInvoker,
+        core.FlowEvaluator,
+        core.JobLauncher,
+        core.JobRepository,
+        core.TransactionManager,
+        core.InMemoryJobRepository,
+        core.InMemoryTransactionManager,
       ],
     },
     { logger: ['error', 'warn'] },

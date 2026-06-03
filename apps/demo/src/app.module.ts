@@ -107,24 +107,26 @@ class ImportProductsJobRegistrar implements OnApplicationBootstrap {
 /**
  * Provider list that is identical in every transport mode:
  *
- *   - `MikroORMJobRepository` / `MikroORMTransactionManager` bound to
- *     the core `JobRepository` / `TransactionManager` tokens. Both
- *     transports depend on a `JobRepository`; the
- *     `@nest-batch/mikro-orm` package owns the concrete
- *     implementation, and the demo app no longer carries a local
- *     copy of the adapter (see the migration plan: T15).
  *   - The demo's job-graph providers (`ProductProcessor`,
  *     `ProductWriter`, listeners) and the registrar that wires the
  *     `import-products` definition into the registry on bootstrap.
  *   - The `JobLauncher` itself, which is transport-agnostic.
  *
+ * The `JobRepository` / `TransactionManager` bindings are NOT in
+ * this list — they live on the `NestBatchModule.forRoot({...})`
+ * call below (as `repository` / `transactionManager` options). That
+ * keeps the bindings inside the global core module, where
+ * `BullmqBatchModule` (an imported module) can see them. NestJS
+ * encapsulation prevents providers in the root module from being
+ * injected into providers of an imported module; promoting the
+ * repository / transaction-manager bindings onto the global core
+ * module side-steps that.
+ *
  * The transport-mode-specific providers (in-process executors, the
- * BullMQ transport binding) are contributed by `buildAppModule()`
+ * BullMQ transport binding) are contributed by `buildAppModuleBody()`
  * below.
  */
 const COMMON_PROVIDERS: readonly Provider[] = [
-  { provide: JobRepository, useClass: MikroORMJobRepository },
-  { provide: TransactionManager, useClass: MikroORMTransactionManager },
   ProductProcessor,
   ProductWriter,
   SkipLoggerListener,
@@ -192,7 +194,33 @@ function buildAppModuleBody(): {
 
   if (transport === 'in-process') {
     return {
-      imports: [AppConfigModule, mikroOrmImport, NestBatchModule.forRoot()],
+      imports: [
+        AppConfigModule,
+        mikroOrmImport,
+        NestBatchModule.forRoot({
+          repository: { provide: JobRepository, useClass: MikroORMJobRepository },
+          transactionManager: {
+            provide: TransactionManager,
+            useClass: MikroORMTransactionManager,
+          },
+          // The runtime executor classes (`JobExecutor`,
+          // `ChunkStepExecutor`, `TaskletStepExecutor`,
+          // `ListenerInvoker`) need to be visible to the
+          // in-process strategy's constructor (and to the
+          // BullMQ runtime's `JobExecutor` parameter in
+          // bullmq mode). They live on the global core module
+          // via `extraProviders` so every transport can see
+          // them. NestJS encapsulation would otherwise hide
+          // them from sibling-package providers like the
+          // BullMQ runtime service.
+          extraProviders: [
+            JobExecutor,
+            ChunkStepExecutor,
+            TaskletStepExecutor,
+            ListenerInvoker,
+          ],
+        }),
+      ],
       controllers: [BatchController],
       providers: [
         ...COMMON_PROVIDERS,
@@ -203,10 +231,6 @@ function buildAppModuleBody(): {
         // resolves to it.
         InProcessExecutionStrategy,
         IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
-        JobExecutor,
-        ChunkStepExecutor,
-        TaskletStepExecutor,
-        ListenerInvoker,
       ],
     };
   }
@@ -215,38 +239,71 @@ function buildAppModuleBody(): {
   // package. The package binds `EXECUTION_STRATEGY` to its
   // `BullMqExecutionStrategy`; no in-process strategy is needed
   // in this mode.
+  //
+  // The `BATCH_BULLMQ_AUTOSTART_WORKER` env var (test-only escape
+  // hatch) lets a single-process deployment also start a worker
+  // in-process. The default in production remains `false` (the
+  // demo is launcher-only; the worker is a separate process). The
+  // `BATCH_BULLMQ_KEY_PREFIX` env var (also test-only) lets the
+  // e2e suite use an isolated Redis key namespace so concurrent
+  // test runs do not collide on shared Redis state. Both are
+  // opt-in: with neither set, the wiring is identical to the
+  // pre-Task-21 behaviour.
+  const autoStartWorker =
+    process.env.BATCH_BULLMQ_AUTOSTART_WORKER === '1' ||
+    process.env.BATCH_BULLMQ_AUTOSTART_WORKER === 'true';
+  const keyPrefixOverride = process.env.BATCH_BULLMQ_KEY_PREFIX;
   return {
     imports: [
       AppConfigModule,
       mikroOrmImport,
-      NestBatchModule.forRoot(),
+      NestBatchModule.forRoot({
+        repository: { provide: JobRepository, useClass: MikroORMJobRepository },
+        transactionManager: {
+          provide: TransactionManager,
+          useClass: MikroORMTransactionManager,
+        },
+        // Same encapsulation rationale as the in-process branch:
+        // the runtime executor classes must live on the global
+        // core module so the imported `BullmqBatchModule` can
+        // resolve them when constructing `BullmqRuntimeService`
+        // (whose constructor takes a `JobExecutor`).
+        extraProviders: [
+          JobExecutor,
+          ChunkStepExecutor,
+          TaskletStepExecutor,
+          ListenerInvoker,
+        ],
+      }),
       BullmqBatchModule.forRoot({
         connection: {
           host: process.env.REDIS_HOST ?? '127.0.0.1',
           port: Number(process.env.REDIS_PORT ?? 6379),
+          ...(keyPrefixOverride !== undefined && keyPrefixOverride !== ''
+            ? { keyPrefix: keyPrefixOverride }
+            : {}),
         },
         // The demo app is a launcher-only deployment. The
         // worker runs in a separate process (see Task 21). The
         // producer side (the `Queue`) is what enqueues work;
-        // the worker is responsible for consuming it.
-        autoStartWorker: false,
+        // the worker is responsible for consuming it. Test
+        // code may set `BATCH_BULLMQ_AUTOSTART_WORKER=1` to
+        // start the worker in-process for e2e assertions.
+        autoStartWorker,
       }),
     ],
     controllers: [BatchController],
     providers: [
       ...COMMON_PROVIDERS,
-      // The BullMQ runtime service is constructed by
-      // `BullmqBatchModule`'s provider list; the constructor
-      // depends on `JobExecutor`, so we register the class
-      // here. The BullMQ transport itself is the
+      // The BullMQ transport itself is the
       // `BullMqExecutionStrategy` bound to `EXECUTION_STRATEGY`
-      // — it is also constructed by `BullmqBatchModule`, so
-      // neither the strategy nor the runtime service need
-      // explicit providers in this branch.
-      JobExecutor,
-      ChunkStepExecutor,
-      TaskletStepExecutor,
-      ListenerInvoker,
+      // — it is constructed by `BullmqBatchModule`. The runtime
+      // service (`BullmqRuntimeService`) and the executor
+      // subgraph (`JobExecutor`, `ChunkStepExecutor`,
+      // `TaskletStepExecutor`, `ListenerInvoker`) are also wired
+      // by `BullmqBatchModule` and `NestBatchModule`'s
+      // `extraProviders` respectively. None need explicit
+      // providers in this branch.
     ],
   };
 }

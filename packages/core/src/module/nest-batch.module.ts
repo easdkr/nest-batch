@@ -181,11 +181,11 @@ function splitOptions(
   explorer: boolean;
   extraProviders: readonly AdapterProvider[];
   repository: AdapterProvider | undefined;
-  repositoryToken: symbol | string | undefined;
+  repositoryToken: symbol | string | Function | undefined;
   transactionManager: AdapterProvider | undefined;
-  transactionManagerToken: symbol | string | undefined;
+  transactionManagerToken: symbol | string | Function | undefined;
   executionStrategy: AdapterProvider | undefined;
-  executionStrategyToken: symbol | string | undefined;
+  executionStrategyToken: symbol | string | Function | undefined;
   extraOptions: Record<string, unknown>;
 } {
   if (opts === undefined) {
@@ -223,21 +223,31 @@ function splitOptions(
 }
 
 /**
- * Extract the `provide` value from a Nest `Provider` record, when it
- * is a string/symbol token. Returns `undefined` for class-based
- * providers (whose `provide` is a class constructor — these are
- * already part of the module's exports through the class itself).
+ * Extract the `provide` value from a Nest `Provider` record. Returns
+ * the token (string, symbol, or class constructor) the provider
+ * binds to, or `undefined` for providers that have no injectable
+ * identity (e.g. a bare class provider that Nest auto-registers).
+ *
+ * For the `repository` / `transactionManager` / `executionStrategy`
+ * options, the token is what must be added to the module's
+ * `exports` list so that imported modules (e.g.
+ * `@nest-batch/bullmq`'s `BullmqBatchModule`) can resolve the
+ * binding through DI. Without the export, a class-based binding
+ * like `{ provide: JobRepository, useClass: MikroORMJobRepository }`
+ * is registered as a provider of `NestBatchModule` but invisible
+ * to any provider outside the module.
  */
 function extractToken(
   provider: AdapterProvider | undefined,
-): symbol | string | undefined {
+): symbol | string | Function | undefined {
   if (provider === undefined) return undefined;
-  if (typeof provider === 'function') return undefined; // class
+  if (typeof provider === 'function') return provider;
   if (typeof provider !== 'object' || provider === null) return undefined;
   const provide = (provider as { provide?: unknown }).provide;
   if (typeof provide === 'string' || typeof provide === 'symbol') {
     return provide;
   }
+  if (typeof provide === 'function') return provide;
   return undefined;
 }
 
@@ -485,6 +495,14 @@ export class NestBatchModule {
     // registered. Nest refuses to export a token that is not part of
     // the module's `providers` list, so we filter based on whether
     // the host actually supplied an override.
+    //
+    // `extraProviders` contributed by sibling packages are also
+    // auto-exported: their entire purpose is to surface runtime
+    // classes (e.g. `JobExecutor`, the chunk / tasklet step
+    // executors) to the sibling package's own providers. Without
+    // the export, NestJS encapsulation would hide them from any
+    // provider outside the core module, which would break the
+    // BullMQ runtime's `JobExecutor` parameter resolution.
     const exportsList: (string | symbol | Function | DynamicModule)[] = [
       JobRegistry,
       DefinitionCompiler,
@@ -501,6 +519,23 @@ export class NestBatchModule {
     }
     if (resolved.executionStrategyToken !== undefined) {
       exportsList.push(resolved.executionStrategyToken);
+    }
+    for (const p of resolved.extraProviders) {
+      if (typeof p === 'object' && p !== null && 'provide' in p) {
+        // Provider record — only export when the provide value is
+        // a class constructor (the common case for runtime
+        // classes). String / symbol token exports are handled
+        // through the dedicated `repository` / `transactionManager`
+        // / `executionStrategy` options above, where the host
+        // explicitly declares what to expose.
+        const provide = (p as { provide: unknown }).provide;
+        if (typeof provide === 'function') {
+          exportsList.push(provide);
+        }
+      } else if (typeof p === 'function') {
+        // Bare class provider — export the class itself.
+        exportsList.push(p);
+      }
     }
     return {
       module: NestBatchModule,
@@ -632,6 +667,12 @@ export class NestBatchModule {
         BatchExplorer,
         FlowEvaluator,
         BatchScheduleRegistry,
+        // Re-export the `BATCH_SCHEDULE_REGISTRY` symbol alongside
+        // the class. Sibling packages (e.g. `@nest-batch/bullmq`)
+        // inject the canonical symbol; without this entry the
+        // symbol is only resolvable from within the
+        // `NestBatchModule` itself.
+        BATCH_SCHEDULE_REGISTRY,
         MODULE_OPTIONS_TOKEN,
         ...(staticResolved.repositoryToken !== undefined
           ? [staticResolved.repositoryToken]

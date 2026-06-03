@@ -13,7 +13,8 @@ import {
   type JobDefinition,
   type BatchObserver,
   type JsonValue,
-  JobRepository,
+  type JobRepository,
+  JOB_REPOSITORY_TOKEN,
 } from '@nest-batch/core';
 import { JobExecutor, JobRegistry, NoopBatchObserver, BATCH_EVENT } from '@nest-batch/core';
 
@@ -67,8 +68,12 @@ export interface BullmqJobPayload {
  * builder APIs that discover steps at runtime. A single queue
  * keyed by the step's `name` field is the standard BullMQ pattern
  * (the `name` field discriminates the work).
+ *
+ * BullMQ 5 rejects queue names that contain a colon (`:`) because
+ * it is the path separator in the Redis key layout. We use a
+ * hyphen-separated name accordingly.
  */
-export const BULLMQ_QUEUE_NAME = 'nest-batch:work';
+export const BULLMQ_QUEUE_NAME = 'nest-batch-work';
 
 /**
  * Name of the BullMQ strategy. Logged by the bridge for diagnostic
@@ -140,6 +145,7 @@ export class BullmqRuntimeService
   constructor(
     @Inject(BULLMQ_MODULE_OPTIONS)
     private readonly options: ResolvedBullMqModuleOptions,
+    @Inject(JOB_REPOSITORY_TOKEN)
     private readonly repository: JobRepository,
     private readonly registry: JobRegistry,
     private readonly jobExecutor: JobExecutor,
@@ -300,6 +306,15 @@ export class BullmqRuntimeService
       // Redis surface as a synchronous error on the first `add`,
       // which is exactly what the "Redis-down" test asserts.
       skipWaitingForReady: true,
+      // BullMQ 5 calls `client.info()` to discover the server
+      // version + database type at `Queue` construction time. With
+      // `enableOfflineQueue: false` and the ioredis client not
+      // yet ready, the call throws `Stream isn't writeable`.
+      // `skipVersionCheck: true` short-circuits that probe — the
+      // strategy never depends on the version, and a dead Redis
+      // still surfaces synchronously on the first `add()` (per
+      // the fail-fast contract above).
+      skipVersionCheck: true,
     });
   }
 
