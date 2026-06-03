@@ -1,0 +1,30 @@
+export enum FlowExecutionStatus {
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+  STOPPED = 'STOPPED',
+  UNKNOWN = 'UNKNOWN',
+}
+
+export enum JobStatus {
+  STARTING = 'STARTING',
+  STARTED = 'STARTED',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+  STOPPING = 'STOPPING',
+  STOPPED = 'STOPPED',
+  UNKNOWN = 'UNKNOWN',
+}
+
+export enum StepStatus {
+  STARTING = 'STARTING',
+  STARTED = 'STARTED',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+  STOPPED = 'STOPPED',
+  UNKNOWN = 'UNKNOWN',
+}
+
+export enum ChunkStatus {
+  PROCESSING = 'PROCESSING',
+  COMPLETED = 'COMPLETED',
+}

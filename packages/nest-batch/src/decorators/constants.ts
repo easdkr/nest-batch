@@ -1,0 +1,8 @@
+export const BATCH_JOB_METADATA = 'nest-batch:job';
+export const BATCH_STEP_METADATA = 'nest-batch:step';
+export const BATCH_TASKLET_METADATA = 'nest-batch:tasklet';
+export const BATCH_ITEM_READER_METADATA = 'nest-batch:item-reader';
+export const BATCH_ITEM_PROCESSOR_METADATA = 'nest-batch:item-processor';
+export const BATCH_ITEM_WRITER_METADATA = 'nest-batch:item-writer';
+export const BATCH_LISTENER_METADATA = 'nest-batch:listener';
+export const BATCH_TRANSITION_METADATA = 'nest-batch:transition';

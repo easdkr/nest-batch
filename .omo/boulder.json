@@ -1,0 +1,279 @@
+{
+  "schema_version": 2,
+  "active_work_id": "nest-batch-9e652383",
+  "works": {
+    "nest-batch-9e652383": {
+      "work_id": "nest-batch-9e652383",
+      "active_plan": "/Users/june/workspace/personal/nest-batch/.omo/plans/nest-batch.md",
+      "plan_name": "nest-batch",
+      "status": "completed",
+      "started_at": "2026-06-02T15:21:14.752Z",
+      "updated_at": "2026-06-02T19:42:54.271Z",
+      "session_ids": [
+        "opencode:ses_177134b18ffe5HcuhGmDDae2KQ",
+        "opencode:ses_177123396ffeyfhALiLnJvTfjY"
+      ],
+      "session_origins": {
+        "opencode:ses_177134b18ffe5HcuhGmDDae2KQ": "direct",
+        "opencode:ses_177123396ffeyfhALiLnJvTfjY": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "On launch with existing FAILED `JobExecution` and `restartable: true`, load the step execution context for the last committed chunk",
+          "session_id": "opencode:ses_1768ad6d9ffeNxmz74m61EVgaj",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "started_at": "2026-06-02T15:34:21.638Z",
+          "ended_at": "2026-06-02T18:05:55.637Z",
+          "elapsed_ms": 9093999,
+          "status": "completed",
+          "updated_at": "2026-06-02T18:05:55.637Z"
+        },
+        "todo:4": {
+          "task_key": "todo:4",
+          "task_label": "4",
+          "task_title": "JobRepository + TransactionManager abstract classes",
+          "session_id": "opencode:ses_17700ff8effey8BzNRCc9L0BvQ",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "updated_at": "2026-06-02T15:45:08.891Z",
+          "started_at": "2026-06-02T15:44:44.685Z",
+          "status": "completed",
+          "ended_at": "2026-06-02T15:45:08.891Z",
+          "elapsed_ms": 24206
+        },
+        "todo:10": {
+          "task_key": "todo:10",
+          "task_label": "10",
+          "task_title": "Decorator API: @Jobable, @Stepable, @Tasklet",
+          "session_id": "opencode:ses_176f4aa64ffe4xJMq10IXTiXV9",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "started_at": "2026-06-02T15:53:24.390Z",
+          "status": "completed",
+          "updated_at": "2026-06-02T16:26:12.501Z",
+          "ended_at": "2026-06-02T16:26:12.501Z",
+          "elapsed_ms": 1968111
+        },
+        "todo:14": {
+          "task_key": "todo:14",
+          "task_label": "14",
+          "task_title": "Builder API: BatchBuilder, JobBuilder, StepBuilder, FlowBuilder",
+          "session_id": "opencode:ses_176c549c4ffeU8aewLMoBtkOUT",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "started_at": "2026-06-02T16:45:31.308Z",
+          "status": "completed",
+          "updated_at": "2026-06-02T16:56:59.977Z",
+          "ended_at": "2026-06-02T16:56:59.977Z",
+          "elapsed_ms": 688669
+        },
+        "todo:21": {
+          "task_key": "todo:21",
+          "task_label": "21",
+          "task_title": "SkipPolicy interface + ConfigSkipPolicy",
+          "session_id": "opencode:ses_176a92d29ffeCfF6zQRV6XpHlu",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "started_at": "2026-06-02T17:01:05.971Z",
+          "status": "completed",
+          "updated_at": "2026-06-02T17:31:41.991Z",
+          "ended_at": "2026-06-02T17:31:41.991Z",
+          "elapsed_ms": 1836020
+        },
+        "todo:32": {
+          "task_key": "todo:32",
+          "task_label": "32",
+          "task_title": "Demo app scaffold (Nest + MikroORM + PostgreSQL :5434 + docker-compose)",
+          "session_id": "opencode:ses_1769adb35ffeJREVAx8iJ8VTpM",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "updated_at": "2026-06-02T17:49:26.513Z",
+          "started_at": "2026-06-02T17:49:11.558Z",
+          "status": "completed",
+          "ended_at": "2026-06-02T17:49:26.513Z",
+          "elapsed_ms": 14955
+        },
+        "todo:34": {
+          "task_key": "todo:34",
+          "task_label": "34",
+          "task_title": "MikroORMJobRepository (implements JobRepository abstract class)",
+          "session_id": "opencode:ses_1768b2c76ffeVpGOXpZ4gtlH13",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "updated_at": "2026-06-02T18:06:09.960Z",
+          "started_at": "2026-06-02T18:04:23.639Z",
+          "status": "completed",
+          "ended_at": "2026-06-02T18:06:09.960Z",
+          "elapsed_ms": 106321
+        },
+        "todo:39": {
+          "task_key": "todo:39",
+          "task_label": "39",
+          "task_title": "Observability naming + standard IDs (UUID v7, count schemas)",
+          "session_id": "opencode:ses_1766d9bf7ffepiUnticMmlwxnX",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "started_at": "2026-06-02T18:17:05.694Z",
+          "status": "completed",
+          "updated_at": "2026-06-02T18:39:18.024Z",
+          "ended_at": "2026-06-02T18:39:18.024Z",
+          "elapsed_ms": 1332330
+        },
+        "todo:48": {
+          "task_key": "todo:48",
+          "task_label": "48",
+          "task_title": "10 E2E test scenarios (supertest + fixtures + docker)",
+          "session_id": "opencode:ses_1764ba085ffeNOS3sAFf5I3opO",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "started_at": "2026-06-02T18:43:47.837Z",
+          "status": "completed",
+          "updated_at": "2026-06-02T19:40:45.644Z",
+          "ended_at": "2026-06-02T19:40:45.644Z",
+          "elapsed_ms": 3417807
+        }
+      },
+      "ended_at": "2026-06-02T19:42:54.271Z",
+      "elapsed_ms": 15699519
+    }
+  },
+  "active_plan": "/Users/june/workspace/personal/nest-batch/.omo/plans/nest-batch.md",
+  "started_at": "2026-06-02T15:21:14.752Z",
+  "status": "completed",
+  "updated_at": "2026-06-02T19:42:54.271Z",
+  "session_ids": [
+    "opencode:ses_177134b18ffe5HcuhGmDDae2KQ",
+    "opencode:ses_177123396ffeyfhALiLnJvTfjY"
+  ],
+  "session_origins": {
+    "opencode:ses_177134b18ffe5HcuhGmDDae2KQ": "direct",
+    "opencode:ses_177123396ffeyfhALiLnJvTfjY": "direct"
+  },
+  "plan_name": "nest-batch",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "On launch with existing FAILED `JobExecution` and `restartable: true`, load the step execution context for the last committed chunk",
+      "session_id": "opencode:ses_1768ad6d9ffeNxmz74m61EVgaj",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "started_at": "2026-06-02T15:34:21.638Z",
+      "ended_at": "2026-06-02T18:05:55.637Z",
+      "elapsed_ms": 9093999,
+      "status": "completed",
+      "updated_at": "2026-06-02T18:05:55.637Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "JobRepository + TransactionManager abstract classes",
+      "session_id": "opencode:ses_17700ff8effey8BzNRCc9L0BvQ",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-06-02T15:45:08.891Z",
+      "started_at": "2026-06-02T15:44:44.685Z",
+      "status": "completed",
+      "ended_at": "2026-06-02T15:45:08.891Z",
+      "elapsed_ms": 24206
+    },
+    "todo:10": {
+      "task_key": "todo:10",
+      "task_label": "10",
+      "task_title": "Decorator API: @Jobable, @Stepable, @Tasklet",
+      "session_id": "opencode:ses_176f4aa64ffe4xJMq10IXTiXV9",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "started_at": "2026-06-02T15:53:24.390Z",
+      "status": "completed",
+      "updated_at": "2026-06-02T16:26:12.501Z",
+      "ended_at": "2026-06-02T16:26:12.501Z",
+      "elapsed_ms": 1968111
+    },
+    "todo:14": {
+      "task_key": "todo:14",
+      "task_label": "14",
+      "task_title": "Builder API: BatchBuilder, JobBuilder, StepBuilder, FlowBuilder",
+      "session_id": "opencode:ses_176c549c4ffeU8aewLMoBtkOUT",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "started_at": "2026-06-02T16:45:31.308Z",
+      "status": "completed",
+      "updated_at": "2026-06-02T16:56:59.977Z",
+      "ended_at": "2026-06-02T16:56:59.977Z",
+      "elapsed_ms": 688669
+    },
+    "todo:21": {
+      "task_key": "todo:21",
+      "task_label": "21",
+      "task_title": "SkipPolicy interface + ConfigSkipPolicy",
+      "session_id": "opencode:ses_176a92d29ffeCfF6zQRV6XpHlu",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "started_at": "2026-06-02T17:01:05.971Z",
+      "status": "completed",
+      "updated_at": "2026-06-02T17:31:41.991Z",
+      "ended_at": "2026-06-02T17:31:41.991Z",
+      "elapsed_ms": 1836020
+    },
+    "todo:32": {
+      "task_key": "todo:32",
+      "task_label": "32",
+      "task_title": "Demo app scaffold (Nest + MikroORM + PostgreSQL :5434 + docker-compose)",
+      "session_id": "opencode:ses_1769adb35ffeJREVAx8iJ8VTpM",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-06-02T17:49:26.513Z",
+      "started_at": "2026-06-02T17:49:11.558Z",
+      "status": "completed",
+      "ended_at": "2026-06-02T17:49:26.513Z",
+      "elapsed_ms": 14955
+    },
+    "todo:34": {
+      "task_key": "todo:34",
+      "task_label": "34",
+      "task_title": "MikroORMJobRepository (implements JobRepository abstract class)",
+      "session_id": "opencode:ses_1768b2c76ffeVpGOXpZ4gtlH13",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-06-02T18:06:09.960Z",
+      "started_at": "2026-06-02T18:04:23.639Z",
+      "status": "completed",
+      "ended_at": "2026-06-02T18:06:09.960Z",
+      "elapsed_ms": 106321
+    },
+    "todo:39": {
+      "task_key": "todo:39",
+      "task_label": "39",
+      "task_title": "Observability naming + standard IDs (UUID v7, count schemas)",
+      "session_id": "opencode:ses_1766d9bf7ffepiUnticMmlwxnX",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "started_at": "2026-06-02T18:17:05.694Z",
+      "status": "completed",
+      "updated_at": "2026-06-02T18:39:18.024Z",
+      "ended_at": "2026-06-02T18:39:18.024Z",
+      "elapsed_ms": 1332330
+    },
+    "todo:48": {
+      "task_key": "todo:48",
+      "task_label": "48",
+      "task_title": "10 E2E test scenarios (supertest + fixtures + docker)",
+      "session_id": "opencode:ses_1764ba085ffeNOS3sAFf5I3opO",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "started_at": "2026-06-02T18:43:47.837Z",
+      "status": "completed",
+      "updated_at": "2026-06-02T19:40:45.644Z",
+      "ended_at": "2026-06-02T19:40:45.644Z",
+      "elapsed_ms": 3417807
+    }
+  },
+  "agent": "atlas",
+  "ended_at": "2026-06-02T19:42:54.271Z",
+  "elapsed_ms": 15699519
+}

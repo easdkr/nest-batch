@@ -1,0 +1,6 @@
+id,name,sku,price,category
+1,Widget,SKU-001,9.99,electronics
+2,DuplicateSku,SKU-001,15.00,books
+3,FreeItem,SKU-004,0,food
+4,BadCategory,SKU-005,5.00,unknown
+5,GoodItem,SKU-006,7.50,clothing

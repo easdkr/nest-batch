@@ -1,0 +1,4 @@
+id,name,sku,price,category
+1,Widget,SKU-001,9.99,electronics
+2,Gadget,SKU-002,19.99,electronics
+3,Book,SKU-003,12.50,books
