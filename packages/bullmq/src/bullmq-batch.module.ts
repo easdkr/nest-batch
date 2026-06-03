@@ -185,6 +185,7 @@ function buildStaticProviders(
 ): Provider[] {
   const providers: Provider[] = [
     BullMqExecutionStrategy,
+    BullmqRuntimeService,
     {
       provide: EXECUTION_STRATEGY,
       useExisting: BullMqExecutionStrategy,

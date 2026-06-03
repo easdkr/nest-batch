@@ -11,8 +11,9 @@ import { Queue, QueueEvents, Worker, type JobsOptions } from 'bullmq';
 import {
   type IExecutionStrategy,
   type JobDefinition,
-  type JobRepository,
   type BatchObserver,
+  type JsonValue,
+  JobRepository,
 } from '@nest-batch/core';
 import { JobExecutor, JobRegistry, NoopBatchObserver, BATCH_EVENT } from '@nest-batch/core';
 
@@ -353,7 +354,7 @@ export class BullmqRuntimeService
         type,
         timestamp: new Date(),
         jobExecutionId: String(data['queueJobId'] ?? '<unknown>'),
-        data,
+        data: data as unknown as JsonValue,
       });
     } catch (err) {
       this.logger.warn(
