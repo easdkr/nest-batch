@@ -10,6 +10,7 @@ import {
   type ProcessorRef,
   type WriterRef,
   type TaskletRef,
+  type ListenerRef,
   type ListenerDefinition,
   type TransitionDefinition,
 } from '../core/ir';

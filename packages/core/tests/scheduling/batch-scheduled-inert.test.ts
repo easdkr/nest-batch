@@ -38,7 +38,7 @@
  * of BullMQ.
  */
 import 'reflect-metadata';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { Test } from '@nestjs/testing';
 
 import { NestBatchModule, BatchScheduleRegistry, BATCH_SCHEDULE_REGISTRY } from '../../src/module';
@@ -109,9 +109,9 @@ describe('@BatchScheduled — inert mode: metadata capture', () => {
 // --- (2) Decorator does NOT install timers ---------------------------------
 
 describe('@BatchScheduled — inert mode: decorator is metadata-only', () => {
-  let setTimeoutSpy: ReturnType<typeof vi.spyOn> | null = null;
-  let setIntervalSpy: ReturnType<typeof vi.spyOn> | null = null;
-  let setImmediateSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let setTimeoutSpy: MockInstance<typeof setTimeout> | null = null;
+  let setIntervalSpy: MockInstance<typeof setInterval> | null = null;
+  let setImmediateSpy: MockInstance<typeof setImmediate> | null = null;
   let original: string | undefined;
 
   beforeEach(() => {

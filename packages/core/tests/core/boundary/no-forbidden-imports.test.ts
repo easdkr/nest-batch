@@ -1,10 +1,9 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { describe, it, expect } from 'vitest';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = dirname(__filename);
 
 // packages/nest-batch/tests/core/boundary -> packages/nest-batch/src
 const SRC_ROOT = join(__dirname, '..', '..', '..', 'src');
@@ -81,7 +80,7 @@ describe('dependency boundary: @nest-batch/core must not import forbidden packag
     IMPORT_SPEC_RE.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = IMPORT_SPEC_RE.exec(text)) !== null) {
-      const spec = match[1];
+      const spec = match[1]!;
       const matched = isForbiddenSpecifier(spec);
       if (matched !== null) {
         violations.push({ file: rel, specifier: spec, matchedPackage: matched });

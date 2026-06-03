@@ -147,12 +147,33 @@ describe('DefinitionCompiler.compileFromDiscovered — tasklet step', () => {
     expect(listenerPhases).toEqual(['job/after', 'job/before']);
   });
 
-  it('listener refs use Method kind (classToken + methodName) when discovered via decorator', () => {
+  it('listener refs are pre-bound BuilderLambda refs when discovered via decorator (instance available)', () => {
+    // The explorer instantiates the class to discover step / listener
+    // metadata, so the compiler pre-binds each listener method to the
+    // discovered instance. The runtime resolver should call `l.ref.fn`
+    // directly without a ModuleRef lookup.
     const job = compiler.compileFromDiscovered(discover(DiscoveredTaskletJob));
+    expect(job.listeners.length).toBeGreaterThan(0);
     for (const l of job.listeners) {
-      expect(l.ref.kind).toBe(RefKind.Method);
-      expect(l.ref.classToken).toBe('DiscoveredTaskletJob');
-      expect(typeof l.ref.methodName).toBe('string');
+      expect(l.ref.kind).toBe(RefKind.BuilderLambda);
+      expect(typeof l.ref.fn).toBe('function');
+    }
+
+    const beforeRef = job.listeners.find((l) => l.kind === 'job' && l.phase === 'before');
+    const afterRef = job.listeners.find((l) => l.kind === 'job' && l.phase === 'after');
+    expect(beforeRef).toBeDefined();
+    expect(afterRef).toBeDefined();
+    expect(beforeRef?.ref.kind).toBe(RefKind.BuilderLambda);
+    expect(afterRef?.ref.kind).toBe(RefKind.BuilderLambda);
+    if (beforeRef && afterRef) {
+      const beforeFn = beforeRef.ref.fn;
+      const afterFn = afterRef.ref.fn;
+      expect(typeof beforeFn).toBe('function');
+      expect(typeof afterFn).toBe('function');
+      if (beforeFn && afterFn) {
+        expect(beforeFn({ jobExecutionId: 'j1' })).toBeUndefined();
+        expect(afterFn({ jobExecutionId: 'j1' })).toBeUndefined();
+      }
     }
   });
 });

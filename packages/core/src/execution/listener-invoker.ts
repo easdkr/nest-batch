@@ -73,7 +73,7 @@ export const LISTENER_PHASE_PREFIX = {
 /** Legacy resolver function type — bare callable, no per-entry metadata. */
 export type ListenerResolver = (...args: unknown[]) => unknown | Promise<unknown>;
 
-export interface StepListenerContext {
+export interface StepListenerContext extends ListenerContext {
   jobExecutionId: string;
   stepExecutionId: string;
   getExecutionContext?: () => Promise<ExecutionContext>;
