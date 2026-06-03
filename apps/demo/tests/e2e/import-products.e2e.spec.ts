@@ -47,7 +47,7 @@ import { join } from 'path';
 import { readFileSync, writeFileSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { MikroORM, EntityManager, type Options } from '@mikro-orm/core';
-import { PostgreSqlDriver } from '@mikro-orm/postgresql';
+import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import {
   BatchBuilder,
   ChunkStepExecutor,
@@ -70,15 +70,18 @@ import {
   type ListenerEntry,
   type ResolverMap,
 } from '@nest-batch/core';
-
 import {
+  BATCH_META_ENTITIES,
   JobInstanceEntity,
   JobExecutionEntity,
   JobExecutionParamsEntity,
   StepExecutionEntity,
   JobExecutionContextEntity,
   StepExecutionContextEntity,
-} from '../../src/entities/job-meta.entities';
+  MikroORMJobRepository,
+  MikroORMTransactionManager,
+} from '@nest-batch/mikro-orm';
+
 import { ProductEntity } from '../../src/entities/product.entity';
 import { CsvProductReader } from '../../src/jobs/import-products/reader/csv-product.reader';
 import { ProductProcessor } from '../../src/jobs/import-products/processor/product.processor';
@@ -87,8 +90,6 @@ import { ValidateCsvTasklet } from '../../src/jobs/import-products/validate-csv.
 import { ImportProductsJob } from '../../src/jobs/import-products/import-products.job';
 import { InvalidProductError } from '../../src/errors/invalid-product.error';
 import { DuplicateSkuError } from '../../src/errors/duplicate-sku.error';
-import { MikroORMJobRepository } from '../../src/adapters/mikroorm/mikroorm-job-repository';
-import { MikroORMTransactionManager } from '../../src/adapters/mikroorm/mikroorm-transaction-manager';
 
 // ---------------------------------------------------------------------------
 // Test configuration
@@ -165,7 +166,9 @@ async function buildLauncher(orm: MikroORM): Promise<{
   registry: JobRegistry;
   em: EntityManager;
 }> {
-  const em = orm.em.fork();
+  // The forked EM is bound to the PostgreSqlDriver, so the runtime
+  // value IS a SqlEntityManager — we cast at the test boundary.
+  const em = orm.em.fork() as unknown as SqlEntityManager;
 
   const moduleRef = await Test.createTestingModule({
     imports: [NestBatchModule.forRoot()],
@@ -213,15 +216,7 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
     const ormConfig: Options = {
       driver: PostgreSqlDriver,
       ...PG_CONFIG,
-      entities: [
-        JobInstanceEntity,
-        JobExecutionEntity,
-        JobExecutionParamsEntity,
-        StepExecutionEntity,
-        JobExecutionContextEntity,
-        StepExecutionContextEntity,
-        ProductEntity,
-      ],
+      entities: [...BATCH_META_ENTITIES, ProductEntity],
     };
     orm = await MikroORM.init(ormConfig);
   });

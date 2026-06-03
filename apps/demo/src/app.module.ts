@@ -14,21 +14,16 @@ import {
   TaskletStepExecutor,
   TransactionManager,
 } from '@nest-batch/core';
+import {
+  BATCH_META_ENTITIES,
+  MikroORMJobRepository,
+  MikroORMTransactionManager,
+} from '@nest-batch/mikro-orm';
 import { Injectable, Logger, Module, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
-import { MikroORMJobRepository } from './adapters/mikroorm/mikroorm-job-repository';
-import { MikroORMTransactionManager } from './adapters/mikroorm/mikroorm-transaction-manager';
 import { AppConfigModule } from './config/config.module';
 import { BatchController } from './controller/batch.controller';
-import {
-  JobInstanceEntity,
-  JobExecutionEntity,
-  JobExecutionParamsEntity,
-  StepExecutionEntity,
-  JobExecutionContextEntity,
-  StepExecutionContextEntity,
-} from './entities/job-meta.entities';
 import { ProductEntity } from './entities/product.entity';
 import { ImportProductsJob } from './jobs/import-products/import-products.job';
 import { SkipLoggerListener } from './jobs/import-products/listeners/skip-logger.listener';
@@ -78,15 +73,7 @@ class ImportProductsJobRegistrar implements OnApplicationBootstrap {
   imports: [
     AppConfigModule,
     MikroOrmModule.forRoot({
-      entities: [
-        JobInstanceEntity,
-        JobExecutionEntity,
-        JobExecutionParamsEntity,
-        StepExecutionEntity,
-        JobExecutionContextEntity,
-        StepExecutionContextEntity,
-        ProductEntity,
-      ],
+      entities: [...BATCH_META_ENTITIES, ProductEntity],
       dbName: process.env.DATABASE_NAME ?? 'nest_batch_demo',
       host: process.env.DATABASE_HOST ?? 'localhost',
       port: Number(process.env.DATABASE_PORT ?? 5434),

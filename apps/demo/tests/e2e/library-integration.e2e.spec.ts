@@ -18,7 +18,7 @@ import 'reflect-metadata';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { MikroORM, type EntityManager } from '@mikro-orm/core';
-import { PostgreSqlDriver } from '@mikro-orm/postgresql';
+import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import {
   BatchBuilder,
   DefinitionCompiler,
@@ -33,16 +33,11 @@ import {
   type JobBuilderConfig,
   type StepDefinition,
 } from '@nest-batch/core';
-import { MikroORMJobRepository } from '../../src/adapters/mikroorm/mikroorm-job-repository';
-import { MikroORMTransactionManager } from '../../src/adapters/mikroorm/mikroorm-transaction-manager';
 import {
-  JobInstanceEntity,
-  JobExecutionEntity,
-  JobExecutionParamsEntity,
-  StepExecutionEntity,
-  JobExecutionContextEntity,
-  StepExecutionContextEntity,
-} from '../../src/entities/job-meta.entities';
+  BATCH_META_ENTITIES,
+  MikroORMJobRepository,
+  MikroORMTransactionManager,
+} from '@nest-batch/mikro-orm';
 import { ProductEntity } from '../../src/entities/product.entity';
 
 const PG_CONFIG = {
@@ -64,15 +59,7 @@ describe('Task 48 — Library × PostgreSQL integration (live DB)', () => {
     orm = await MikroORM.init({
       driver: PostgreSqlDriver,
       ...PG_CONFIG,
-      entities: [
-        JobInstanceEntity,
-        JobExecutionEntity,
-        JobExecutionParamsEntity,
-        StepExecutionEntity,
-        JobExecutionContextEntity,
-        StepExecutionContextEntity,
-        ProductEntity,
-      ],
+      entities: [...BATCH_META_ENTITIES, ProductEntity],
     });
   });
 
@@ -81,7 +68,9 @@ describe('Task 48 — Library × PostgreSQL integration (live DB)', () => {
   });
 
   beforeEach(async () => {
-    const forkedEm = orm.em.fork();
+    // The forked EM is bound to the PostgreSqlDriver, so the runtime
+    // value IS a SqlEntityManager — we cast at the test boundary.
+    const forkedEm = orm.em.fork() as unknown as SqlEntityManager;
     await forkedEm.execute(`
       TRUNCATE TABLE product,
                        batch_step_execution_context,

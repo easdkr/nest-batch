@@ -4,8 +4,18 @@
   "private": true,
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./test-contracts": {
+      "types": "./dist/tests/contracts/index.d.ts",
+      "default": "./dist/tests/contracts/index.js"
+    }
+  },
   "scripts": {
-    "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly",
+    "build": "swc src -d dist --config-file ../../.swcrc && swc tests/contracts/index.ts -o dist/tests/contracts/index.js --config-file ../../.swcrc && swc tests/contracts/job-repository.contract.ts -o dist/tests/contracts/job-repository.contract.js --config-file ../../.swcrc && tsc --emitDeclarationOnly",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",

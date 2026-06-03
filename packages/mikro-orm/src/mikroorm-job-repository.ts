@@ -20,7 +20,7 @@ import {
   StepExecutionEntity,
   JobExecutionContextEntity,
   StepExecutionContextEntity,
-} from '../../entities/job-meta.entities';
+} from './entities/job-meta.entities';
 import { randomUUID } from 'crypto';
 
 function scopeKey(scope: ExecutionScope): string {
@@ -65,7 +65,7 @@ function mapStepExecution(e: StepExecutionEntity): StepExecution {
 
 @Injectable()
 export class MikroORMJobRepository extends JobRepository {
-  constructor(private readonly em: EntityManager) {
+  constructor(private readonly em: SqlEntityManager) {
     super();
   }
 

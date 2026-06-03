@@ -28,19 +28,20 @@
 import 'reflect-metadata';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { MikroORM, type EntityManager, type Options } from '@mikro-orm/core';
-import { PostgreSqlDriver } from '@mikro-orm/postgresql';
+import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import { randomUUID } from 'crypto';
 
 import { StepStatus } from '@nest-batch/core';
 import {
+  BATCH_META_ENTITIES,
   JobInstanceEntity,
   JobExecutionEntity,
   JobExecutionParamsEntity,
   StepExecutionEntity,
   JobExecutionContextEntity,
   StepExecutionContextEntity,
-} from '../../../src/entities/job-meta.entities';
-import { MikroORMJobRepository } from '../../../src/adapters/mikroorm/mikroorm-job-repository';
+  MikroORMJobRepository,
+} from '@nest-batch/mikro-orm';
 
 // ---------------------------------------------------------------------------
 // Test configuration
@@ -142,14 +143,7 @@ describe('MikroORMJobRepository.findLatestStepExecution (Task 6 — RED)', () =>
     const ormConfig: Options = {
       driver: PostgreSqlDriver,
       ...PG_CONFIG,
-      entities: [
-        JobInstanceEntity,
-        JobExecutionEntity,
-        JobExecutionParamsEntity,
-        StepExecutionEntity,
-        JobExecutionContextEntity,
-        StepExecutionContextEntity,
-      ],
+      entities: [...BATCH_META_ENTITIES],
     };
     try {
       orm = await MikroORM.init(ormConfig);
@@ -189,7 +183,7 @@ describe('MikroORMJobRepository.findLatestStepExecution (Task 6 — RED)', () =>
         console.warn(`[Task 6 RED] SKIP (no PG): ${skipReason}`);
         return ctx.skip();
       }
-      em = orm!.em.fork();
+      em = orm!.em.fork() as unknown as SqlEntityManager;
       await em.execute(TRUNCATE_SQL);
 
       const repo = new MikroORMJobRepository(em);
@@ -241,7 +235,7 @@ describe('MikroORMJobRepository.findLatestStepExecution (Task 6 — RED)', () =>
         console.warn(`[Task 6 RED] SKIP (no PG): ${skipReason}`);
         return ctx.skip();
       }
-      em = orm!.em.fork();
+      em = orm!.em.fork() as unknown as SqlEntityManager;
       await em.execute(TRUNCATE_SQL);
 
       const repo = new MikroORMJobRepository(em);
@@ -277,7 +271,7 @@ describe('MikroORMJobRepository.findLatestStepExecution (Task 6 — RED)', () =>
         console.warn(`[Task 6 RED] SKIP (no PG): ${skipReason}`);
         return ctx.skip();
       }
-      em = orm!.em.fork();
+      em = orm!.em.fork() as unknown as SqlEntityManager;
       await em.execute(TRUNCATE_SQL);
 
       const repo = new MikroORMJobRepository(em);
