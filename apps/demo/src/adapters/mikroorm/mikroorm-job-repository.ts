@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/core';
+import { SqlEntityManager } from '@mikro-orm/postgresql';
 import { JobRepository, JobExecutionAlreadyRunningError } from '@nest-batch/core';
 import type {
   JobInstance,
@@ -224,9 +225,20 @@ export class MikroORMJobRepository extends JobRepository {
     jobExecutionId: string,
     stepName: string,
   ): Promise<StepExecution | null> {
-    void jobExecutionId;
-    void stepName;
-    return null;
+    // Order by PostgreSQL `ctid` (physical row id, monotonic per
+    // insert) rather than `id DESC`: the primary key is a v4 UUID
+    // — random bytes — so `id DESC` does not correspond to
+    // insertion order. The existing
+    // `batch_step_execution_job_execution_id_index` covers the
+    // filter, so this is one index range scan + 1-row read.
+    const qb = (this.em as SqlEntityManager)
+      .createQueryBuilder(StepExecutionEntity, 's')
+      .select('s.*')
+      .where({ jobExecutionId, stepName })
+      .limit(1);
+    qb.getKnexQuery().orderBy('ctid', 'desc');
+    const e = await qb.getSingleResult();
+    return e ? mapStepExecution(e) : null;
   }
 
   async getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext> {
