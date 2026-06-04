@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { EntityManager } from '@mikro-orm/core';
+import { EntityManager, RequestContext } from '@mikro-orm/core';
 import { SqlEntityManager } from '@mikro-orm/postgresql';
 import { JobRepository, JobExecutionAlreadyRunningError } from '@nest-batch/core';
 import type {
@@ -70,28 +70,34 @@ export class MikroORMJobRepository extends JobRepository {
   }
 
   async getOrCreateJobInstance(name: string, jobKey: string): Promise<JobInstance> {
-    let existing = await this.em.findOne(JobInstanceEntity, { jobName: name, jobKey });
-    if (existing) return mapJobInstance(existing);
-    const inst = new JobInstanceEntity();
-    inst.id = randomUUID();
-    inst.jobName = name;
-    inst.jobKey = jobKey;
-    inst.createdAt = new Date();
-    await this.em.persistAndFlush(inst);
-    return mapJobInstance(inst);
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      let existing = await em.findOne(JobInstanceEntity, { jobName: name, jobKey });
+      if (existing) return mapJobInstance(existing);
+      const inst = new JobInstanceEntity();
+      inst.id = randomUUID();
+      inst.jobName = name;
+      inst.jobKey = jobKey;
+      inst.createdAt = new Date();
+      await em.persistAndFlush(inst);
+      return mapJobInstance(inst);
+    });
   }
 
   async createJobExecution(jobInstanceId: string, params: JobParameters): Promise<JobExecution> {
-    const exec = new JobExecutionEntity();
-    exec.id = randomUUID();
-    exec.jobInstanceId = jobInstanceId;
-    exec.status = JobStatus.STARTING;
-    exec.startTime = null;
-    exec.endTime = null;
-    exec.exitCode = '';
-    exec.exitMessage = '';
-    await this.em.persistAndFlush(exec);
-    return mapJobExecution(exec, params);
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const exec = new JobExecutionEntity();
+      exec.id = randomUUID();
+      exec.jobInstanceId = jobInstanceId;
+      exec.status = JobStatus.STARTING;
+      exec.startTime = null;
+      exec.endTime = null;
+      exec.exitCode = '';
+      exec.exitMessage = '';
+      await em.persistAndFlush(exec);
+      return mapJobExecution(exec, params);
+    });
   }
 
   async createExecutionAtomic(
@@ -160,65 +166,83 @@ export class MikroORMJobRepository extends JobRepository {
   }
 
   async updateJobExecution(executionId: string, patch: JobExecutionPatch): Promise<void> {
-    const e = await this.em.findOne(JobExecutionEntity, { id: executionId });
-    if (!e) throw new Error(`JobExecution not found: ${executionId}`);
-    if (patch.status !== undefined) e.status = patch.status;
-    if (patch.startTime !== undefined) e.startTime = patch.startTime;
-    if (patch.endTime !== undefined) e.endTime = patch.endTime;
-    if (patch.exitCode !== undefined) e.exitCode = patch.exitCode;
-    if (patch.exitMessage !== undefined) e.exitMessage = patch.exitMessage;
-    await this.em.flush();
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const e = await em.findOne(JobExecutionEntity, { id: executionId });
+      if (!e) throw new Error(`JobExecution not found: ${executionId}`);
+      if (patch.status !== undefined) e.status = patch.status;
+      if (patch.startTime !== undefined) e.startTime = patch.startTime;
+      if (patch.endTime !== undefined) e.endTime = patch.endTime;
+      if (patch.exitCode !== undefined) e.exitCode = patch.exitCode;
+      if (patch.exitMessage !== undefined) e.exitMessage = patch.exitMessage;
+      await em.flush();
+    });
   }
 
   async getJobExecution(executionId: string): Promise<JobExecution | null> {
-    const e = await this.em.findOne(JobExecutionEntity, { id: executionId });
-    return e ? mapJobExecution(e) : null;
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const e = await em.findOne(JobExecutionEntity, { id: executionId });
+      return e ? mapJobExecution(e) : null;
+    });
   }
 
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
-    const e = await this.em.findOne(
-      JobExecutionEntity,
-      {
-        jobInstanceId,
-        status: { $in: [JobStatus.STARTING, JobStatus.STARTED] },
-      },
-      { orderBy: { startTime: 'DESC' } },
-    );
-    return e ? mapJobExecution(e) : null;
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const e = await em.findOne(
+        JobExecutionEntity,
+        {
+          jobInstanceId,
+          status: { $in: [JobStatus.STARTING, JobStatus.STARTED] },
+        },
+        { orderBy: { startTime: 'DESC' } },
+      );
+      return e ? mapJobExecution(e) : null;
+    });
   }
 
   async createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution> {
-    const step = new StepExecutionEntity();
-    step.id = randomUUID();
-    step.jobExecutionId = jobExecutionId;
-    step.stepName = stepName;
-    step.status = StepStatus.STARTING;
-    step.readCount = 0;
-    step.writeCount = 0;
-    step.skipCount = 0;
-    step.rollbackCount = 0;
-    step.commitCount = 0;
-    await this.em.persistAndFlush(step);
-    return mapStepExecution(step);
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const step = new StepExecutionEntity();
+      step.id = randomUUID();
+      step.jobExecutionId = jobExecutionId;
+      step.stepName = stepName;
+      step.status = StepStatus.STARTING;
+      step.readCount = 0;
+      step.writeCount = 0;
+      step.skipCount = 0;
+      step.rollbackCount = 0;
+      step.commitCount = 0;
+      await em.persistAndFlush(step);
+      return mapStepExecution(step);
+    });
   }
 
   async updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void> {
-    const s = await this.em.findOne(StepExecutionEntity, { id: stepExecutionId });
-    if (!s) throw new Error(`StepExecution not found: ${stepExecutionId}`);
-    if (patch.status !== undefined) s.status = patch.status;
-    if (patch.readCount !== undefined) s.readCount = patch.readCount;
-    if (patch.writeCount !== undefined) s.writeCount = patch.writeCount;
-    if (patch.skipCount !== undefined) s.skipCount = patch.skipCount;
-    if (patch.rollbackCount !== undefined) s.rollbackCount = patch.rollbackCount;
-    if (patch.commitCount !== undefined) s.commitCount = patch.commitCount;
-    if (patch.exitCode !== undefined) s.exitCode = patch.exitCode;
-    if (patch.exitMessage !== undefined) s.exitMessage = patch.exitMessage;
-    await this.em.flush();
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const s = await em.findOne(StepExecutionEntity, { id: stepExecutionId });
+      if (!s) throw new Error(`StepExecution not found: ${stepExecutionId}`);
+      if (patch.status !== undefined) s.status = patch.status;
+      if (patch.readCount !== undefined) s.readCount = patch.readCount;
+      if (patch.writeCount !== undefined) s.writeCount = patch.writeCount;
+      if (patch.skipCount !== undefined) s.skipCount = patch.skipCount;
+      if (patch.rollbackCount !== undefined) s.rollbackCount = patch.rollbackCount;
+      if (patch.commitCount !== undefined) s.commitCount = patch.commitCount;
+      if (patch.exitCode !== undefined) s.exitCode = patch.exitCode;
+      if (patch.exitMessage !== undefined) s.exitMessage = patch.exitMessage;
+      await em.flush();
+    });
   }
 
   async getStepExecution(stepExecutionId: string): Promise<StepExecution | null> {
-    const s = await this.em.findOne(StepExecutionEntity, { id: stepExecutionId });
-    return s ? mapStepExecution(s) : null;
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const s = await em.findOne(StepExecutionEntity, { id: stepExecutionId });
+      return s ? mapStepExecution(s) : null;
+    });
   }
 
   async findLatestStepExecution(
@@ -231,28 +255,34 @@ export class MikroORMJobRepository extends JobRepository {
     // insertion order. The existing
     // `batch_step_execution_job_execution_id_index` covers the
     // filter, so this is one index range scan + 1-row read.
-    const qb = (this.em as SqlEntityManager)
-      .createQueryBuilder(StepExecutionEntity, 's')
-      .select('s.*')
-      .where({ jobExecutionId, stepName })
-      .limit(1);
-    qb.getKnexQuery().orderBy('ctid', 'desc');
-    const e = await qb.getSingleResult();
-    return e ? mapStepExecution(e) : null;
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const qb = (em as SqlEntityManager)
+        .createQueryBuilder(StepExecutionEntity, 's')
+        .select('s.*')
+        .where({ jobExecutionId, stepName })
+        .limit(1);
+      qb.getKnexQuery().orderBy('ctid', 'desc');
+      const e = await qb.getSingleResult();
+      return e ? mapStepExecution(e) : null;
+    });
   }
 
   async getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext> {
-    const key = scopeKey(scope);
-    if (key.startsWith('job::')) {
-      const e = await this.em.findOne(JobExecutionContextEntity, { jobExecutionId: key.slice(5) });
-      if (e) return { data: deserializeContext(e.data), version: e.version };
-    } else {
-      const e = await this.em.findOne(StepExecutionContextEntity, {
-        stepExecutionId: key.slice(6),
-      });
-      if (e) return { data: deserializeContext(e.data), version: e.version };
-    }
-    return { data: null, version: 0 };
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const key = scopeKey(scope);
+      if (key.startsWith('job::')) {
+        const e = await em.findOne(JobExecutionContextEntity, { jobExecutionId: key.slice(5) });
+        if (e) return { data: deserializeContext(e.data), version: e.version };
+      } else {
+        const e = await em.findOne(StepExecutionContextEntity, {
+          stepExecutionId: key.slice(6),
+        });
+        if (e) return { data: deserializeContext(e.data), version: e.version };
+      }
+      return { data: null, version: 0 };
+    });
   }
 
   async saveExecutionContext(
@@ -261,38 +291,41 @@ export class MikroORMJobRepository extends JobRepository {
     version?: number,
   ): Promise<void> {
     assertJsonSerializable(ctx.data);
-    const key = scopeKey(scope);
-    if (key.startsWith('job::')) {
-      const jobExecutionId = key.slice(5);
-      const existing = await this.em.findOne(JobExecutionContextEntity, { jobExecutionId });
-      const nextVersion = version !== undefined ? version : (existing?.version ?? 0) + 1;
-      if (existing) {
-        existing.data = serializeContext(ctx.data);
-        existing.version = nextVersion;
+    return RequestContext.create(this.em, async () => {
+      const em = this.em;
+      const key = scopeKey(scope);
+      if (key.startsWith('job::')) {
+        const jobExecutionId = key.slice(5);
+        const existing = await em.findOne(JobExecutionContextEntity, { jobExecutionId });
+        const nextVersion = version !== undefined ? version : (existing?.version ?? 0) + 1;
+        if (existing) {
+          existing.data = serializeContext(ctx.data);
+          existing.version = nextVersion;
+        } else {
+          const e = new JobExecutionContextEntity();
+          e.jobExecutionId = jobExecutionId;
+          e.data = serializeContext(ctx.data);
+          e.version = nextVersion;
+          await em.persistAndFlush(e);
+          return;
+        }
       } else {
-        const e = new JobExecutionContextEntity();
-        e.jobExecutionId = jobExecutionId;
-        e.data = serializeContext(ctx.data);
-        e.version = nextVersion;
-        await this.em.persistAndFlush(e);
-        return;
+        const stepExecutionId = key.slice(6);
+        const existing = await em.findOne(StepExecutionContextEntity, { stepExecutionId });
+        const nextVersion = version !== undefined ? version : (existing?.version ?? 0) + 1;
+        if (existing) {
+          existing.data = serializeContext(ctx.data);
+          existing.version = nextVersion;
+        } else {
+          const e = new StepExecutionContextEntity();
+          e.stepExecutionId = stepExecutionId;
+          e.data = serializeContext(ctx.data);
+          e.version = nextVersion;
+          await em.persistAndFlush(e);
+          return;
+        }
       }
-    } else {
-      const stepExecutionId = key.slice(6);
-      const existing = await this.em.findOne(StepExecutionContextEntity, { stepExecutionId });
-      const nextVersion = version !== undefined ? version : (existing?.version ?? 0) + 1;
-      if (existing) {
-        existing.data = serializeContext(ctx.data);
-        existing.version = nextVersion;
-      } else {
-        const e = new StepExecutionContextEntity();
-        e.stepExecutionId = stepExecutionId;
-        e.data = serializeContext(ctx.data);
-        e.version = nextVersion;
-        await this.em.persistAndFlush(e);
-        return;
-      }
-    }
-    await this.em.flush();
+      await em.flush();
+    });
   }
 }
