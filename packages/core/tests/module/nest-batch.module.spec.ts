@@ -6,10 +6,12 @@ import { Jobable, Stepable, Tasklet } from '../../src/decorators';
 import { JobRegistry } from '../../src/registry/job-registry';
 import { BatchExplorer } from '../../src/explorer/batch-explorer';
 import { DefinitionCompiler } from '../../src/compiler/definition-compiler';
+import { JobRepository } from '../../src/core/repository/job-repository';
 import {
   NestBatchModule,
   type NestBatchModuleAsyncOptions,
 } from '../../src/module/nest-batch.module';
+import { JOB_REPOSITORY_TOKEN } from '../../src/module/tokens';
 import type { RefKind } from '../../src/core/ir';
 
 // ---------------------------------------------------------------------------
@@ -267,6 +269,124 @@ describe('NestBatchModule — surface', () => {
     await moduleRef.init();
     const opts = moduleRef.get<{ explorer: boolean }>('BATCH_OPTIONS');
     expect(opts).toEqual({ explorer: true });
+
+    await moduleRef.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JOB_REPOSITORY_TOKEN alias — the symbol must resolve regardless of
+// whether the host binds the repository to a class token or the symbol.
+// ---------------------------------------------------------------------------
+
+/**
+ * Concrete JobRepository used as a class-token override. The methods are
+ * stubs because the module is only asked to resolve the DI graph; no
+ * batch code path actually runs.
+ */
+class AliasFakeJobRepository {
+  readonly marker = 'alias-fake-repo' as const;
+  async getOrCreateJobInstance(): Promise<unknown> {
+    return null;
+  }
+}
+
+/**
+ * Second fake used in the idempotency test to prove the host can also
+ * bind directly to the canonical `JOB_REPOSITORY_TOKEN` symbol and get a
+ * working resolution without duplicate-provider errors.
+ */
+class AliasSymbolFakeJobRepository {
+  readonly marker = 'alias-symbol-fake-repo' as const;
+  async getOrCreateJobInstance(): Promise<unknown> {
+    return null;
+  }
+}
+
+describe('NestBatchModule — JOB_REPOSITORY_TOKEN aliasing (Bug #2 fix)', () => {
+  it('forRoot(): when the host binds the repository to a class token, JOB_REPOSITORY_TOKEN resolves to the same instance (useExisting alias)', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        NestBatchModule.forRoot({
+          repository: {
+            provide: JobRepository,
+            useClass: AliasFakeJobRepository,
+          },
+        }),
+      ],
+    }).compile();
+
+    await moduleRef.init();
+    const byClass = moduleRef.get(JobRepository);
+    const bySymbol = moduleRef.get(JOB_REPOSITORY_TOKEN);
+
+    expect(byClass).toBeInstanceOf(AliasFakeJobRepository);
+    expect(bySymbol).toBeInstanceOf(AliasFakeJobRepository);
+    // The whole point: both tokens must resolve to the SAME object.
+    expect(byClass).toBe(bySymbol);
+
+    await moduleRef.close();
+  });
+
+  it('forRootAsync(): when the host binds the repository to a class token, JOB_REPOSITORY_TOKEN resolves to the same instance (useExisting alias)', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        NestBatchModule.forRootAsync({
+          useFactory: () => ({}),
+          repository: {
+            provide: JobRepository,
+            useClass: AliasFakeJobRepository,
+          },
+        }),
+      ],
+    }).compile();
+
+    await moduleRef.init();
+    const byClass = moduleRef.get(JobRepository);
+    const bySymbol = moduleRef.get(JOB_REPOSITORY_TOKEN);
+
+    expect(byClass).toBeInstanceOf(AliasFakeJobRepository);
+    expect(bySymbol).toBeInstanceOf(AliasFakeJobRepository);
+    expect(byClass).toBe(bySymbol);
+
+    await moduleRef.close();
+  });
+
+  it('forRoot(): when the host binds directly to JOB_REPOSITORY_TOKEN, no duplicate provider is registered (idempotent)', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        NestBatchModule.forRoot({
+          repository: {
+            provide: JOB_REPOSITORY_TOKEN,
+            useClass: AliasSymbolFakeJobRepository,
+          },
+        }),
+      ],
+    }).compile();
+
+    await moduleRef.init();
+    const bySymbol = moduleRef.get(JOB_REPOSITORY_TOKEN);
+    expect(bySymbol).toBeInstanceOf(AliasSymbolFakeJobRepository);
+
+    await moduleRef.close();
+  });
+
+  it('forRootAsync(): when the host binds directly to JOB_REPOSITORY_TOKEN, no duplicate provider is registered (idempotent)', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        NestBatchModule.forRootAsync({
+          useFactory: () => ({}),
+          repository: {
+            provide: JOB_REPOSITORY_TOKEN,
+            useClass: AliasSymbolFakeJobRepository,
+          },
+        }),
+      ],
+    }).compile();
+
+    await moduleRef.init();
+    const bySymbol = moduleRef.get(JOB_REPOSITORY_TOKEN);
+    expect(bySymbol).toBeInstanceOf(AliasSymbolFakeJobRepository);
 
     await moduleRef.close();
   });

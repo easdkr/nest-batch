@@ -300,6 +300,20 @@ function buildProviders(
   // 3. Token-override providers (only if the host supplied one).
   if (resolved.repository !== undefined) {
     providers.push(resolved.repository);
+    // Auto-alias JOB_REPOSITORY_TOKEN to the user-chosen token so
+    // symbol-based consumers (e.g. BullmqRuntimeService in
+    // `@nest-batch/bullmq`) resolve the same instance regardless of
+    // whether the host bound the repository to a class token (e.g.
+    // `JobRepository`) or directly to `JOB_REPOSITORY_TOKEN`.
+    // Idempotent: skip the alias when the host already used the
+    // canonical symbol (registering it twice would be a
+    // `duplicate provider` error from Nest's container).
+    if (resolved.repositoryToken !== JOB_REPOSITORY_TOKEN) {
+      providers.push({
+        provide: JOB_REPOSITORY_TOKEN,
+        useExisting: resolved.repositoryToken,
+      });
+    }
   }
   if (resolved.transactionManager !== undefined) {
     providers.push(resolved.transactionManager);
@@ -513,6 +527,18 @@ export class NestBatchModule {
     ];
     if (resolved.repositoryToken !== undefined) {
       exportsList.push(resolved.repositoryToken);
+      // Re-export the canonical `JOB_REPOSITORY_TOKEN` symbol too so
+      // sibling packages (e.g. `@nest-batch/bullmq`'s
+      // `BullmqRuntimeService`) can resolve the repository through
+      // the global module chain even when the host used a class
+      // token (e.g. `JobRepository`) for the override. Without
+      // this, the host's chosen token is registered but the
+      // symbol is invisible outside the module — the very bug
+      // that the `useExisting` alias in `buildProviders` is here
+      // to fix.
+      if (resolved.repositoryToken !== JOB_REPOSITORY_TOKEN) {
+        exportsList.push(JOB_REPOSITORY_TOKEN);
+      }
     }
     if (resolved.transactionManagerToken !== undefined) {
       exportsList.push(resolved.transactionManagerToken);
@@ -674,8 +700,14 @@ export class NestBatchModule {
         // `NestBatchModule` itself.
         BATCH_SCHEDULE_REGISTRY,
         MODULE_OPTIONS_TOKEN,
+        // Export the host's chosen repository token AND, when the
+        // host did not bind directly to `JOB_REPOSITORY_TOKEN`,
+        // the canonical symbol too — see `forRoot()` for the same
+        // alias logic.
         ...(staticResolved.repositoryToken !== undefined
-          ? [staticResolved.repositoryToken]
+          ? staticResolved.repositoryToken === JOB_REPOSITORY_TOKEN
+            ? [staticResolved.repositoryToken]
+            : [staticResolved.repositoryToken, JOB_REPOSITORY_TOKEN]
           : []),
         ...(staticResolved.transactionManagerToken !== undefined
           ? [staticResolved.transactionManagerToken]
