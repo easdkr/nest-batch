@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
   DataSource,
   EntityManager,
+  In,
   type EntityTarget,
 } from 'typeorm';
 import {
@@ -255,10 +256,11 @@ export class TypeOrmJobRepository extends JobRepository {
   }
 
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
+    if (!jobInstanceId) return null;
     const e = await this.em().findOne(JobExecutionEntity, {
       where: {
         jobInstanceId,
-        status: { $in: [JobStatus.STARTING, JobStatus.STARTED] } as unknown as string,
+        status: In([JobStatus.STARTING, JobStatus.STARTED]),
       },
       order: { startTime: 'DESC' },
     });

@@ -34,6 +34,9 @@ export class ProductWriter implements ItemWriter<ProductEntity> {
         throw err;
       }
     }
-    return { written, skipped: failedSkus.length };
+    if (failedSkus.length > 0) {
+      throw new DuplicateSkuError(failedSkus[failedSkus.length - 1]);
+    }
+    return { written, skipped: 0 };
   }
 }

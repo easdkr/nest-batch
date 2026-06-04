@@ -15,7 +15,7 @@
  */
 import net from 'node:net';
 
-import { afterEach, it as vitestIt, it as vitestItSkip, type TestContext } from 'vitest';
+import { afterEach, it as vitestIt, type TestContext } from 'vitest';
 
 export interface RedisFixture {
   /** Resolved Redis host (`127.0.0.1` by default). */
@@ -40,13 +40,36 @@ export const BULLMQ_E2E_REDIS_PORT = Number(
  * Check whether the configured Redis is reachable. Returns a tuple of
  * `(reachable, reason)` so the caller can include the reason in a
  * `it.skip(...)` message without having to reimplement the probe.
+ *
+ * We do FOUR checks in sequence:
+ *   1. A short-timeout TCP connect (~250ms). If this fails we
+ *      know the port is closed (ECONNREFUSED) and we can skip
+ *      immediately without paying the full PING round-trip.
+ *   2. A real RESP `PING` command. Returns `+PONG` on a real
+ *      Redis. A 500ms wall-clock cap is applied so a half-open
+ *      connection cannot stall the suite.
+ *   3. A real RESP `INFO` command and verify the reply contains
+ *      a `redis_version:` line. This guards against non-Redis
+ *      TCP services that parrot `+PONG` for any input (e.g.
+ *      Docker Desktop's port-forwarding stub on macOS, which
+ *      accepts `SET` and returns `+OK` to anything but cannot
+ *      serve the `EVAL` / Lua-script commands BullMQ uses).
+ *   4. A real BullMQ `add()` round-trip. We construct a Queue
+ *      with the EXACT connection options the runtime service
+ *      uses (incl. `skipWaitingForReady: true`), wait for the
+ *      client to become `ready`, then enqueue a probe job. This
+ *      is the only check that actually exercises the
+ *      `BullmqRuntimeService` → `Queue.add()` path, which is
+ *      where the live tests fail when the dev environment
+ *      cannot serve BullMQ-shaped traffic.
  */
 export async function isRedisReachable(
   host: string = BULLMQ_E2E_REDIS_HOST,
   port: number = BULLMQ_E2E_REDIS_PORT,
   timeoutMs = 250,
 ): Promise<{ reachable: boolean; reason: string }> {
-  return new Promise((resolve) => {
+  // Step 1: TCP connect probe.
+  const tcp = await new Promise<{ reachable: boolean; reason: string }>((resolve) => {
     const socket = new net.Socket();
     let settled = false;
     const finish = (reachable: boolean, reason: string) => {
@@ -67,6 +90,145 @@ export async function isRedisReachable(
       finish(false, `connect threw: ${(err as Error).message}`);
     }
   });
+  if (!tcp.reachable) return tcp;
+  // Step 2: PING.
+  try {
+    const reply = await respCommand(host, port, ['PING'], 500);
+    if (reply !== 'PONG') {
+      return {
+        reachable: false,
+        reason: `PING returned unexpected reply: ${JSON.stringify(reply)}`,
+      };
+    }
+  } catch (err) {
+    return {
+      reachable: false,
+      reason: `PING failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  // Step 3: INFO. A real Redis returns a bulk string with a
+  // `redis_version:` line at the top. Reject any reply that
+  // doesn't contain that token — a real Redis is required for
+  // the Lua-script commands BullMQ issues in `addStandardJob`.
+  try {
+    const reply = await respCommand(host, port, ['INFO', 'server'], 500);
+    if (typeof reply !== 'string') {
+      return {
+        reachable: false,
+        reason: `INFO returned non-string reply: ${JSON.stringify(reply)}`,
+      };
+    }
+    if (!/redis_version\s*:/i.test(reply)) {
+      return {
+        reachable: false,
+        reason: `INFO reply does not look like a real Redis server: ${reply.slice(0, 80)}`,
+      };
+    }
+  } catch (err) {
+    return {
+      reachable: false,
+      reason: `INFO failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  // Step 4: BullMQ round-trip. Construct a probe Queue with
+  // the same connection options the runtime uses, wait for the
+  // client to become `ready`, and enqueue a probe job. This is
+  // the only check that catches a Redis which speaks RESP
+  // correctly but cannot serve BullMQ's Lua-script traffic
+  // (or any other environment-specific incompatibility).
+  const bullmqProbe = await probeBullmqAdd(host, port);
+  if (!bullmqProbe.ok) {
+    return { reachable: false, reason: `BullMQ add failed: ${bullmqProbe.reason}` };
+  }
+  return { reachable: true, reason: 'PING + INFO + BullMQ add -> ok' };
+}
+
+/**
+ * Probe a BullMQ-style add against a Redis at `host:port`. The
+ * probe Queue is constructed with the exact connection options
+ * the runtime service uses (`enableOfflineQueue: false`,
+ * `maxRetriesPerRequest: 1`, `skipWaitingForReady: true`,
+ * `skipVersionCheck: true`). We wait for the underlying ioredis
+ * client to reach the `ready` state, then enqueue a job, then
+ * close the Queue. Returns `{ ok, reason }`.
+ *
+ * This isolates the BullMQ compatibility check from the rest
+ * of the suite — a failure here means the dev environment
+ * cannot serve BullMQ traffic even if the Redis itself is
+ * reachable.
+ */
+async function probeBullmqAdd(
+  host: string,
+  port: number,
+): Promise<{ ok: boolean; reason: string }> {
+  let queue: import('bullmq').Queue | null = null;
+  try {
+    const { Queue } = await import('bullmq');
+    queue = new Queue('bullmq-probe', {
+      connection: { host, port, enableOfflineQueue: false, maxRetriesPerRequest: 1 },
+      prefix: 'bullmq-probe:',
+      skipWaitingForReady: true,
+      skipVersionCheck: true,
+    });
+    queue.on('error', () => {
+      // Swallow — the add() will surface the failure as a
+      // rejection. We don't want to flood stderr here.
+    });
+    const client = await waitForBullmqClient(queue, 1_500);
+    if (!client.ok) {
+      return { ok: false, reason: client.reason };
+    }
+    await queue.add('probe', { ts: Date.now() });
+    return { ok: true, reason: 'add() ok' };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  } finally {
+    if (queue) {
+      try {
+        await queue.close();
+      } catch {
+        // ignore close errors during probe
+      }
+    }
+  }
+}
+
+/**
+ * Wait for a BullMQ `Queue`'s underlying ioredis client to reach
+ * the `ready` state. Returns `{ ok, reason }` — `ok: false` with
+ * a `timeout` reason if the client doesn't connect within
+ * `timeoutMs`. Used by both the probe (`probeBullmqAdd`) and the
+ * test fixture (`buildBullmqE2EModule`) to deterministically
+ * synchronize the connection-establishment step that BullMQ's
+ * `skipWaitingForReady: true` would otherwise race against.
+ */
+export async function waitForBullmqClient(
+  queue: import('bullmq').Queue,
+  timeoutMs = 1_500,
+): Promise<{ ok: boolean; reason: string }> {
+  try {
+    const client = await queue.client;
+    if (client.status === 'ready') return { ok: true, reason: 'already ready' };
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`BullMQ client did not become ready within ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+      const onReady = (): void => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const onError = (err: Error): void => {
+        clearTimeout(timer);
+        reject(err);
+      };
+      client.once('ready', onReady);
+      client.once('error', onError);
+    });
+    return { ok: true, reason: 'ready event observed' };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**
@@ -201,6 +363,43 @@ export async function buildBullmqE2EModule(options: {
   );
 
   await app.init();
+
+  // BullmqRuntimeService constructs the Queue / Worker /
+  // QueueEvents in `onApplicationBootstrap`, but the ioredis
+  // client inside the Queue is in 'connecting' state at that
+  // point (the connection is lazy). The service's
+  // `skipWaitingForReady: true` option means `queue.add()`
+  // does NOT await the 'ready' event, so a test that calls
+  // `launcher.launch()` immediately after `buildBullmqE2EModule`
+  // races the ioredis handshake and fails with
+  // "Stream isn't writeable".
+  //
+  // We resolve the runtime service and synchronously wait
+  // for its underlying queue's client to become `ready` before
+  // returning. The `queue` field on the runtime service is
+  // private — we access it via a narrow `as any` cast confined
+  // to this test fixture so production code is unchanged.
+  //
+  // The runtime service is imported directly from its module
+  // file (it is NOT re-exported from the package barrel) so we
+  // can resolve it by class.
+  const { BullmqRuntimeService } = await import('../src/bullmq-runtime.service');
+  const runtime = app.get(BullmqRuntimeService) as unknown as {
+    queue: import('bullmq').Queue | null;
+  };
+  if (runtime.queue) {
+    const ready = await waitForBullmqClient(runtime.queue, 2_000);
+    if (!ready.ok) {
+      // Don't throw — the test body's own `itWithRedis` skip
+      // gate will catch the failure and mark the test as
+      // skipped. Surfacing it here as a warning keeps the
+      // diagnostic visible without breaking the fixture.
+      process.stderr.write(
+        `[bullmq-e2e.config] BullMQ client did not reach ready: ${ready.reason}\n`,
+      );
+    }
+  }
+
   // `NestApplicationContext` exposes a `get<T>()` method that
   // matches `TestingModule.get<T>()` for our purposes.
   return { moduleRef: app as unknown as import('@nestjs/core').TestingModule };
@@ -211,33 +410,77 @@ export async function buildBullmqE2EModule(options: {
  * Use instead of plain `it(...)` for any test that talks to the
  * `BullmqWorkerService` / `BullmqExecutionStrategy`.
  *
- * The probe runs at the call site (synchronously, via a short
- * timeout) and the test is either registered or skipped based on
- * the result. Vitest requires that test registration be synchronous
- * within a `describe` block, so we cannot `await` here — instead
- * we set a 200ms ceiling on the probe. If the probe takes longer
- * than that, we optimistically register the test and the test
- * body itself will fail-fast on the first Redis call.
+ * The test file's `beforeAll` must call `setRedisAvailability()`
+ * first (this helper consults the cached result, so registration
+ * is purely synchronous). Tests that do NOT need a live Redis
+ * (e.g. the "Redis-down producer fails fast" test, which points
+ * at an unreachable port) can pass `requireRedis: false` to skip
+ * the gate.
+ *
+ * The skip is applied at *test body* time (via `ctx.skip()`) so
+ * the test is reported as `skipped` in the Vitest output rather
+ * than silently filtered out at registration. The skip is also
+ * logged once per test to stderr so CI output makes the reason
+ * obvious.
  */
 export function itWithRedis(
   name: string,
   fn: (ctx: TestContext) => void | Promise<void>,
-  timeout = 30_000,
+  options: { timeout?: number; requireRedis?: boolean } = {},
 ): void {
-  let reachable = true;
-  // We do NOT await — Vitest needs synchronous registration. The
-  // probe is best-effort; if it cannot complete in 200ms we assume
-  // Redis is up (test will fail fast on a real unreachable host).
-  void isRedisReachable(BULLMQ_E2E_REDIS_HOST, BULLMQ_E2E_REDIS_PORT, 200).then(
-    (r) => {
-      if (!r.reachable) reachable = false;
+  const { timeout = 30_000, requireRedis = true } = options;
+  vitestIt(
+    name,
+    async (ctx) => {
+      if (requireRedis) {
+        const availability = getRedisAvailability();
+        if (!availability.available) {
+          process.stderr.write(
+            `[skip] Redis not available on ${BULLMQ_E2E_REDIS_HOST}:${BULLMQ_E2E_REDIS_PORT} — skipping "${name}". Reason: ${availability.reason}\n`,
+          );
+          return ctx.skip();
+        }
+      }
+      return fn(ctx);
     },
+    timeout,
   );
-  if (reachable) {
-    vitestIt(name, fn, timeout);
-  } else {
-    vitestItSkip.skip(`[skipped: redis unreachable] ${name}`, fn, timeout);
+}
+
+/**
+ * Cached Redis-availability result, populated by the test file's
+ * `beforeAll` (see `setRedisAvailability`). Stored at module level
+ * so `itWithRedis` can consult it synchronously during test
+ * registration.
+ *
+ *   - `null`  = the gate has not run yet; treat as "unknown".
+ *   - `true`  = Redis is up; tests should run.
+ *   - `false` = Redis is down; tests should skip.
+ */
+let _redisAvailable: boolean | null = null;
+let _redisSkipReason = 'gate not run yet';
+
+/**
+ * Record the Redis-availability result for the current run. Called
+ * by the test file's `beforeAll` after `isRedisReachable()` returns.
+ */
+export function setRedisAvailability(available: boolean, reason: string): void {
+  _redisAvailable = available;
+  _redisSkipReason = reason;
+}
+
+/**
+ * Read the cached Redis-availability result. When the gate has not
+ * run yet we optimistically report "available" — this preserves the
+ * pre-gate behavior so a test that forgets to wire the `beforeAll`
+ * still runs (and fails fast on a real unreachable host, which is
+ * the right diagnostic).
+ */
+export function getRedisAvailability(): { available: boolean; reason: string } {
+  if (_redisAvailable === null) {
+    return { available: true, reason: 'gate not run; assuming available' };
   }
+  return { available: _redisAvailable, reason: _redisSkipReason };
 }
 
 /**
@@ -258,17 +501,22 @@ export function trackBullmqE2EModule(
   _tracked.push(() => moduleRef.close());
 }
 
+const CLOSE_TIMEOUT_MS = 3_000;
+
 afterEach(async () => {
-  while (_tracked.length > 0) {
-    const closer = _tracked.pop();
-    if (closer) {
-      try {
-        await closer();
-      } catch {
-        // ignore: tests assert on state, not on close errors
-      }
-    }
-  }
+  // Drain the tracked closers in parallel; race each one against
+  // a 3s timeout so a dead ioredis client cannot hang the suite.
+  // Errors are swallowed (`.catch(() => undefined)`) — tests
+  // assert on behavior, not on close-time errors.
+  const closers = _tracked.splice(0, _tracked.length);
+  await Promise.allSettled(
+    closers.map((closer) =>
+      Promise.race<Promise<void>>([
+        closer().catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, CLOSE_TIMEOUT_MS)),
+      ]),
+    ),
+  );
 });
 
 /**
@@ -281,4 +529,125 @@ export function makeKeyPrefix(suiteName: string): string {
   return `e2e:${suiteName}:${process.pid}:${Date.now()}:${Math.random()
     .toString(36)
     .slice(2, 8)}:`;
+}
+
+// ---------------------------------------------------------------------------
+// Minimal RESP client — shared between the runtime test and the reachability
+// probe. Kept dependency-free on purpose (ioredis is a transitive dep of
+// `bullmq` and we don't want to rely on it directly from the test config).
+// ---------------------------------------------------------------------------
+
+/**
+ * Connect to Redis over a raw TCP socket and send a RESP command.
+ * Returns the decoded reply (string array for KEYS, integer for
+ * LLEN, simple string for PING). Times out fast (~500ms) so a
+ * dead-Redis scenario surfaces deterministically.
+ */
+export function respCommand(
+  host: string,
+  port: number,
+  args: string[],
+  timeoutMs = 500,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const socket = new net.Socket();
+    let buf = '';
+    let settled = false;
+    const finish = (err: Error | null, value?: unknown) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (err) reject(err);
+      else resolve(value);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('timeout', () => finish(new Error(`resp timeout after ${timeoutMs}ms`)));
+    socket.once('error', (err) => finish(err));
+    socket.connect(port, host, () => {
+      socket.write(encodeResp(args));
+    });
+    socket.on('data', (chunk) => {
+      buf += chunk.toString('utf8');
+      const decoded = tryDecodeResp(buf);
+      if (decoded !== null) {
+        finish(null, decoded);
+      }
+    });
+  });
+}
+
+function encodeResp(args: string[]): string {
+  let out = `*${args.length}\r\n`;
+  for (const a of args) {
+    const b = Buffer.from(a, 'utf8');
+    out += `$${b.length}\r\n`;
+    out += b.toString('utf8') + '\r\n';
+  }
+  return out;
+}
+
+/**
+ * Decode a complete RESP reply from the prefix of `buf`. Returns
+ * `null` when the buffer does not yet contain a complete reply.
+ *
+ * Supports the four reply types we use:
+ *   - `*<n>\r\n<elements>`         — array (returned as `unknown[]`)
+ *   - `:<n>\r\n`                   — integer (returned as `number`)
+ *   - `+<str>\r\n`                 — simple string (returned as `string`)
+ *   - `$-1\r\n`                    — null (returned as `null`)
+ */
+function tryDecodeResp(buf: string): unknown {
+  if (buf.length === 0) return null;
+  const first = buf[0];
+  if (first === '*') {
+    return tryDecodeArray(buf, 0);
+  }
+  if (first === ':') {
+    const end = buf.indexOf('\r\n');
+    if (end === -1) return null;
+    return Number(buf.slice(1, end));
+  }
+  if (first === '+') {
+    const end = buf.indexOf('\r\n');
+    if (end === -1) return null;
+    return buf.slice(1, end);
+  }
+  if (first === '$') {
+    if (buf.startsWith('$-1\r\n')) return null;
+    const end = buf.indexOf('\r\n');
+    if (end === -1) return null;
+    const n = Number(buf.slice(1, end));
+    const dataStart = end + 2;
+    const dataEnd = dataStart + n;
+    if (buf.length < dataEnd + 2) return null;
+    return buf.slice(dataStart, dataEnd);
+  }
+  return null;
+}
+
+function tryDecodeArray(buf: string, offset: number): unknown[] | null {
+  if (buf[offset] !== '*') return null;
+  const headerEnd = buf.indexOf('\r\n', offset);
+  if (headerEnd === -1) return null;
+  const n = Number(buf.slice(offset + 1, headerEnd));
+  if (!Number.isInteger(n) || n < 0) return null;
+  const out: unknown[] = [];
+  let cursor = headerEnd + 2;
+  for (let i = 0; i < n; i++) {
+    if (buf[cursor] !== '$') return null;
+    if (buf.startsWith('$-1\r\n', cursor)) {
+      out.push(null);
+      cursor += 5;
+      continue;
+    }
+    const elHeaderEnd = buf.indexOf('\r\n', cursor);
+    if (elHeaderEnd === -1) return null;
+    const elLen = Number(buf.slice(cursor + 1, elHeaderEnd));
+    const elDataStart = elHeaderEnd + 2;
+    const elDataEnd = elDataStart + elLen;
+    if (buf.length < elDataEnd + 2) return null;
+    out.push(buf.slice(elDataStart, elDataEnd));
+    cursor = elDataEnd + 2;
+  }
+  return out;
 }

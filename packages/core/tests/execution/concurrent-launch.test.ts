@@ -29,7 +29,7 @@ function makeTaskletJob(
         id: 's1',
         tasklet: {
           kind: RefKind.BuilderLambda,
-          fn: async () => {
+          fn: () => {
             if (opts.throwOnRun) {
               throw new Error('boom');
             }

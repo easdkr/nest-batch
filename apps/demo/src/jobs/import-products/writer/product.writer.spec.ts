@@ -24,7 +24,13 @@ function makeEm(opts: { throwUnique?: boolean } = {}): { em: any; persistAndFlus
       throw new UniqueConstraintViolationException(driverErr);
     }
   });
-  const em = { persistAndFlush };
+  // ProductWriter.write() wraps each persistAndFlush in em.transactional;
+  // the mock invokes the callback with a fake txEm that delegates to the
+  // same persistAndFlush spy so call-count assertions still observe it.
+  const transactional = vi.fn(async (fn: (txEm: any) => Promise<any>) => {
+    return fn({ persistAndFlush, flush: vi.fn() });
+  });
+  const em = { persistAndFlush, transactional };
   return { em, persistAndFlush };
 }
 
@@ -36,8 +42,11 @@ describe('ProductWriter', () => {
 
     await writer.write(items);
 
-    expect(persistAndFlush).toHaveBeenCalledTimes(1);
-    expect(persistAndFlush).toHaveBeenCalledWith(items);
+    // Per-row savepoint: persistAndFlush is called once per item.
+    expect(persistAndFlush).toHaveBeenCalledTimes(3);
+    expect(persistAndFlush).toHaveBeenNthCalledWith(1, items[0]);
+    expect(persistAndFlush).toHaveBeenNthCalledWith(2, items[1]);
+    expect(persistAndFlush).toHaveBeenNthCalledWith(3, items[2]);
   });
 
   test('2 valid + 1 with duplicate SKU throws DuplicateSkuError', async () => {

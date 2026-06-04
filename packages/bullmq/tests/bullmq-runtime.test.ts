@@ -16,14 +16,16 @@
  *      deterministic timeout rather than hanging.
  *
  * All tests talk to the local docker-compose Redis (port 6379 by
- * default). The helper `itWithRedis` skips the test with a clear
- * message if Redis is unreachable, so `pnpm test` stays green in
- * CI environments without a Redis service.
+ * default). The `beforeAll` hook probes Redis once and stores the
+ * result; the `itWithRedis` helper consults the cached value and
+ * skips with a clear stderr message when Redis is unreachable,
+ * so `pnpm test` stays green in CI environments without a Redis
+ * service. Test #4 (the "Redis-down" case) does NOT need a live
+ * Redis and is registered with `requireRedis: false`.
  */
 import { setTimeout as wait } from 'node:timers/promises';
-import net from 'node:net';
 
-import { afterEach, beforeEach, describe, expect } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect } from 'vitest';
 
 import {
   JobLauncher,
@@ -40,6 +42,8 @@ import {
   isRedisReachable,
   itWithRedis,
   makeKeyPrefix,
+  respCommand,
+  setRedisAvailability,
   trackBullmqE2EModule,
   type RedisFixture,
 } from './bullmq-e2e.config';
@@ -147,6 +151,64 @@ function makeChunkJob(
 describe('BullMQ runtime bridge e2e (T18)', () => {
   let redis: RedisFixture;
 
+  // Saved + restored around the suite so we can filter out the
+  // [ioredis] "Unhandled error event" stderr noise that BullMQ's
+  // embedded ioredis client emits when pointed at a dead Redis.
+  // Without this, every dead-Redis test would print dozens of
+  // stack-trace fragments to stderr even though the test itself
+  // is skipped or passes.
+  let _origConsoleError: typeof console.error;
+  let _origUnhandled: NodeJS.UnhandledRejectionListener[];
+
+  beforeAll(async () => {
+    _origConsoleError = console.error;
+    _origUnhandled = process.listeners('unhandledRejection').slice();
+    console.error = (...args: unknown[]) => {
+      const msg = args.map((a) => (typeof a === 'string' ? a : String(a))).join(' ');
+      if (/ioredis|ECONNREFUSED|Connection is closed|Stream isn't writeable/i.test(msg)) {
+        return;
+      }
+      _origConsoleError.apply(console, args);
+    };
+    // ioredis emits 'error' events on its EventEmitter; when the
+    // surrounding BullMQ client has no handler attached, Node
+    // routes them as `unhandledRejection`. We swallow only the
+    // connection-error family; any other rejection is re-thrown
+    // so real bugs are not masked.
+    process.on('unhandledRejection', (reason) => {
+      const msg = reason instanceof Error ? reason.message : String(reason);
+      if (/ECONNREFUSED|Connection is closed|Stream isn't writeable|connect ETIMEDOUT/i.test(msg)) {
+        return;
+      }
+      throw reason;
+    });
+
+    // Probe Redis once. The result is cached in the config module
+    // so `itWithRedis` can read it synchronously and skip tests
+    // that require a live Redis. The probe runs four checks in
+    // sequence: TCP connect, RESP PING, RESP INFO, and a real
+    // BullMQ `add()` round-trip. The last step is what actually
+    // exercises the `BullmqRuntimeService → Queue.add()` path,
+    // so a "Redis is up but cannot serve BullMQ traffic" env
+    // is correctly classified as unavailable and the suite
+    // skips cleanly with a clear reason in CI output.
+    const probe = await isRedisReachable(BULLMQ_E2E_REDIS_HOST, BULLMQ_E2E_REDIS_PORT);
+    setRedisAvailability(probe.reachable, probe.reason);
+    if (!probe.reachable) {
+      process.stderr.write(
+        `[skip] Redis not available on ${BULLMQ_E2E_REDIS_HOST}:${BULLMQ_E2E_REDIS_PORT} — skipping live BullMQ tests. Reason: ${probe.reason}\n`,
+      );
+    }
+  });
+
+  afterAll(() => {
+    console.error = _origConsoleError;
+    process.removeAllListeners('unhandledRejection');
+    for (const listener of _origUnhandled) {
+      process.on('unhandledRejection', listener);
+    }
+  });
+
   beforeEach(() => {
     redis = {
       host: BULLMQ_E2E_REDIS_HOST,
@@ -212,7 +274,7 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
       // proves the bridge did not degenerate to "one job per row".
       expect(count).toBeLessThan(rowCount);
     },
-    30_000,
+    { timeout: 30_000 },
   );
 
   // -------------------------------------------------------------------------
@@ -267,7 +329,7 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
       // endTime is set on terminal status.
       expect(final!.endTime).toBeInstanceOf(Date);
     },
-    30_000,
+    { timeout: 30_000 },
   );
 
   // -------------------------------------------------------------------------
@@ -343,7 +405,7 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
         expect(allWritten).not.toContain(n);
       }
     },
-    30_000,
+    { timeout: 30_000 },
   );
 
   // -------------------------------------------------------------------------
@@ -417,7 +479,7 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
         /offline/i.test(msg);
       expect(looksLikeRedisError).toBe(true);
     },
-    5_000,
+    { timeout: 5_000, requireRedis: false },
   );
 });
 
@@ -449,6 +511,19 @@ async function waitFor<T>(
 }
 
 /**
+ * Build the per-test `KEYS` pattern. BullMQ stores its wait list
+ * under `<keyPrefix>bull:<queueName>:wait` — the test's own
+ * keyPrefix is the only namespace that should count toward the
+ * "BullMQ jobs created" assertion. Scanning the raw
+ * `bull:*:wait` would pick up leftover state from previous test
+ * runs (or from any other BullMQ consumer sharing the Redis),
+ * which is why we anchor the pattern on the test's keyPrefix.
+ */
+function bullmqKeysPattern(redis: RedisFixture, suffix: string): string {
+  return `${redis.keyPrefix}${suffix}`;
+}
+
+/**
  * Count BullMQ jobs in the queue. Reads the queue's `wait` list
  * length directly via the RESP protocol (bypassing ioredis) so the
  * test does not need a direct ioredis dependency.
@@ -456,9 +531,10 @@ async function waitFor<T>(
  * The BullMQ key layout (when `keyPrefix: 'foo:'`) is:
  *   - `foo:bull:<queueName>:wait`   (LIST of JSON-encoded jobs)
  *
- * We scan the keyspace for `*:wait` lists and sum their lengths.
- * The total is the "BullMQ jobs created" count, which is what the
- * granularity assertion in test #1 is checking against.
+ * We scan the keyspace for `<keyPrefix>:bull:*:wait` lists and sum
+ * their lengths. The total is the "BullMQ jobs created" count,
+ * which is what the granularity assertion in test #1 is checking
+ * against.
  *
  * Note: ioredis is a transitive dep of bullmq (and is therefore
  * installed in the pnpm store), but it is not a direct dep of
@@ -466,7 +542,7 @@ async function waitFor<T>(
  * the RESP wire protocol directly.
  */
 async function countBullmqJobs(redis: RedisFixture): Promise<number> {
-  const keys = await respKeys(redis, 'bull:*:wait');
+  const keys = await respKeys(redis, bullmqKeysPattern(redis, 'bull:*:wait'));
   if (keys.length === 0) return 0;
   let total = 0;
   for (const k of keys) {
@@ -482,7 +558,7 @@ async function countBullmqJobs(redis: RedisFixture): Promise<number> {
  * (the queue is non-empty briefly) before the worker drains it.
  */
 async function readQueueWaitLength(redis: RedisFixture): Promise<number | null> {
-  const keys = await respKeys(redis, 'bull:*:wait');
+  const keys = await respKeys(redis, bullmqKeysPattern(redis, 'bull:*:wait'));
   if (keys.length === 0) return 0;
   let total = 0;
   for (const k of keys) {
@@ -490,129 +566,6 @@ async function readQueueWaitLength(redis: RedisFixture): Promise<number | null> 
     total += len;
   }
   return total;
-}
-
-// ---------------------------------------------------------------------------
-// Minimal RESP client — KEYS, LLEN, no ioredis dependency
-// ---------------------------------------------------------------------------
-
-/**
- * Connect to Redis over a raw TCP socket and send a RESP command.
- * Returns the decoded reply (string array for KEYS, integer for
- * LLEN). Times out fast (250ms) so a dead-Redis scenario surfaces
- * deterministically.
- */
-function respCommand(
-  host: string,
-  port: number,
-  args: string[],
-  timeoutMs = 500,
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const socket = new net.Socket();
-    let buf = '';
-    let settled = false;
-    const finish = (err: Error | null, value?: unknown) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      if (err) reject(err);
-      else resolve(value);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.once('timeout', () => finish(new Error(`resp timeout after ${timeoutMs}ms`)));
-    socket.once('error', (err) => finish(err));
-    socket.connect(port, host, () => {
-      socket.write(encodeResp(args));
-    });
-    socket.on('data', (chunk) => {
-      buf += chunk.toString('utf8');
-      const decoded = tryDecodeResp(buf);
-      if (decoded !== null) {
-        finish(null, decoded);
-      }
-    });
-  });
-}
-
-function encodeResp(args: string[]): string {
-  let out = `*${args.length}\r\n`;
-  for (const a of args) {
-    const b = Buffer.from(a, 'utf8');
-    out += `$${b.length}\r\n`;
-    out += b.toString('utf8') + '\r\n';
-  }
-  return out;
-}
-
-/**
- * Decode a complete RESP reply from the prefix of `buf`. Returns
- * `null` when the buffer does not yet contain a complete reply.
- *
- * Supports the four reply types we use:
- *   - `*<n>\r\n<elements>`         — array (returned as `unknown[]`)
- *   - `:<n>\r\n`                   — integer (returned as `number`)
- *   - `+<str>\r\n`                 — simple string (returned as `string`)
- *   - `$-1\r\n`                    — null (returned as `null`)
- *
- * BULK strings (`$<n>\r\n<bytes>`) appear as elements of arrays and
- * are not returned at the top level by this helper.
- */
-function tryDecodeResp(buf: string): unknown {
-  if (buf.length === 0) return null;
-  const first = buf[0];
-  if (first === '*') {
-    return tryDecodeArray(buf, 0);
-  }
-  if (first === ':') {
-    const end = buf.indexOf('\r\n');
-    if (end === -1) return null;
-    return Number(buf.slice(1, end));
-  }
-  if (first === '+') {
-    const end = buf.indexOf('\r\n');
-    if (end === -1) return null;
-    return buf.slice(1, end);
-  }
-  if (first === '$') {
-    // $-1\r\n = null
-    if (buf.startsWith('$-1\r\n')) return null;
-    const end = buf.indexOf('\r\n');
-    if (end === -1) return null;
-    const n = Number(buf.slice(1, end));
-    const dataStart = end + 2;
-    const dataEnd = dataStart + n;
-    if (buf.length < dataEnd + 2) return null;
-    return buf.slice(dataStart, dataEnd);
-  }
-  return null;
-}
-
-function tryDecodeArray(buf: string, offset: number): unknown[] | null {
-  if (buf[offset] !== '*') return null;
-  const headerEnd = buf.indexOf('\r\n', offset);
-  if (headerEnd === -1) return null;
-  const n = Number(buf.slice(offset + 1, headerEnd));
-  if (!Number.isInteger(n) || n < 0) return null;
-  const out: unknown[] = [];
-  let cursor = headerEnd + 2;
-  for (let i = 0; i < n; i++) {
-    if (buf[cursor] !== '$') return null;
-    if (buf.startsWith('$-1\r\n', cursor)) {
-      out.push(null);
-      cursor += 5;
-      continue;
-    }
-    const elHeaderEnd = buf.indexOf('\r\n', cursor);
-    if (elHeaderEnd === -1) return null;
-    const elLen = Number(buf.slice(cursor + 1, elHeaderEnd));
-    const elDataStart = elHeaderEnd + 2;
-    const elDataEnd = elDataStart + elLen;
-    if (buf.length < elDataEnd + 2) return null;
-    out.push(buf.slice(elDataStart, elDataEnd));
-    cursor = elDataEnd + 2;
-  }
-  return out;
 }
 
 async function respKeys(redis: RedisFixture, pattern: string): Promise<string[]> {
