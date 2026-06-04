@@ -406,4 +406,22 @@ describe('JobExecutor', () => {
     expect(result.status).toBe(JobStatus.FAILED);
     expect(result.exitMessage).toContain('recovery-also-broken');
   });
+
+  // -------------------------------------------------------------------------
+  // 12) 1-step tasklet that completes successfully persists exitCode='COMPLETED'
+  // (regression: the COMPLETED branch of updateJobExecution used to drop
+  //  exitCode, leaving the DB row at the default empty string).
+  // -------------------------------------------------------------------------
+  test('12) 1-step tasklet that completes successfully persists exitCode="COMPLETED"', async () => {
+    const { executor, repository } = makeExecutor();
+    const jobDef = makeJobDef('exit-code-completed', {
+      s1: makeTaskletStep('s1', async () => 'ok'),
+    });
+
+    const execution = await makeStartedExecution(repository);
+    const result = await executor.execute(execution, jobDef);
+
+    expect(result.status).toBe(JobStatus.COMPLETED);
+    expect(result.exitCode).toBe('COMPLETED');
+  });
 });

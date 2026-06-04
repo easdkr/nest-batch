@@ -1,8 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EntityManager, UniqueConstraintViolationException } from '@mikro-orm/core';
-import { ItemWriter } from '@nest-batch/core';
+import { ItemWriter, WriterResult } from '@nest-batch/core';
 import { ProductEntity } from '../../../entities/product.entity';
-import { DuplicateSkuError } from '../../../errors/duplicate-sku.error';
 
 @Injectable()
 export class ProductWriter implements ItemWriter<ProductEntity> {
@@ -10,7 +9,7 @@ export class ProductWriter implements ItemWriter<ProductEntity> {
 
   constructor(private readonly em: EntityManager) {}
 
-  async write(items: ProductEntity[]): Promise<{ written: number; skipped: number }> {
+  async write(items: ProductEntity[]): Promise<WriterResult> {
     if (items.length === 0) return { written: 0, skipped: 0 };
     const failedSkus: string[] = [];
     let written = 0;
@@ -28,18 +27,24 @@ export class ProductWriter implements ItemWriter<ProductEntity> {
         written += 1;
       } catch (err) {
         if (err instanceof UniqueConstraintViolationException) {
+          // Duplicate SKU — record it and continue. The chunk-step
+          // executor reads `skipped` from the returned WriterResult
+          // and rolls it into the step's `skipCount` / `writeCount`,
+          // so duplicates are accounted for as skips rather than
+          // failing the whole chunk (Spring Batch pattern).
           failedSkus.push(item.sku);
           continue;
         }
+        // Non-unique-constraint error: real failure. Re-throw so the
+        // chunk-step executor's retry/skip policy sees it.
         throw err;
       }
     }
     if (failedSkus.length > 0) {
-      const lastSku = failedSkus[failedSkus.length - 1];
-      if (lastSku !== undefined) {
-        throw new DuplicateSkuError(lastSku);
-      }
+      this.logger.warn(
+        `Skipped ${failedSkus.length} row(s) with duplicate SKU: ${failedSkus.join(', ')}`,
+      );
     }
-    return { written, skipped: 0 };
+    return { written, skipped: failedSkus.length };
   }
 }

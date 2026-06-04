@@ -307,6 +307,7 @@ export class JobExecutor {
         await this.repository.updateJobExecution(execution.id, {
           status: JobStatus.COMPLETED,
           endTime: new Date(),
+          exitCode: 'COMPLETED',
         });
       }
     } catch (err) {

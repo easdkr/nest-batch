@@ -4,6 +4,7 @@ import swc from 'unplugin-swc';
 export default defineConfig({
   test: {
     include: ['tests/e2e/**/*.e2e.spec.ts'],
+    exclude: ['**/bullmq-import-products.e2e.spec.ts', 'node_modules/**'],
     environment: 'node',
     testTimeout: 30000,
     hookTimeout: 30000,

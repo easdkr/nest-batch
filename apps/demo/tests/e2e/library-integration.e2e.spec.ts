@@ -35,8 +35,11 @@ import {
 } from '@nest-batch/core';
 import {
   BATCH_META_ENTITIES,
+  JobExecutionEntity,
+  JobInstanceEntity,
   MikroORMJobRepository,
   MikroORMTransactionManager,
+  StepExecutionEntity,
 } from '@nest-batch/mikro-orm';
 import { ProductEntity } from '../../src/entities/product.entity';
 

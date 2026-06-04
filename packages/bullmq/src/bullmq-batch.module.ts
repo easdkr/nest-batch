@@ -8,6 +8,31 @@ import {
   EXECUTION_STRATEGY,
   type AdapterProvider,
 } from '@nest-batch/core';
+// `JOB_REPOSITORY_TOKEN` is imported from `@nest-batch/core` (above
+// in the existing `core` import surface) by the sibling runtime
+// service. It is intentionally NOT added to this module's `exports`
+// or `providers`:
+//   - The host wires the actual `JobRepository` via
+//     `NestBatchModule.forRoot({ repository: { provide: JOB_REPOSITORY_TOKEN, ... } })`.
+//   - `NestBatchModule` is `global: true`, so the binding lives in
+//     the application-level container and `BullmqRuntimeService`
+//     (this module's only consumer of the token) resolves it via
+//     the global module chain — no local export or provider needed.
+//   - Adding the token to `exports` alone fails NestJS's static
+//     `validateExportedProvider` check (the symbol is not in this
+//     module's `providers` / `imports` list of metatypes). Adding
+//     it to `providers` as a passthrough creates a DI cycle:
+//     the local lookup for the token finds the in-progress
+//     passthrough factory and returns `undefined`, which breaks
+//     the worker's `repository.getJobExecution(...)` call.
+// Verifying the wiring: `pnpm --filter @nest-batch/bullmq test`
+// must reach the runtime service construction (it does, in
+// `tests/bullmq-runtime.test.ts` — the `Redis-down` test path
+// instantiates the full DI graph and the `DB-first` test reaches
+// `BullmqRuntimeService.launch()` and the worker's `processJob`).
+// If the global chain were broken, both would fail with
+// `UnknownDependenciesException` for `JOB_REPOSITORY_TOKEN` — they
+// do not.
 
 import { BullMqExecutionStrategy } from './bullmq-execution-strategy';
 import { BullmqRuntimeService } from './bullmq-runtime.service';
