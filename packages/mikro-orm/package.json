@@ -10,7 +10,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly",
+    "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly -p tsconfig.build.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
