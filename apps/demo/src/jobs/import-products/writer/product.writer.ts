@@ -35,7 +35,10 @@ export class ProductWriter implements ItemWriter<ProductEntity> {
       }
     }
     if (failedSkus.length > 0) {
-      throw new DuplicateSkuError(failedSkus[failedSkus.length - 1]);
+      const lastSku = failedSkus[failedSkus.length - 1];
+      if (lastSku !== undefined) {
+        throw new DuplicateSkuError(lastSku);
+      }
     }
     return { written, skipped: 0 };
   }

@@ -1697,19 +1697,19 @@ Wave FINAL (After ALL tasks — 4 parallel reviews, then user okay):
 
 > 4 review agents run in PARALLEL. ALL must APPROVE. Present consolidated results to user and get explicit "okay" before completing.
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
+- [x] F1. **Plan Compliance Audit** — `oracle`
   Read the plan end-to-end. For each Must Have: verify implementation exists (read file, run command). For each Must NOT Have: search codebase for forbidden patterns, including `@nest-batch/drizzle`, core imports of BullMQ/ORM/cron implementation packages, and lazy optional `require()` patterns. Check evidence files exist in `.omo/evidence/`. Compare deliverables against plan.
   Output: `Must Have [N/N] | Must NOT Have [N/N] | Tasks [N/N] | VERDICT: APPROVE/REJECT`
 
-- [ ] F2. **Code Quality Review** — `unspecified-high`
+- [x] F2. **Code Quality Review** — `unspecified-high`
   Run `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`. Review changed files for `as any`, `@ts-ignore`, empty catches, unclosed Redis/DB resources, console logs, commented-out code, circular package imports, and public API drift.
   Output: `Build [PASS/FAIL] | Lint [PASS/FAIL] | Tests [N pass/N fail] | Files [N clean/N issues] | VERDICT`
 
-- [ ] F3. **Real Manual QA** — `unspecified-high`
+- [x] F3. **Real Manual QA** — `unspecified-high`
   Start from clean state with Redis + DB. Execute EVERY QA scenario from EVERY task, including BullMQ demo e2e, package dry-run, CI-equivalent local commands, and cron schedule tests. Save evidence to `.omo/evidence/final-qa/`.
   Output: `Scenarios [N/N pass] | Integration [N/N] | Edge Cases [N tested] | VERDICT`
 
-- [ ] F4. **Scope Fidelity Check** — `deep`
+- [x] F4. **Scope Fidelity Check** — `deep`
   Compare actual diff to this plan. Verify no Drizzle package, no admin UI, no metrics/tracing implementations, no alternative queue transports, no hidden optional lazy dependencies, and no core integration imports. Flag unaccounted files and scope creep.
   Output: `Tasks [N/N compliant] | Contamination [CLEAN/N issues] | Unaccounted [CLEAN/N files] | VERDICT`
 
