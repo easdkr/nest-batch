@@ -381,7 +381,7 @@ Max Concurrent: 4 (Wave 1)
 
 ### Wave 2 — VERIFICATION
 
-- [ ] 5. Re-run F3 scenarios with all fixes applied
+- [x] 5. Re-run F3 scenarios with all fixes applied
 
   **What to do**:
   - `pnpm --filter @nest-batch/core test` → 532/532 pass
@@ -454,7 +454,7 @@ Max Concurrent: 4 (Wave 1)
 
   **Commit**: NO (검증만)
 
-- [ ] 6. Final documentation and evidence consolidation
+- [x] 6. Final documentation and evidence consolidation
 
   **What to do**:
   - 모든 evidence 파일을 `.omo/evidence/`에 정리
@@ -549,3 +549,74 @@ PGPASSWORD=demo psql -c "SELECT status, exit_code FROM batch_job_execution ORDER
 - [ ] Live demo: COMPLETED jobs have exit_code='COMPLETED'
 - [ ] Live demo: BATCH_TRANSPORT=bullmq boots successfully
 - [ ] F3 REJECT items all resolved
+
+---
+
+## FOLLOW-UP REQUIRED
+
+> **Status:** REJECTED — DoD #6 is **not** met. The plan landed 4 of 5 fixes correctly, but Fix #2 (BullmqBatchModule DI for `JOB_REPOSITORY_TOKEN`) was implemented as a doc-only update and did not change runtime behavior. A new task is required before this plan can be closed.
+
+### Bug #2 is NOT actually fixed
+
+The original F3 Real Manual QA flagged Bug #2 as **CRITICAL #1** — the live demo in `BATCH_TRANSPORT=bullmq` mode crashes with `UnknownDependenciesException` during `NestFactory.create` because `BullmqRuntimeService` cannot resolve `JOB_REPOSITORY_TOKEN`. The plan's Task 2 added explanatory comments to `packages/bullmq/src/bullmq-batch.module.ts` describing the "global module chain" — but did not change any binding, export, or injection token. The exception still occurs.
+
+Evidence: `.omo/evidence/task-5-demo-bullmq.log` and `.omo/evidence/task-5-bullmq-e2e.log` show the same `UnknownDependenciesException` raised in both the live demo and the `test:e2e:bullmq` suite, with the same module and token the original F3 reported.
+
+### Root cause (verified by reading the source, not just by reading the error)
+
+The plan's doc-only fix assumed that `NestBatchModule`'s `global: true` scope would bridge the DI graph for `BullmqBatchModule`. That assumption is correct **in principle** — but only if the binding under the symbol key actually exists. It does not, because of a token identity mismatch:
+
+- `packages/bullmq/src/bullmq-runtime.service.ts:148` injects the **symbol** token:
+  ```ts
+  @Inject(JOB_REPOSITORY_TOKEN)  // Symbol.for('@nest-batch/core/JOB_REPOSITORY')
+  ```
+- `apps/demo/src/app.module.ts` wires the binding to the **class** token:
+  ```ts
+  NestBatchModule.forRoot({
+    repository: { provide: JobRepository, useClass: MikroORMJobRepository },
+    //                                ^^^^^^^^^^^^ class, not JOB_REPOSITORY_TOKEN
+  })
+  ```
+- `packages/core/src/module/nest-batch.module.ts:514-516` adds the **class** to `exports` (via `extractToken(repository).provide`), never the symbol.
+
+Result: `BullmqRuntimeService` cannot resolve `JOB_REPOSITORY_TOKEN`. The "global module chain" the fix's doc comment describes does not bridge a symbol↔class gap; the binding literally does not exist under that key. `UnknownDependenciesException` is the correct, deterministic outcome of this mis-wiring. The fix proposed in this plan did not address the cause.
+
+### Three possible code-level fixes (any one of which would resolve Bug #2)
+
+**Option A — Fix the demo (cheapest, smallest diff, recommended for the immediate unblock):**
+Change `apps/demo/src/app.module.ts` to bind the repository to the symbol, not the class:
+```ts
+NestBatchModule.forRoot({
+  repository: { provide: JOB_REPOSITORY_TOKEN, useClass: MikroORMJobRepository },
+  //                                ^^^^^^^^^^^^^^^^^ symbol, matches the runtime's @Inject
+})
+```
+One-line change in the demo. No library changes required. The class-typed binding was the wrong key from the start.
+
+**Option B — Fix the runtime to inject the class:**
+Change `packages/bullmq/src/bullmq-runtime.service.ts:148` from
+```ts
+@Inject(JOB_REPOSITORY_TOKEN) private readonly jobRepository: JobRepository,
+```
+to
+```ts
+@Inject(JobRepository) private readonly jobRepository: JobRepository,
+```
+Aligns the runtime with what the demo (and any other consumer) already wires. Requires care so that consumers who bind to the symbol still resolve.
+
+**Option C — Fix the library to export the symbol and migrate the demo:**
+- Add `JOB_REPOSITORY_TOKEN` to `packages/core/src/module/nest-batch.module.ts` exports unconditionally (not gated on what the user passed in `repository.provide`).
+- Update `apps/demo/src/app.module.ts` to use the symbol: `{ provide: JOB_REPOSITORY_TOKEN, useClass: MikroORMJobRepository }`.
+- Most defensive option: the contract is now explicit on the library side and the symbol↔class mismatch cannot recur in another host application.
+
+**Recommendation:** Option A for the immediate unblock (smallest diff, fastest to verify against the existing live-demo gate). Option C if there is appetite to harden the library contract so this regression class cannot reappear in another consumer.
+
+### Status
+
+- **Fix #2 in this plan:** REJECTED. Doc-only; the underlying DI bug is unchanged.
+- **DoD #6 ("Redis + DB e2e proves BullMQ transport writes canonical execution state through ORM repositories"):** **NOT MET.** The bullmq live demo cannot reach the state-writing stage at all — the worker process crashes on startup with `UnknownDependenciesException`.
+- **Tests passing:** 572 (533 core + 6 bullmq + 19 demo unit + 14 demo e2e). Zero regressions across the four green suites.
+- **Tests failing:** `pnpm --filter @nest-batch/demo test:e2e:bullmq` (3 tests, 1 unhandled error, exit 1) and the live bullmq demo (does not boot).
+- **Required follow-up:** A new task must (1) pick one of Options A / B / C, (2) land the corresponding code change + a regression test that boots `AppModule` with `BATCH_TRANSPORT=bullmq` against real Postgres + Redis, (3) re-run the F3 live-demo bullmq scenario and `test:e2e:bullmq` to confirm the green path, and (4) add `test:e2e:bullmq` to CI so this regression class is caught at PR time, not in a manual F3 rerun.
+
+The companion summary report for the whole plan lives at `.omo/evidence/FINAL-FIX-REPORT.md`.
