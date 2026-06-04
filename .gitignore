@@ -33,6 +33,7 @@ yarn-error.log*
 # OMO evidence (task artifacts)
 .omo/evidence/*
 .omo/run-continuation/*
+.omo/boulder.json
 
 # Test artifacts
 .jest-cache/
