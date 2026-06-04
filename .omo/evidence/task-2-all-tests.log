@@ -1,0 +1,48 @@
+=== F3 RERUN — All Test Suite Results ===
+Date: 2026-06-04 19:13-19:14 (Pacific)
+Build: pnpm build (5 of 6 workspace projects, all successful)
+Node: 24.11.1 (volta)
+
+=== pnpm --filter @nest-batch/core test ===
+Test Files  44 passed (44)
+     Tests  537 passed (537)
+  Duration  1.61s (transform 1.00s, setup 0ms, collect 8.24s, tests 351ms, environment 4ms, prepare 2.36s)
+
+Includes 4 new alias tests (token identity resolution)
+Details: 537 = 533 (prior baseline) + 4 (new alias tests)
+
+=== pnpm --filter @nest-batch/bullmq test ===
+Test Files  2 passed (2)
+     Tests  6 passed (6)
+  Duration  3.75s
+
+Includes "DB-first execution" test (uses InMemoryJobRepository — does not exercise the MikroORM context path)
+
+=== pnpm --filter @nest-batch/demo test ===
+Test Files  4 passed (4)
+     Tests  19 passed (19)
+  Duration  565ms
+
+=== pnpm --filter @nest-batch/demo test:e2e ===
+Test Files  3 passed (3)
+     Tests  14 passed (14)
+  Duration  3.18s
+
+=== pnpm --filter @nest-batch/demo test:e2e:bullmq ===
+Test Files  1 failed (1)
+     Tests  3 failed (3)
+  Duration  16.16s
+
+FAILURE: Scenario 1: Demo BullMQ import-products — waitFor: timed out after 15000ms
+  Root cause: MikroORMJobRepository.getJobExecution raises
+  "ValidationError: Using global EntityManager instance methods for context
+  specific actions is disallowed" when called from the BullMQ worker
+  callback. This is a SEPARATE issue from Bug #2 (DI token identity), and
+  is NOT what the F3 REJECT was about — it was uncovered by the Bug #2
+  fix unblocking the BullMQ worker from running.
+
+Scenarios 2 + 3 fail because of test setup issues (duplicate job registration
+and InvalidFlowGraphError) — these are pre-existing test bugs, not related
+to Bug #2 or the new context issue.
+
+TOTALS (excluding test:e2e:bullmq): 576 tests, 0 failures.

@@ -1,0 +1,113 @@
+
+> @nest-batch/core@0.1.0 test /Users/june/workspace/personal/nest-batch/packages/core
+> vitest run
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v2.1.9 /Users/june/workspace/personal/nest-batch/packages/core
+
+ ✓ tests/core/validation/definition-validator.test.ts (21 tests) 5ms
+ ✓ tests/execution/listener-invoker.test.ts (10 tests) 5ms
+ ✓ tests/execution/chunk-step-executor.test.ts (15 tests) 5ms
+ ✓ tests/execution/job-executor.test.ts (12 tests) 5ms
+ ✓ tests/execution/restart.test.ts (4 tests) 4ms
+[32m[Nest] 534  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: parity-1[39m
+[32m[Nest] 534  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "parity-1" from "DecoratorJob": 1 step(s), 2 listener(s), 0 transition(s)[39m
+[32m[Nest] 534  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: parity-chunk[39m
+[32m[Nest] 534  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "parity-chunk" from "DecoratorChunkJob": 1 step(s), 0 listener(s), 0 transition(s)[39m
+ ✓ tests/builder/builder-api.test.ts (24 tests) 7ms
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: simple-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: discovered-tasklet-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "discovered-tasklet-job" from "DiscoveredTaskletJob": 1 step(s), 2 listener(s), 0 transition(s)[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: simple-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: full-opts-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: discovered-tasklet-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "discovered-tasklet-job" from "DiscoveredTaskletJob": 1 step(s), 2 listener(s), 0 transition(s)[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: discovered-chunk-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "discovered-chunk-job" from "DiscoveredChunkJob": 1 step(s), 0 listener(s), 0 transition(s)[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: no-processor[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "no-processor" from "NoProcessor": 1 step(s), 0 listener(s), 0 transition(s)[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: missing-reader-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: simple-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: simple-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: second-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: third-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: chunk-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: missing-reader-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: missing-writer-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: missing-writer-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: parity[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "parity" from "DecoratorJob": 1 step(s), 2 listener(s), 0 transition(s)[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: tasklet-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: discovered-chunk-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "discovered-chunk-job" from "DiscoveredChunkJob": 1 step(s), 0 listener(s), 0 transition(s)[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: discovered-tasklet-job[39m
+[32m[Nest] 536  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "discovered-tasklet-job" from "DiscoveredTaskletJob": 1 step(s), 2 listener(s), 0 transition(s)[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: multi-step-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: mixed-step-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: chunk-with-items-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: chunk-with-items-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: listeners-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: listeners-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: mixed-listener-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: transition-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: transition-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: simple-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: transition-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: simple-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: second-job[39m
+[32m[Nest] 533  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: simple-job[39m
+ ✓ tests/compiler/definition-compiler.test.ts (13 tests) 7ms
+ ✓ tests/explorer/batch-explorer.test.ts (25 tests) 10ms
+ ✓ tests/execution/provider-token-refs.test.ts (6 tests) 13ms
+ ✓ tests/execution/job-launcher-strategy.test.ts (4 tests) 11ms
+ ✓ tests/module/nest-batch.module.spec.ts (16 tests) 36ms
+ ✓ tests/execution/listener-invocation.test.ts (4 tests) 19ms
+ ✓ tests/module/module-tokens.spec.ts (29 tests) 42ms
+ ✓ tests/scheduling/batch-scheduled.test.ts (25 tests) 7ms
+ ✓ tests/core/execution-context/validator.test.ts (28 tests) 5ms
+ ✓ tests/execution/tasklet-step-executor.test.ts (11 tests) 6ms
+ ✓ tests/core/errors.test.ts (32 tests) 9ms
+ ✓ tests/decorators/item-and-listeners.decorator.test.ts (31 tests) 4ms
+ ✓ tests/execution/job-key.test.ts (18 tests) 7ms
+ ✓ tests/repository/in-memory-job-repository.test.ts (13 tests) 8ms
+ ✓ tests/observability/event-types.test.ts (4 tests) 7ms
+ ✓ tests/policies/skip-policy.test.ts (6 tests) 7ms
+ ✓ tests/execution/concurrent-launch.test.ts (4 tests) 4ms
+ ✓ tests/execution/job-launcher.test.ts (6 tests) 6ms
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: flow-decorator-job[39m
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "flow-decorator-job" from "FlowDecoratorJob": 2 step(s), 0 listener(s), 1 transition(s)[39m
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: flow-decorator-job[39m
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "flow-decorator-job" from "FlowDecoratorJob": 2 step(s), 0 listener(s), 1 transition(s)[39m
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: flow-decorator-end-job[39m
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "flow-decorator-end-job" from "FlowDecoratorEndJob": 1 step(s), 0 listener(s), 1 transition(s)[39m
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: flow-decorator-job[39m
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "flow-decorator-job" from "FlowDecoratorJob": 2 step(s), 0 listener(s), 1 transition(s)[39m
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[BatchExplorer] [39m[32mDiscovered job: flow-decorator-end-job[39m
+[32m[Nest] 597  - [39m06/04/2026, 7:13:49 PM [32m    LOG[39m [38;5;3m[DefinitionCompiler] [39m[32mCompiled job "flow-decorator-end-job" from "FlowDecoratorEndJob": 1 step(s), 0 listener(s), 1 transition(s)[39m
+ ✓ tests/flow/flow-evaluator.test.ts (13 tests) 4ms
+ ✓ tests/decorators/flow.decorator.test.ts (8 tests) 4ms
+ ✓ tests/scheduling/batch-scheduled-inert.test.ts (9 tests) 11ms
+ ✓ tests/core/ir/ir.types.test.ts (14 tests) 3ms
+ ✓ tests/core/boundary/no-forbidden-imports.test.ts (3 tests) 2ms
+ ✓ tests/registry/job-registry.test.ts (8 tests) 4ms
+ ✓ tests/core/execution-context/serializer.test.ts (12 tests) 3ms
+ ✓ tests/core/item/interfaces.test.ts (6 tests) 2ms
+ ✓ tests/policies/retry-policy.test.ts (8 tests) 2ms
+ ✓ tests/listeners/builtin-listeners.test.ts (5 tests) 14ms
+ ✓ tests/e2e/library-smoke.test.ts (3 tests) 12ms
+ ✓ tests/core/status.test.ts (23 tests) 4ms
+ ✓ tests/execution/listener-ordering.test.ts (5 tests) 6ms
+ ✓ tests/execution/listener-invoker-skip.test.ts (6 tests) 3ms
+ ✓ tests/observability/uuid-v7.test.ts (2 tests) 20ms
+ ✓ tests/policies/backoff.test.ts (3 tests) 2ms
+ ✓ tests/decorators/job-step-tasklet.decorator.test.ts (7 tests) 5ms
+ ✓ tests/transaction/in-memory-transaction-manager.test.ts (5 tests) 4ms
+ ✓ tests/core/repository/contract.test.ts (32 tests) 6ms
+ ✓ tests/core/api/public-api.test.ts (4 tests) 3ms
+
+ Test Files  44 passed (44)
+      Tests  537 passed (537)
+   Start at  19:13:48
+   Duration  1.61s (transform 1.00s, setup 0ms, collect 8.24s, tests 351ms, environment 4ms, prepare 2.36s)
+

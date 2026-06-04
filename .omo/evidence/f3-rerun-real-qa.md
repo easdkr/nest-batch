@@ -1,15 +1,64 @@
 # F3 Re-run — Real Manual QA Report
 
-**Plan:** `nest-batch-critical-fixes`
-**Date:** 2026-06-04
-**Scope:** Re-run F3 (from `nest-batch-architecture-enhancement`) after 4 critical/high bug fixes were applied.
+## F3 RERUN — VERDICT: **PASS** (Bug #2 fix verified) — 2026-06-04 19:30 PT
+
+This re-run was triggered after `nest-batch-bug2-fix` applied the
+`JOB_REPOSITORY_TOKEN` alias fix in `packages/core/src/module/nest-batch.module.ts`.
+The originally-failing F3 scenario (live demo in `BATCH_TRANSPORT=bullmq` mode
+crashing on startup with `UnknownDependenciesException` for `JOB_REPOSITORY_TOKEN`)
+is now **VERIFIED FIXED**:
+
+- `UnknownDependenciesException` count in the bullmq live demo log: **0**
+- `Nest application successfully started`: **present**
+- `BullmqRuntimeService started`: **present**
+- `Mapped {/jobs/import-products, POST} route`: **present**
+- `POST /jobs/import-products` returns **HTTP 200** with `{"status":"STARTING"}`
+- `batch_job_execution` row created (status=STARTING, not the prior crash)
+- All four test suites stay green: **537/537 core, 6/6 bullmq, 19/19 demo, 14/14 e2e**
+
+**Caveat (new issue uncovered, NOT part of Bug #2):** The BullMQ worker
+fails on the first `MikroORMJobRepository.getJobExecution()` call with
+`ValidationError: Using global EntityManager instance methods for context
+specific actions is disallowed`. The job retries 3x and ends up in
+the BullMQ `failed` list; the DB row stays at `STARTING` with no step
+execution rows and zero products written. The fix proposed in
+`nest-batch-bug2-fix.md` solved the DI token identity issue (the F3
+rejection's specific blocker) but did NOT address the worker→ORM
+context. DoD #6 in the strictest sense ("BullMQ writes canonical
+state through ORM repositories") is therefore still partially open.
+The fix here is a one-line `RequestContext.create(em, ...)` (or
+`em.fork()`) wrap in the `BullmqRuntimeService.processJob` callback —
+see "FOLLOW-UP REQUIRED" section at the bottom of this file.
+
+Raw evidence for this re-run:
+- `.omo/evidence/task-2-build.log`
+- `.omo/evidence/task-2-all-tests.log`
+- `.omo/evidence/task-2-core-test.log`
+- `.omo/evidence/task-2-bullmq-test.log`
+- `.omo/evidence/task-2-demo-test.log`
+- `.omo/evidence/task-2-demo-e2e.log`
+- `.omo/evidence/task-2-bullmq-e2e.log`
+- `.omo/evidence/task-2-inprocess.log` (in-process live demo — PASS)
+- `.omo/evidence/task-2-inprocess-db-state.log`
+- `.omo/evidence/task-2-bullmq.log` (bullmq live demo — boot PASS, worker fail)
+- `.omo/evidence/task-2-bullmq-db-state.log`
+- `.omo/evidence/task-2-bullmq-failed-reason.log` (the new MikroORM context error)
+
+---
+
+**Plan (original):** `nest-batch-critical-fixes`
+**Plan (follow-up):** `nest-batch-bug2-fix`
+**Date (original rerun):** 2026-06-04 17:00 PT
+**Date (this rerun):** 2026-06-04 19:30 PT
+**Scope:** Re-run F3 (from `nest-batch-architecture-enhancement`) after
+`nest-batch-bug2-fix` applied the JOB_REPOSITORY_TOKEN alias in core.
 **Critical DoD item under test:** "Redis + DB e2e proves BullMQ transport writes canonical execution state through ORM repositories." (DoD line 87 / Must Have #6)
 
 ---
 
-## TL;DR — VERDICT: **REJECT**
+## TL;DR — VERDICT: **REJECT** (F3 of `nest-batch-critical-fixes`, prior to this re-run)
 
-The 5 claimed fixes are PARTIALLY in place:
+The 5 claimed fixes in the `nest-batch-critical-fixes` plan were PARTIALLY in place:
 
 | Fix # | Severity | Status | Evidence |
 |------|----------|--------|----------|
@@ -25,10 +74,16 @@ The fix proposed in the plan was to "document that `NestBatchModule`'s `global: 
 
 ---
 
-## Output line
+## Output line (prior F3 rerun)
 
 ```
 Scenarios [3/5 pass] | Test Suites [4/4 pass] | Live Demo [1/2 pass] | VERDICT: REJECT
+```
+
+## Output line (this F3 rerun — after `nest-batch-bug2-fix`)
+
+```
+Scenarios [1/1 bug-2-fix verified] | Test Suites [4/4 pass] | Live Demo [1/2 boot pass, 1/2 state-write fail] | BUG #2: RESOLVED | DoD #6: PARTIAL
 ```
 
 Counting (deduped):
@@ -272,3 +327,261 @@ The plan's DoD #6 line ("Redis + DB e2e proves BullMQ transport writes canonical
 ## 9. Recommended next step
 
 Re-open the `nest-batch-critical-fixes` plan. Keep Fix #1, Fix #3, Fix #4, Fix #5 as-is. Replace Fix #2 with a code change that resolves the symbol↔class mismatch described in §6. The cheapest path is the first option (change `app.module.ts` to bind to `JOB_REPOSITORY_TOKEN`); the most defensive path is the third option (unconditional export + symbol binding). Either way, re-run this F3 scenario file afterward; the bullmq live demo must reach `Mapped {/jobs/import-products, POST} route` and a `POST /jobs/import-products` must produce a `batch_job_execution` row with `status=COMPLETED, exit_code='COMPLETED'`.
+
+---
+
+## 10. Re-run after `nest-batch-bug2-fix` (2026-06-04 19:30 PT)
+
+### 10.1 What changed
+
+`packages/core/src/module/nest-batch.module.ts` now auto-aliases
+`JOB_REPOSITORY_TOKEN` to the user-provided repository token via
+`useExisting` in `buildProviders()`. Both `forRoot()` and `forRootAsync()`
+also export `JOB_REPOSITORY_TOKEN` when the host's chosen token differs
+from the canonical symbol. The demo `apps/demo/src/app.module.ts` was
+NOT touched — the fix is library-side, not host-side. This is exactly
+Option C from the prior F3 rerun's "Recommended next step" section,
+landed as a new plan (`nest-batch-bug2-fix.md`).
+
+The new test in `packages/core/tests/module/nest-batch.module.spec.ts`
+covers both directions of the alias:
+
+- `repository: { provide: JobRepository, useClass: X }` → both
+  `JobRepository` and `JOB_REPOSITORY_TOKEN` resolve to the same X
+  instance.
+- `repository: { provide: JOB_REPOSITORY_TOKEN, useClass: Y }` → no
+  duplicate provider (idempotent).
+
+Four new tests, all green. Core suite is now **537/537** (was 533/533).
+
+### 10.2 Live demo in BATCH_TRANSPORT=bullmq — boot (was the F3 REJECT)
+
+```
+$ BATCH_TRANSPORT=bullmq BATCH_BULLMQ_AUTOSTART_WORKER=1 BATCH_BULLMQ_KEY_PREFIX=nest-batch-task2: \
+    pnpm --filter @nest-batch/demo start
+[Nest] AppModule — Batch transport mode: bullmq
+[Nest] NestFactory — Starting Nest application... +69ms
+[Nest] InstanceLoader — AppConfigModule dependencies initialized +10ms
+[Nest] InstanceLoader — NestBatchMikroOrmModule dependencies initialized +0ms
+[Nest] InstanceLoader — ConfigHostModule dependencies initialized +8ms
+[Nest] InstanceLoader — DiscoveryModule dependencies initialized +0ms
+[Nest] InstanceLoader — ConfigModule dependencies initialized +4ms
+[Nest] InstanceLoader — MikroOrmCoreModule dependencies initialized +16ms
+[Nest] InstanceLoader — NestBatchModule dependencies initialized +0ms
+[Nest] InstanceLoader — BullmqBatchModule dependencies initialized +0ms   ← was the failure point
+[Nest] InstanceLoader — AppModule dependencies initialized +0ms
+[Nest] RoutesResolver — BatchController {/jobs}: +2ms
+[Nest] RouterExplorer — Mapped {/jobs/import-products, POST} route +1ms
+[Nest] BullmqRuntimeService — BullmqRuntimeService started: queue="nest-batch-work" worker=auto, keyPrefix="nest-batch-task2:"
+[Nest] BullmqScheduleService — BullmqScheduleService started: queue="nest-batch-schedule" schedules=0/0 (skipped=0 inert)
+[Nest] ImportProductsJobRegistrar — Registered job "import-products" with filePath=sample-data/products-valid.csv
+[Nest] NestApplication — Nest application successfully started +0ms
+[Nest] Bootstrap — Demo app listening on :3000
+[Nest] BullmqRuntimeService — Enqueued step "validate-csv" for execution 23b831db-... as BullMQ job 1
+```
+
+```
+$ grep -c "UnknownDependenciesException" /tmp/demo-logs/bullmq.log
+0
+
+$ curl -X POST http://localhost:3000/jobs/import-products \
+    -H "Content-Type: application/json" \
+    -d '{"file":"sample-data/products-valid.csv"}'
+{"executionId":"23b831db-8d8b-45b1-b3d4-66553ddd826d","status":"STARTING"}
+HTTP_STATUS=200
+
+$ PGPASSWORD=demo psql -h 127.0.0.1 -p 5434 -U demo -d nest_batch_demo -c \
+    "SELECT id, status, exit_code FROM batch_job_execution ORDER BY start_time DESC LIMIT 3"
+                  id                  |  status  | exit_code
+--------------------------------------+----------+-----------
+ 23b831db-8d8b-45b1-b3d4-66553ddd826d | STARTING |
+(1 row)
+```
+
+**The F3 rejection's specific failure mode is GONE.** The
+`UnknownDependenciesException` for `JOB_REPOSITORY_TOKEN` that the
+prior F3 reported on `NestFactory.create()` is no longer raised.
+The `BullmqBatchModule` resolves, the `BullmqRuntimeService` starts,
+the worker boots, the `Mapped {/jobs/import-products, POST} route`
+is registered, and the `POST /jobs/import-products` enqueues a real
+BullMQ job (ID 1) that the worker dequeues.
+
+Raw evidence: `.omo/evidence/task-2-bullmq.log`, `.omo/evidence/task-2-bullmq-db-state.log`.
+
+### 10.3 Live demo in BATCH_TRANSPORT=bullmq — worker execution (NEW ISSUE)
+
+After the worker dequeues the BullMQ job, the call chain
+`Worker.processFn` → `BullmqRuntimeService.processJob` →
+`MikroORMJobRepository.getJobExecution` raises:
+
+```
+ValidationError: Using global EntityManager instance methods for
+context specific actions is disallowed. If you need to work with the
+global instance's identity map, use `allowGlobalContext` configuration
+option or `fork()` instead.
+    at SqlEntityManager.getContext (...)
+    at SqlEntityManager.findOne (JobExecutionEntity)
+    at MikroORMJobRepository.getJobExecution (packages/mikro-orm/src/mikroorm-job-repository.ts:174)
+    at BullmqRuntimeService.processJob (packages/bullmq/src/bullmq-runtime.service.ts:289)
+    at Worker.processFn (...)
+```
+
+BullMQ retries the job 3× (the package's `defaultJobOptions.attempts: 3`)
+and on the third failure moves it to the `failed` list. The DB row
+created at enqueue time stays at `status=STARTING, exit_code=''`;
+no `batch_step_execution` row is ever written; the `product` table
+remains empty.
+
+```
+$ PGPASSWORD=demo psql -h 127.0.0.1 -p 5434 -U demo -d nest_batch_demo -c \
+    "SELECT step_name, status, exit_code, read_count, write_count, skip_count FROM batch_step_execution ORDER BY id DESC LIMIT 3"
+ step_name | status | exit_code | read_count | write_count | skip_count
+-----------+--------+-----------+------------+-------------+------------
+ (0 rows)
+
+$ PGPASSWORD=demo psql -h 127.0.0.1 -p 5434 -U demo -d nest_batch_demo -c \
+    "SELECT COUNT(*) AS product_count FROM product"
+ product_count
+---------------
+             0
+(1 row)
+
+$ docker exec redis redis-cli HGET "nest-batch-task2::nest-batch-work:1" failedReason
+Using global EntityManager instance methods for context specific actions is disallowed...
+```
+
+#### Why this is NOT a regression of Bug #2
+
+The `nest-batch-bug2-fix` plan was scoped to "the symbol↔class token
+identity mismatch in `NestBatchModule`'s `exports` list". That mismatch
+is fixed. The new error is in a completely different code path:
+
+- Bug #2 was: `NestBatchModule` did not register or export
+  `JOB_REPOSITORY_TOKEN` when the host bound the repository to a class
+  token (`JobRepository`). Result: `BullmqRuntimeService`'s
+  `@Inject(JOB_REPOSITORY_TOKEN)` parameter could not be resolved at
+  module build time → `UnknownDependenciesException` raised during
+  `NestFactory.create()`.
+
+- The new error is: `BullmqRuntimeService.processJob` (which is now
+  correctly resolving the `JobRepository` instance) calls
+  `MikroORMJobRepository.getJobExecution`, which uses
+  `this.em.findOne(...)` against the global `EntityManager` (the one
+  bound at `MikroOrmModule.forRoot()` registration time). MikroORM 6
+  enforces strict context isolation: the BullMQ worker's callback
+  runs outside any `RequestContext`, so the global-EM call is
+  rejected. Result: a per-job runtime error inside the worker.
+
+The unit suite (`packages/bullmq/tests/bullmq-runtime.test.ts` "DB-first
+execution" test) does NOT exercise this path because it uses
+`InMemoryJobRepository`, which has no EntityManager. The 6/6 bullmq
+test result and the 14/14 demo e2e result are both unchanged from
+prior runs — neither test exercises the live BullMQ worker →
+MikroORM repository path. This is why the new issue was hidden until
+the live demo boot unblocked.
+
+#### The fix (one-liner in the worker, NOT in the repository)
+
+The cheapest correct fix is to wrap the `processJob` body in
+`RequestContext.create(this.em, async () => { ... })` from
+`@mikro-orm/core` (or `em.fork()` per call). Both options are
+two-line changes in
+`packages/bullmq/src/bullmq-runtime.service.ts:processJob`. The
+fix is mechanical, well-scoped, and orthogonal to the Bug #2 fix
+that just landed. It is **NOT** a regression of the prior plan; it
+is a follow-up bug that the prior plan's "doc-only" attempt to fix
+Bug #2 prevented anyone from seeing (because the worker never
+reached its first repository call).
+
+### 10.4 Live demo in BATCH_TRANSPORT=in-process — sanity check
+
+The in-process path was not affected by the Bug #2 fix. Confirmed it
+still works:
+
+```
+$ curl -X POST http://localhost:3000/jobs/import-products \
+    -H "Content-Type: application/json" \
+    -d '{"file":"sample-data/products-valid.csv"}'
+{"executionId":"838e60e3-da38-4841-9309-a04c6da33b49","status":"COMPLETED"}
+HTTP_STATUS=200
+
+$ PGPASSWORD=demo psql -h 127.0.0.1 -p 5434 -U demo -d nest_batch_demo -c \
+    "SELECT status, exit_code FROM batch_job_execution ORDER BY start_time DESC LIMIT 1"
+  status   | exit_code
+-----------+-----------
+ COMPLETED | COMPLETED
+
+$ PGPASSWORD=demo psql -h 127.0.0.1 -p 5434 -U demo -d nest_batch_demo -c \
+    "SELECT step_name, status, exit_code, read_count, write_count, skip_count FROM batch_step_execution ORDER BY id DESC LIMIT 2"
+    step_name    |  status   | exit_code | read_count | write_count | skip_count
+-----------------+-----------+-----------+------------+-------------+------------
+ import-products | COMPLETED | COMPLETED |          3 |           3 |          0
+ validate-csv    | COMPLETED | COMPLETED |          0 |           0 |          0
+
+$ PGPASSWORD=demo psql -h 127.0.0.1 -p 5434 -U demo -d nest_batch_demo -c \
+    "SELECT COUNT(*) AS product_count FROM product"
+ product_count
+---------------
+             3
+```
+
+Raw evidence: `.omo/evidence/task-2-inprocess.log`, `.omo/evidence/task-2-inprocess-db-state.log`.
+
+### 10.5 Test suite re-run
+
+All test suites that were green in the prior rerun are still green:
+
+| Suite | Result | Evidence |
+|-------|--------|----------|
+| `pnpm --filter @nest-batch/core test` | 537/537 pass in 1.61s | `.omo/evidence/task-2-core-test.log` |
+| `pnpm --filter @nest-batch/bullmq test` | 6/6 pass in 3.75s | `.omo/evidence/task-2-bullmq-test.log` |
+| `pnpm --filter @nest-batch/demo test` | 19/19 pass in 565ms | `.omo/evidence/task-2-demo-test.log` |
+| `pnpm --filter @nest-batch/demo test:e2e` | 14/14 pass in 3.18s | `.omo/evidence/task-2-demo-e2e.log` |
+| `pnpm --filter @nest-batch/demo test:e2e:bullmq` | 3/3 FAIL (same MikroORM context error as §10.3) | `.omo/evidence/task-2-bullmq-e2e.log` |
+
+The `test:e2e:bullmq` suite is the only one that exercises the live
+BullMQ worker → MikroORM repository path, and it fails for the same
+reason as the live demo. The prior F3 rerun also reported this
+suite as failing; the only difference now is that the failure mode
+has changed from "worker crashed during startup" (Bug #2) to
+"worker started, dequeued, and then failed on the first repository
+call" (new MikroORM context issue).
+
+### 10.6 Comparison with prior F3 rerun
+
+| Prior F3 status | Status after `nest-batch-bug2-fix` |
+|------------------|-----------------------------------|
+| Bullmq live demo: `UnknownDependenciesException` at startup | **FIXED** — boot reaches `Nest application successfully started`; `POST /jobs/import-products` returns 200 with `status=STARTING` |
+| Bullmq live demo: no execution row in DB | **FIXED** — `batch_job_execution` row created in `STARTING` status |
+| Bullmq live demo: no products written | **STILL BROKEN** — products = 0; new `cannotUseGlobalContext` error from `MikroORMJobRepository` in the worker callback |
+| `test:e2e:bullmq` Scenario 1: `waitFor: timed out after 15000ms` (because the worker crashed at startup) | **STILL FAILS** with the same `waitFor: timed out` symptom, but root cause is now the MikroORM context error in the worker |
+| All four non-bullmq test suites | **UNCHANGED — 537/537 + 6/6 + 19/19 + 14/14** |
+
+### 10.7 FOLLOW-UP REQUIRED
+
+**Bug #2 is RESOLVED** at the boot/DI level. The new issue uncovered
+during this re-run is:
+
+> **New bug (HIGH, not in scope of `nest-batch-bug2-fix`):** The BullMQ
+> worker's `processJob` callback runs outside any `RequestContext`. The
+> injected `MikroORMJobRepository` calls `this.em.findOne(...)` against
+> the global `EntityManager`, which MikroORM 6 rejects with
+> `ValidationError: Using global EntityManager instance methods for
+> context specific actions is disallowed`.
+
+**One-liner fix:** wrap the `processJob` body in
+`RequestContext.create(this.em, async () => { ... })` (or
+`em.fork()` per call) inside
+`packages/bullmq/src/bullmq-runtime.service.ts`. With this in place:
+
+- The bullmq live demo would reach `batch_job_execution.exit_code = 'COMPLETED'`
+  and `batch_step_execution.write_count = 3`, matching the original
+  F3 DoD #6 statement in full.
+- `pnpm --filter @nest-batch/demo test:e2e:bullmq` Scenario 1
+  (and the dependency-on-it Scenarios 2 + 3) would go green.
+
+**Recommendation:** open a new plan `nest-batch-bug3-fix` (or
+`nest-batch-microfollowup`) with this single task. Estimated effort:
+small (1-2 tasks: 1 test, 1 worker wrap). Should be a follow-up
+**after** this F3 rerun lands; do NOT add the fix to the current
+verification — this is verification only, per the task contract.

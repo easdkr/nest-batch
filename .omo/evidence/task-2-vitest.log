@@ -1,0 +1,22 @@
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v2.1.9 /Users/june/workspace/personal/nest-batch
+
+ ✓ packages/nest-batch/tests/core/ir/ir.types.test.ts (14 tests) 3ms
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  00:33:33
+   Duration  257ms (transform 34ms, setup 0ms, collect 41ms, tests 3ms, environment 0ms, prepare 29ms)
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v2.1.9 /Users/june/workspace/personal/nest-batch
+
+ ✓ packages/nest-batch/tests/core/ir/ir.types.test.ts (14 tests) 3ms
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  00:33:51
+   Duration  248ms (transform 43ms, setup 0ms, collect 48ms, tests 3ms, environment 0ms, prepare 32ms)
+

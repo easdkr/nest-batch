@@ -1,0 +1,14 @@
+                  id                  |  status  | exit_code | start_time | end_time 
+--------------------------------------+----------+-----------+------------+----------
+ 23b831db-8d8b-45b1-b3d4-66553ddd826d | STARTING |           |            | 
+(1 row)
+
+ step_name | status | exit_code | read_count | write_count | skip_count 
+-----------+--------+-----------+------------+-------------+------------
+(0 rows)
+
+ product_count 
+---------------
+             0
+(1 row)
+

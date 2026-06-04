@@ -1,0 +1,19 @@
+
+> @nest-batch/bullmq@0.1.0 test /Users/june/workspace/personal/nest-batch/packages/bullmq
+> vitest run
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v2.1.9 /Users/june/workspace/personal/nest-batch/packages/bullmq
+
+ ✓ tests/boundary/core-has-no-bullmq-imports.test.ts (2 tests) 1ms
+[bullmq-e2e.config] BullMQ client did not reach ready: connect ECONNREFUSED 127.0.0.1:55567
+[33m[Nest] 49246  - [39m06/04/2026, 6:31:47 PM [33m   WARN[39m [38;5;3m[BullmqScheduleService] [39m[33mSchedule queue close failed: Stream isn't writeable and enableOfflineQueue options is false[39m
+ ✓ tests/bullmq-runtime.test.ts (4 tests) 3304ms
+   ✓ BullMQ runtime bridge e2e (T18) > Redis-down producer fails fast without hanging 3008ms
+
+ Test Files  2 passed (2)
+      Tests  6 passed (6)
+   Start at  18:31:47
+   Duration  3.64s (transform 60ms, setup 0ms, collect 148ms, tests 3.30s, environment 0ms, prepare 63ms)
+

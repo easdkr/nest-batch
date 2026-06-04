@@ -1,0 +1,22 @@
+
+> nest-batch-monorepo@0.0.0 build /Users/june/workspace/personal/nest-batch
+> pnpm -r build
+
+Scope: 5 of 6 workspace projects
+packages/core build$ swc src -d dist --config-file ../../.swcrc && swc tests/contracts/index.ts -o dist/tests/contracts/index.js --config-file ../../.swcrc && swc tests/contracts/job-repository.contract.ts -o dist/tests/contracts/job-repository.contract.js --config-file ../../.swcrc && tsc --emitDeclarationOnly
+packages/core build: Successfully compiled: 77 files with swc (60.06ms)
+packages/core build: Successfully compiled 1 file with swc.
+packages/core build: Successfully compiled 1 file with swc.
+packages/core build: Done
+packages/bullmq build$ swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly
+packages/mikro-orm build$ swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly
+packages/typeorm build$ swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly
+packages/typeorm build: Successfully compiled: 6 files with swc (49.81ms)
+packages/mikro-orm build: Successfully compiled: 10 files with swc (53.32ms)
+packages/bullmq build: Successfully compiled: 7 files with swc (58.08ms)
+packages/bullmq build: Done
+packages/typeorm build: Done
+packages/mikro-orm build: Done
+apps/demo build$ swc src -d dist --config-file ../../.swcrc
+apps/demo build: Successfully compiled: 22 files with swc (31.96ms)
+apps/demo build: Done
