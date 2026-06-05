@@ -16,6 +16,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: demo
+          POSTGRES_PASSWORD: demo
+          POSTGRES_DB: nest_batch_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U demo"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_USER: demo
+      DB_PASSWORD: demo
+      DB_NAME: nest_batch_test
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -30,6 +52,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Rebuild native modules
+        run: pnpm rebuild better-sqlite3
 
       - name: Build
         run: pnpm build
