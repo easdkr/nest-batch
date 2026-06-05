@@ -194,11 +194,25 @@ export class TypeOrmJobRepository extends JobRepository {
       inst.jobName = name;
       inst.jobKey = jobKey;
       inst.createdAt = new Date();
-      try {
-        await em.save(inst);
-      } catch {
-        // Concurrent insert won — that's fine, fall through to lock.
-      }
+      // 1. Ensure the JobInstance row exists. Use orIgnore so a
+      // unique-constraint violation (row already inserted by a
+      // concurrent caller) does not abort the surrounding PG
+      // transaction — PG marks a transaction aborted on the first
+      // statement failure, which would break the FOR UPDATE SKIP
+      // LOCKED query below. SQLite also accepts orIgnore and emits
+      // INSERT OR IGNORE.
+      await em
+        .createQueryBuilder()
+        .insert()
+        .into(JobInstanceEntity)
+        .values({
+          id: inst.id,
+          jobName: inst.jobName,
+          jobKey: inst.jobKey,
+          createdAt: inst.createdAt,
+        })
+        .orIgnore()
+        .execute();
 
       // 2. Lock the instance row. SKIP LOCKED means: if another
       // concurrent launch already holds the lock, this returns 0
@@ -215,7 +229,7 @@ export class TypeOrmJobRepository extends JobRepository {
       const running = await em.findOne(JobExecutionEntity, {
         where: {
           jobInstanceId: locked.id,
-          status: { $in: [JobStatus.STARTING, JobStatus.STARTED] } as unknown as string,
+          status: In([JobStatus.STARTING, JobStatus.STARTED]),
         },
       });
       if (running) {
