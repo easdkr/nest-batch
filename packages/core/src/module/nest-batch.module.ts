@@ -337,6 +337,16 @@ function buildProviders(
     BatchExplorer,
     DefinitionCompiler,
     JobRegistry,
+    // Executor subgraph (auto-registered as core-owned providers — no longer
+    // surfaced through `extraProviders`). `JobExecutor` depends on
+    // `TaskletStepExecutor` / `ChunkStepExecutor` / `ListenerInvoker` /
+    // `FlowEvaluator`; Nest's DI graph resolves them automatically. The
+    // `BatchObserver` parameter on `JobExecutor` is `@Optional()` so the
+    // default `NoopBatchObserver` is used when no observer is bound.
+    JobExecutor,
+    ChunkStepExecutor,
+    TaskletStepExecutor,
+    ListenerInvoker,
     FlowEvaluator,
     BatchScheduleRegistry,
     { provide: BATCH_SCHEDULE_REGISTRY, useExisting: BatchScheduleRegistry },
@@ -521,6 +531,15 @@ export class NestBatchModule {
       JobRegistry,
       DefinitionCompiler,
       BatchExplorer,
+      // Executor subgraph — exported so sibling packages
+      // (e.g. `@nest-batch/bullmq`'s `BullmqRuntimeService`) can
+      // resolve them through the global module chain. Without this
+      // export, NestJS encapsulation would hide them from any
+      // provider outside the core module.
+      JobExecutor,
+      ChunkStepExecutor,
+      TaskletStepExecutor,
+      ListenerInvoker,
       FlowEvaluator,
       BatchScheduleRegistry,
       MODULE_OPTIONS_TOKEN,
@@ -691,6 +710,13 @@ export class NestBatchModule {
         JobRegistry,
         DefinitionCompiler,
         BatchExplorer,
+        // Executor subgraph — exported so sibling packages
+        // (e.g. `@nest-batch/bullmq`'s `BullmqRuntimeService`) can
+        // resolve them through the global module chain.
+        JobExecutor,
+        ChunkStepExecutor,
+        TaskletStepExecutor,
+        ListenerInvoker,
         FlowEvaluator,
         BatchScheduleRegistry,
         // Re-export the `BATCH_SCHEDULE_REGISTRY` symbol alongside
