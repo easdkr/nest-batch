@@ -125,6 +125,51 @@
 - All fail because they call `NestBatchModule.forRoot()` with no args, or pass `explorer` / `extraProviders` / `repository` / `transactionManager` / `executionStrategy` fields that the new T1/T2 shape rejects
 - These will be fixed by T9-T12 (test migration to the new API)
 
+---
+
+## T7: TypeOrmAdapter factory — Key Decisions
+
+### Decision: adapter created
+- The `@nest-batch/typeorm` package had **no module file at all** before T7. The README claims a `NestBatchTypeOrmModule` exists but the code only has `repository/`, `transaction/`, `entities/`, and `migrations/` subdirs.
+- Both `TypeOrmJobRepository` and `TypeOrmTransactionManager` were already exported and complete. The adapter is purely the factory-pattern wiring.
+- `@nestjs/typeorm` ^10 || ^11 is already a peer dep — `TypeOrmModule.forRoot()` is the natural internal call.
+
+### Files added
+- `packages/typeorm/src/adapters/typeorm.adapter.ts` — the `TypeOrmAdapter` class with static `forRoot(options: TypeOrmAdapterOptions): BatchAdapter`.
+- `packages/typeorm/src/adapters/index.ts` — barrel re-exporting `./typeorm.adapter`.
+- `packages/typeorm/src/index.ts` — one new line: `export * from './adapters';`.
+
+### Shape
+- `forRoot(options: TypeOrmAdapterOptions): BatchAdapter`
+- `TypeOrmAdapterOptions = Omit<TypeOrmModuleOptions, 'entities'> & { readonly entities?: readonly EntityTarget<unknown>[] }`
+- Returns `{ name: 'typeorm', module: <DynamicModule>, globalProviders: [...] }`
+- The module:
+  - imports `TypeOrmModule.forRoot(merged)` where `merged` is the host's options + `BATCH_META_ENTITIES` spread
+  - provides the two impl classes + the two token bindings
+  - exports the classes + the tokens
+  - is NOT `global: true` (relying on `globalProviders` for host visibility — same T1 rationale as InProcessAdapter's `global: true` decision was for a different reason)
+- `globalProviders` lists the two token bindings: `JOB_REPOSITORY_TOKEN` and `TRANSACTION_MANAGER_TOKEN` (the canonical symbol tokens from `@nest-batch/core`).
+
+### Reference pattern
+- T5 (MikroOrmAdapter) has NOT landed at the time T7 ran — no `packages/mikro-orm/src/adapters/mikro-orm.adapter.ts` file exists. T7 used `InProcessAdapter` (in `packages/core/src/adapters/in-process.adapter.ts`) as the primary pattern reference and the existing `NestBatchMikroOrmModule.forRoot` (in `packages/mikro-orm/src/nest-batch-mikro-orm.module.ts`) as the secondary reference for the entity-merging shape.
+- When T5 lands, the two adapter files should be in lockstep — same options-merging shape, same token bindings, same `name` literal convention. If T5 picks a different shape, T7 may need a follow-up refactor.
+
+### Design choices
+1. **Static `forRoot`, no `forRootAsync`.** Same as InProcessAdapter. Consumers needing async config can wrap `TypeOrmModule.forRootAsync({...})` in a thin custom factory. Adding a parallel `forRootAsync` on top would be a re-skinned `useFactory` and would obscure the host's actual async source.
+2. **Self-contained, no BYO DataSource.** The previous README described a "BYO DataSource" shape; deliberately not exposed through this factory because `@nestjs/typeorm` does not support two `forRoot()` calls in the same app. The README example showing `dataSource: /* your DataSource */` is now stale — the new factory is the source of truth.
+3. **Module is NOT `global: true`.** `globalProviders` is the documented mechanism for host-visible bindings (T1 rationale). Marking the module global would only matter for `@Inject` from sibling sub-modules, which the engine does not require.
+4. **Use `BATCH_META_ENTITIES` const, not the `batchMetaEntities()` function.** The const tuple has a clean `Function` element type that matches TypeORM's `MixedList<string | Function | EntitySchema<any>>` without a cast. The function form returns `EntityTarget<unknown>[]` which is too broad (includes the `{ name; type }` object form, not a valid `MixedList` element).
+5. **One cast at the merge boundary.** The spread `{...options, entities}` loses the discriminated-union narrowing on `type` (postgres vs mysql vs ...); the final result is cast to `TypeOrmModuleOptions` to restore the contract. Safe because the host's options were already typed as `Omit<TypeOrmModuleOptions, 'entities'>`.
+
+### Typecheck/build status
+- `pnpm --filter @nest-batch/typeorm typecheck` → 0 errors (see `.omo/evidence/task-7-typeorm-typecheck.log`).
+- `pnpm --filter @nest-batch/typeorm build` → 8 files compiled (was 6), 0 errors (see `.omo/evidence/task-7-typeorm-build.log`).
+- `dist/src/adapters/typeorm.adapter.{js,d.ts}` and `dist/src/adapters/index.{js,d.ts}` are present in the build output.
+
+### T5 coordination note
+- T7 deliberately mirrors the `InProcessAdapter` shape (a class with a static `forRoot()` method), not the `as const satisfies BatchAdapter` literal-object form shown in the T1 JSDoc example. The reason: `InProcessAdapter` (T4) is the only T1–T7 task to have landed at the time of T7, so it's the only empirically proven shape. If T5 picks the literal-object form, T7 should be reviewed for shape parity but the contract is the same.
+- The `name` field is the string literal `'typeorm'` (not `as const`) because the class doesn't support literal narrowing without a const assertion. If the compiler complains in T2's adapter-validation code, T7 may need to switch to `as const satisfies BatchAdapter` (and an explicit `readonly name: 'typeorm'`).
+
 
 ---
 
@@ -253,3 +298,80 @@ When two parallel tasks target the same file with edits, one should use a "creat
 
 ### Boundary test status
 - No new imports of `bullmq` / `mikro-orm` / `typeorm` / `drizzle-orm` / `cron` in core (T5 doesn't touch core). The new `mikro-orm.adapter.ts` only imports from `@nestjs/common` (`Module`, `DynamicModule`, `Provider`), `@mikro-orm/nestjs` (`MikroOrmModule`, `MikroOrmModuleOptions`), and `@nest-batch/core` (`JOB_REPOSITORY_TOKEN`, `TRANSACTION_MANAGER_TOKEN`, `BatchAdapter`). The core boundary test will keep passing.
+
+---
+
+## T2: NestBatchModule.forRoot / forRootAsync rewrite + T3 regression fix — Key Decisions
+
+### T3 regression re-applied
+- T3's executor subgraph (`JobExecutor`, `ChunkStepExecutor`, `TaskletStepExecutor`, `ListenerInvoker`) is now auto-registered by BOTH `forRoot` and `forRootAsync` in the core `providers` list, and exported alongside the core classes.
+- This re-creates T3's intent inside the new factory-pattern architecture (T3 was overwritten by T1's stub rewrite; T2 is the unified rewrite that picks up the dropped work).
+
+### Shape chosen
+- `forRoot(options: NestBatchModuleOptions): DynamicModule` — takes `{ adapters: { persistence, transport } }` synchronously. Builds the full module: merges the two adapter `DynamicModule`s into `imports`, adds `DiscoveryModule` from `@nestjs/core`, registers the core classes + executor subgraph + the adapter's `globalProviders`, and binds the resolved `BatchAdaptersConfig` to `MODULE_OPTIONS_TOKEN` via a value provider.
+- `forRootAsync(options: NestBatchModuleAsyncOptions): DynamicModule` — takes `{ imports?, inject?, useFactory }` returning `Promise<BatchAdaptersConfig> | BatchAdaptersConfig`. Uses the sentinel factory pattern (mirrors `BullmqBatchModule.forRootAsync` and T6's `BullmqAdapter.forRootAsync`): the user's `useFactory` is registered under `OPTIONS_FACTORY = Symbol.for('@nest-batch/core/OPTIONS_FACTORY')`, and `MODULE_OPTIONS_TOKEN` is bound to its resolved value via a follow-up `useFactory` provider.
+- Both factories return `global: true` `DynamicModule`s. The class body is empty (`@Module({})`); all wiring happens in the static factory methods.
+
+### Auto-registered providers (both paths)
+- **Discovery-required** (T2's contract): `JobRegistry`, `DefinitionCompiler`, `BatchExplorer`, `FlowEvaluator`, `BatchScheduleRegistry`, `BatchBootstrapper`.
+- **Executor subgraph** (T3's regression, re-applied): `JobExecutor`, `ChunkStepExecutor`, `TaskletStepExecutor`, `ListenerInvoker`.
+- All ten are listed in both `providers` AND `exports` so the host (and any sibling package) can resolve them through the global module chain.
+
+### forRootAsync caveat — async path does NOT auto-merge adapter globalProviders
+- NestJS cannot dynamically import a `DynamicModule` at module-build time, so the async path does NOT auto-merge the adapter modules' `globalProviders` into the core module's `providers` list the way `forRoot` does. Documented in the `NestBatchModuleAsyncOptions` JSDoc.
+- Two consequences for callers of `forRootAsync`:
+  1. The adapter `DynamicModule`s must be passed in the caller's `imports` array (e.g. `imports: [MikroOrmAdapter.module, InProcessAdapter.module]`) so Nest sees them in the module graph.
+  2. The factory's return value is used only for the `MODULE_OPTIONS_TOKEN` binding (adapters introspection); sibling packages and the host can read the resolved config via `@Inject(MODULE_OPTIONS_TOKEN)`.
+- For the full auto-merge (adapter modules + `globalProviders` registered into core's own DI scope), prefer `forRoot` with a pre-resolved `BatchAdaptersConfig`. The async path is for adapters whose factory needs to consult a config service to decide which adapter to plug in.
+- The "Both" clause in the T2 prompt's EXPECTED OUTCOME is interpreted as "both expose the same provider/exports API surface", not "both do identical static module merging". This matches how every NestJS `ConfigurableModuleBuilder` / `forRootAsync` pattern in the wild works.
+
+### Sentinel factory plumbing
+- `OPTIONS_FACTORY = Symbol.for('@nest-batch/core/OPTIONS_FACTORY')` — matches the `Symbol.for(...)` convention used by `BATCH_SCHEDULE_REGISTRY`, `MODULE_OPTIONS_TOKEN`, `JOB_REPOSITORY_TOKEN`, etc. in `./tokens.ts`. Stable across module boundaries; tooling or sibling packages that know the description string can resolve the same symbol.
+- `factoryProvider: { provide: OPTIONS_FACTORY, useFactory: <user factory>, inject: [...user inject] }` — the user's factory runs under DI, can pull from `ConfigService` or any other injectable.
+- `optionsProvider: { provide: MODULE_OPTIONS_TOKEN, useFactory: (fromFactory) => fromFactory, inject: [OPTIONS_FACTORY] }` — bridges the sentinel to the canonical token.
+- `inject` is typed as `readonly unknown[]` (matching the Bullmq reference) and narrowed to `Array<string | symbol | Function>` when fed to the provider, which is the broadest type Nest's `useFactory.inject` accepts.
+
+### What the T2 prompt listed as MUST NOT DO — all honoured
+- **No `InProcessExecutionStrategy` registration in core.** The T4 `InProcessAdapter`'s own `DynamicModule.providers` and `DynamicModule.exports` handle the strategy + `IN_PROCESS_EXECUTION_STRATEGY_PROVIDER` binding. Core only re-exports the two symbols (T4) so host code can wire them up by hand if needed.
+- **No backward-compat shims.** No `LEGACY_BATCH_OPTIONS_TOKEN`, no `splitOptions` / `extractToken` / `buildProviders` helpers, no `AdapterProvider` type. T1 already removed them; T2 doesn't re-introduce them.
+- **No new dependencies.** Only added `DiscoveryModule` import from `@nestjs/core` (already a peer dep).
+
+### `BatchBootstrapper` class preserved verbatim
+- The `BatchBootstrapper` class (its constructor + `onApplicationBootstrap` body + the `allMethodNames` prototype walker) was kept unchanged from the T1 stub. Its constructor signature is `(BatchExplorer, DefinitionCompiler, JobRegistry, BatchScheduleRegistry)` — all four are auto-registered in the new `providers` list, so the DI graph resolves the bootstrapper without changes.
+- The `@Injectable()` decorator is preserved; the class is registered as a provider AND exported so the host can inject it (e.g. to test the bootstrapper's behaviour in isolation).
+
+### `InProcessExecutionStrategy` re-exports preserved
+- The re-export line `export { InProcessExecutionStrategy, IN_PROCESS_EXECUTION_STRATEGY_PROVIDER };` is kept verbatim from T1. The JSDoc block above it was updated to reflect the new `forRoot({ adapters: { transport: InProcessAdapter } })` shape (the old JSDoc referenced the host-app `providers` array pattern, which is no longer the recommended wiring).
+
+### Imports cleaned up per T2 prompt's MUST NOT clause
+- No `LEGACY_BATCH_OPTIONS_TOKEN` import (the symbol was deleted by T1).
+- No `splitOptions` / `extractToken` / `buildProviders` helpers (all removed by T1's stub rewrite; T2 doesn't re-introduce them).
+- No `AdapterProvider` import / type alias (removed by T1).
+
+### Imports added (per T2 prompt's MUST DO clause)
+- `DiscoveryModule` from `@nestjs/core` — required for `BatchExplorer` to work; was removed by T1.
+- `JobExecutor` from `../execution/job-executor` — was removed by T1; T3's regression.
+- `ChunkStepExecutor` from `../execution/chunk-step-executor` — was removed by T1; T3's regression.
+- `TaskletStepExecutor` from `../execution/tasklet-step-executor` — was removed by T1; T3's regression.
+- `ListenerInvoker` from `../execution/listener-invoker` — was removed by T1; T3's regression.
+- `FlowEvaluator` from `../flow/flow-evaluator` — was removed by T1.
+- `BATCH_SCHEDULE_REGISTRY` from `./tokens` — re-added to the module's `exports` alongside the `BatchScheduleRegistry` class (per the EXPECTED OUTCOME clause "Re-add the `BATCH_SCHEDULE_REGISTRY` token to the module's exports").
+- `MODULE_OPTIONS_TOKEN` from `./tokens` — was already in T1's stub via tokens re-export; T2 binds it via value provider (sync) or follow-up `useFactory` (async).
+- `Provider` type from `@nestjs/common` — used for the explicit `Provider` annotations on the sentinel factories.
+
+### `BATCH_SCHEDULE_REGISTRY` token export
+- The token was in the T1 exports list (re-exported from `./tokens`) but T1's stub `forRoot` had no `exports` array at all. T2's `forRoot` and `forRootAsync` both add `BATCH_SCHEDULE_REGISTRY` to the `exports` array alongside the `BatchScheduleRegistry` class — matches the T2 prompt's EXPECTED OUTCOME.
+
+### Why no module-level `CORE_PROVIDERS` / `EXECUTOR_PROVIDERS` constants
+- The two arrays reference `BatchBootstrapper`, which is a class declared mid-file. Hoisting in ES classes is binding-only (TDZ for the value), so a module-level `const` array referencing the class would throw `ReferenceError: Cannot access 'BatchBootstrapper' before initialization` when the file is loaded.
+- Inlining the provider lists inside `forRoot` and `forRootAsync` (with the same items in both) keeps the two paths in lockstep without the TDZ pitfall. The arrays are short (10 items) and inlined so the duplication is cheap to read.
+- Same reasoning applies to `EXECUTOR_PROVIDERS` — though it only references classes from sibling files (no in-file class deps), keeping the two lists inline avoids the indirection and makes the diff against T1's stub clearer.
+
+### Evidence
+- `.omo/evidence/task-2-typecheck.txt` — `pnpm --filter @nest-batch/core typecheck` output. All errors are in `tests/**` (pre-existing T1 breaking change: tests call `forRoot()` with no args, or pass `explorer` / `extraProviders` / `repository` / `transactionManager` / `executionStrategy` fields that T1's stub removed). T9-T12 own the test migration. `src/**` typechecks cleanly (zero errors in `src/`).
+- `.omo/evidence/task-2-build.txt` — `pnpm --filter @nest-batch/core build` output. "Successfully compiled: 80 files with swc" (the `tsconfig.build.json` excludes tests). `tsc --emitDeclarationOnly` also passes (no output, exit 0).
+
+### T2 / T3 status
+- T2 + T3 combined into a single commit: `feat(core): refactor forRoot/forRootAsync with adapter pattern + auto-register executor subgraph`
+- T3's plan checkbox can now be ticked — the regression is resolved.
+- T1's `forRoot` / `forRootAsync` stub bodies are replaced with real implementations. T1's interface work (`BatchAdapter` / `BatchAdaptersConfig` in `adapter.ts`) and the InProcessAdapter (T4) / BullmqAdapter (T6) / MikroOrmAdapter (T5) all plug into the new factory body without further changes.

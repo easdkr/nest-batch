@@ -4,29 +4,40 @@ import {
   Logger,
   Module,
   OnApplicationBootstrap,
+  Provider,
 } from '@nestjs/common';
+import { DiscoveryModule } from '@nestjs/core';
 
 import type { BatchAdaptersConfig } from './adapter';
 import { DefinitionCompiler } from '../compiler/definition-compiler';
+import { BatchExplorer } from '../explorer/batch-explorer';
+import { JobRegistry } from '../registry/job-registry';
+import { JobExecutor } from '../execution/job-executor';
+import { ChunkStepExecutor } from '../execution/chunk-step-executor';
+import { TaskletStepExecutor } from '../execution/tasklet-step-executor';
+import { ListenerInvoker } from '../execution/listener-invoker';
 import {
   InProcessExecutionStrategy,
   IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
 } from '../execution/in-process-execution-strategy';
-import { BatchExplorer } from '../explorer/batch-explorer';
-import { JobRegistry } from '../registry/job-registry';
+import { FlowEvaluator } from '../flow/flow-evaluator';
 import { BATCH_SCHEDULED_OPTIONS } from '../decorators/constants';
 import type { BatchScheduledMetadata } from '../scheduling/batch-scheduled';
 import {
   BatchScheduleRegistry,
   type BatchScheduleEntry,
 } from './batch-schedule-registry';
+import {
+  BATCH_SCHEDULE_REGISTRY,
+  MODULE_OPTIONS_TOKEN,
+} from './tokens';
 
 /**
  * Re-export the default in-process strategy and its token binding so
  * the host app can wire them up alongside the rest of the batch
  * engine. The strategy is *not* auto-registered by
- * `NestBatchModule.forRoot()` (T2's body) because its constructor
- * requires `JobRepository` and `JobExecutor` — runtime deps the host
+ * `NestBatchModule.forRoot()` because its constructor requires
+ * `JobRepository` and `JobExecutor` — runtime deps the host
  * supplies. The T4 `InProcessAdapter` factory does the wiring through
  * the adapter's own `DynamicModule.exports` so the runtime
  * resolution chain works without the core module having to know which
@@ -76,20 +87,57 @@ export interface NestBatchModuleOptions {
 }
 
 /**
- * Stub options for `forRootAsync()`.
+ * Options for `NestBatchModule.forRootAsync()`.
  *
- * TODO(core-factory-init/T2): rewrite `forRootAsync` to honour
- * `imports` / `inject` / `useFactory` against the new
- * `BatchAdaptersConfig` shape. The type lives here today only to
- * keep the file compiling — T2 will define the real contract.
+ * `imports` + `inject` + `useFactory` mirror the standard
+ * `ConfigurableModuleBuilder` shape. The factory is registered as a
+ * sentinel provider under `OPTIONS_FACTORY` (a `Symbol.for` token
+ * stable across module boundaries), and `MODULE_OPTIONS_TOKEN` is
+ * bound to its resolved `BatchAdaptersConfig` via a follow-up
+ * `useFactory` provider.
+ *
+ * **Note on adapter module merging.** NestJS cannot dynamically
+ * import a `DynamicModule` at module-build time, so the
+ * `forRootAsync` path does NOT auto-merge the adapter modules'
+ * `globalProviders` into the core module's `providers` list the way
+ * `forRoot` does. Two consequences for the async path:
+ *
+ *   1. The adapter `DynamicModule`s must be passed in the caller's
+ *      `imports` array directly (e.g.
+ *      `imports: [MikroOrmAdapter.module, InProcessAdapter.module]`)
+ *      so Nest sees them in the module graph.
+ *   2. The factory's return value is used only for the
+ *      `MODULE_OPTIONS_TOKEN` binding (adapters introspection);
+ *      sibling packages and the host can read the resolved config
+ *      via `@Inject(MODULE_OPTIONS_TOKEN)`.
+ *
+ * For the full auto-merge (adapter modules + `globalProviders`
+ * registered into core's own DI scope), prefer `forRoot` with a
+ * pre-resolved `BatchAdaptersConfig`. The async path is for
+ * adapters whose factory needs to consult a config service or
+ * another async provider to decide which adapter to plug in.
  */
 export interface NestBatchModuleAsyncOptions {
   imports?: DynamicModule['imports'];
   useFactory: (
     ...args: unknown[]
-  ) => Promise<NestBatchModuleOptions> | NestBatchModuleOptions;
+  ) => Promise<BatchAdaptersConfig> | BatchAdaptersConfig;
   inject?: readonly unknown[];
 }
+
+/**
+ * Sentinel provider token used by `forRootAsync` to plumb the user's
+ * `useFactory` through DI. The factory is registered under this
+ * token, and `MODULE_OPTIONS_TOKEN` resolves to its output via a
+ * follow-up `useFactory` provider.
+ *
+ * `Symbol.for(...)` makes the token stable across module boundaries:
+ * tooling or sibling packages that know the description string can
+ * resolve the same symbol without importing this file. Matches the
+ * convention used by `BATCH_SCHEDULE_REGISTRY`, `MODULE_OPTIONS_TOKEN`,
+ * `JOB_REPOSITORY_TOKEN`, etc. in `./tokens.ts`.
+ */
+const OPTIONS_FACTORY: symbol = Symbol.for('@nest-batch/core/OPTIONS_FACTORY');
 
 /**
  * Hook that runs on `OnApplicationBootstrap` to wire together the
@@ -211,50 +259,189 @@ export class BatchBootstrapper implements OnApplicationBootstrap {
 /**
  * Public Nest module that wires up the @nest-batch/core library.
  *
- * TODO(core-factory-init/T2): rewrite `forRoot` / `forRootAsync` to:
- *   1. import each adapter's `DynamicModule` via
- *      `adapters.persistence.module` and `adapters.transport.module`;
- *   2. register each adapter's `globalProviders` into the module's
- *      own DI scope and re-export them;
- *   3. register core's own providers (`BatchExplorer`,
- *      `DefinitionCompiler`, `JobRegistry`, `JobExecutor`,
- *      `ChunkStepExecutor`, `TaskletStepExecutor`, `ListenerInvoker`,
- *      `FlowEvaluator`, `BatchScheduleRegistry`, `BatchBootstrapper`)
- *      and import `DiscoveryModule`;
- *   4. resolve `forRootAsync` through a sentinel factory provider
- *      that honours `imports` + `inject` (mirroring the
- *      `ConfigurableModuleBuilder` shape).
+ * The module is a `global: true` `DynamicModule` whose `imports`,
+ * `providers`, and `exports` are assembled at the call site by
+ * `forRoot` (synchronous) or `forRootAsync` (sentinel-factory
+ * pattern). In both paths the core providers and the executor
+ * subgraph are auto-registered so the host does not have to wire
+ * them by hand; adapter modules are imported as part of the same
+ * `DynamicModule` so Nest's discovery phase sees every job class.
  *
- * Both factories are stubs in T1 so the file compiles after the
- * old `repository` / `transactionManager` / `executionStrategy` /
- * `extraProviders` options are removed. The stubs return a
- * minimal global `DynamicModule` that does not register any
- * providers — T2 replaces them with the real wiring.
+ * @see {@link NestBatchModuleOptions} for the synchronous options shape
+ * @see {@link NestBatchModuleAsyncOptions} for the async options shape
+ * @see {@link BatchAdaptersConfig} for the adapter contract
  */
 @Module({})
 export class NestBatchModule {
   /**
    * Static (synchronous) configuration.
    *
-   * STUB — see the class docstring. T2 fills this in.
+   * Takes the resolved `BatchAdaptersConfig` and builds a
+   * `global: true` `DynamicModule` that:
+   *
+   *   1. imports each adapter's `DynamicModule`
+   *      (`adapters.persistence.module` and `adapters.transport.module`);
+   *   2. imports `DiscoveryModule` from `@nestjs/core` so the explorer
+   *      can use Nest's `DiscoveryService`;
+   *   3. registers core's own providers — `JobRegistry`,
+   *      `DefinitionCompiler`, `BatchExplorer`, `FlowEvaluator`,
+   *      `BatchScheduleRegistry`, `BatchBootstrapper` — and the
+   *      executor subgraph (`JobExecutor`, `ChunkStepExecutor`,
+   *      `TaskletStepExecutor`, `ListenerInvoker`) so the host
+   *      does not have to wire them by hand;
+   *   4. registers each adapter's `globalProviders` (e.g. the
+   *      `JobRepository` / `TransactionManager` implementations
+   *      from a persistence adapter) so the host can inject them
+   *      too;
+   *   5. binds the `BatchAdaptersConfig` to `MODULE_OPTIONS_TOKEN`
+   *      via a value provider for adapter introspection.
    */
-  static forRoot(_options: NestBatchModuleOptions): DynamicModule {
+  static forRoot(options: NestBatchModuleOptions): DynamicModule {
+    const { adapters } = options;
+    const persistenceProviders = adapters.persistence.globalProviders ?? [];
+    const transportProviders = adapters.transport.globalProviders ?? [];
+
     return {
       module: NestBatchModule,
       global: true,
+      imports: [
+        adapters.persistence.module,
+        adapters.transport.module,
+        DiscoveryModule,
+      ],
+      providers: [
+        // Core classes (discovery + compile + register).
+        JobRegistry,
+        DefinitionCompiler,
+        BatchExplorer,
+        FlowEvaluator,
+        BatchScheduleRegistry,
+        BatchBootstrapper,
+        // Executor subgraph (JobExecutor → Chunk/Tasklet/Listener).
+        JobExecutor,
+        ChunkStepExecutor,
+        TaskletStepExecutor,
+        ListenerInvoker,
+        // Resolved options bag for adapter introspection.
+        {
+          provide: MODULE_OPTIONS_TOKEN,
+          useValue: adapters,
+        },
+        // Adapter-supplied global providers (e.g. JobRepository
+        // / TransactionManager implementations).
+        ...persistenceProviders,
+        ...transportProviders,
+      ],
+      exports: [
+        // Core classes — exported so sibling packages and the
+        // host app can resolve them from the global module chain.
+        JobRegistry,
+        DefinitionCompiler,
+        BatchExplorer,
+        FlowEvaluator,
+        BatchScheduleRegistry,
+        BatchBootstrapper,
+        // Tokens — exported so adapters can bind to them via
+        // `@Inject(MODULE_OPTIONS_TOKEN)` and host code can read
+        // the schedule registry by its stable symbol.
+        BATCH_SCHEDULE_REGISTRY,
+        MODULE_OPTIONS_TOKEN,
+        // Executor subgraph — exported so adapters (e.g. the
+        // `InProcessExecutionStrategy`) and host code can inject
+        // them.
+        JobExecutor,
+        ChunkStepExecutor,
+        TaskletStepExecutor,
+        ListenerInvoker,
+        // Adapter-supplied global providers — re-exported so the
+        // host can resolve the persistence + transport bindings
+        // from the global module chain.
+        ...persistenceProviders,
+        ...transportProviders,
+      ],
     };
   }
 
   /**
-   * Async configuration — useful when the adapter set comes from
-   * a config service or another async source.
+   * Async configuration — useful when the adapter set comes from a
+   * config service or another async source.
    *
-   * STUB — see the class docstring. T2 fills this in.
+   * Mirrors the `BullmqBatchModule.forRootAsync` pattern: the user's
+   * `useFactory` is registered as a sentinel provider under
+   * `OPTIONS_FACTORY`, and `MODULE_OPTIONS_TOKEN` is bound to its
+   * resolved `BatchAdaptersConfig` via a follow-up `useFactory`
+   * provider. The user's `imports` + `inject` are forwarded as-is
+   * so the factory can pull from `ConfigService` or any other
+   * DI-bound dependency.
+   *
+   * See the `NestBatchModuleAsyncOptions` JSDoc for the adapter
+   * module merging caveat — the async path does not auto-merge
+   * the adapter modules' `globalProviders`. The adapter
+   * `DynamicModule`s must be passed in the caller's `imports`
+   * array so Nest sees them in the module graph; the factory's
+   * return value is used only for `MODULE_OPTIONS_TOKEN`.
    */
-  static forRootAsync(_options: NestBatchModuleAsyncOptions): DynamicModule {
+  static forRootAsync(options: NestBatchModuleAsyncOptions): DynamicModule {
+    const { imports = [], inject = [], useFactory } = options;
+
+    // Sentinel factory provider: holds the user's `useFactory` and
+    // any `inject` deps. Other providers can pull the resolved
+    // `BatchAdaptersConfig` via `@Inject(OPTIONS_FACTORY)` if they
+    // need to.
+    const factoryProvider: Provider = {
+      provide: OPTIONS_FACTORY,
+      useFactory: useFactory as (...args: unknown[]) => unknown,
+      inject: [...inject] as Array<string | symbol | Function>,
+    };
+
+    // Options provider: bridges the sentinel factory to the
+    // canonical `MODULE_OPTIONS_TOKEN` so adapters + host code can
+    // read the resolved config by its stable symbol.
+    const optionsProvider: Provider = {
+      provide: MODULE_OPTIONS_TOKEN,
+      useFactory: (fromFactory: BatchAdaptersConfig | undefined): BatchAdaptersConfig | undefined =>
+        fromFactory,
+      inject: [OPTIONS_FACTORY],
+    };
+
     return {
       module: NestBatchModule,
       global: true,
+      imports: [...imports, DiscoveryModule],
+      providers: [
+        // Core classes (discovery + compile + register).
+        JobRegistry,
+        DefinitionCompiler,
+        BatchExplorer,
+        FlowEvaluator,
+        BatchScheduleRegistry,
+        BatchBootstrapper,
+        // Executor subgraph (JobExecutor → Chunk/Tasklet/Listener).
+        JobExecutor,
+        ChunkStepExecutor,
+        TaskletStepExecutor,
+        ListenerInvoker,
+        // Sentinel factory + options provider (the async path).
+        factoryProvider,
+        optionsProvider,
+      ],
+      exports: [
+        // Core classes.
+        JobRegistry,
+        DefinitionCompiler,
+        BatchExplorer,
+        FlowEvaluator,
+        BatchScheduleRegistry,
+        BatchBootstrapper,
+        // Tokens.
+        BATCH_SCHEDULE_REGISTRY,
+        MODULE_OPTIONS_TOKEN,
+        // Executor subgraph.
+        JobExecutor,
+        ChunkStepExecutor,
+        TaskletStepExecutor,
+        ListenerInvoker,
+      ],
     };
   }
 }
