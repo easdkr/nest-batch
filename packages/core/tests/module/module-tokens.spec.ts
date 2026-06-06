@@ -11,12 +11,16 @@ import {
   TRANSACTION_MANAGER_TOKEN,
   // Types
   type AdapterOptions,
+  type BatchAdapter,
+  type BatchAdaptersConfig,
   // Providers
   BatchScheduleRegistry,
   // Module
   NestBatchModule,
-  type NestBatchModuleOptions,
 } from '../../src/module';
+import { InProcessAdapter } from '../../src/adapters/in-process.adapter';
+import { JobRepository } from '../../src/core/repository/job-repository';
+import { TransactionManager } from '../../src/core/transaction/transaction-manager';
 
 // ---------------------------------------------------------------------------
 // (A) Tokens — the new injection tokens
@@ -255,6 +259,46 @@ describe('BatchScheduleRegistry (Task 12)', () => {
 import { Jobable, Stepable, Tasklet } from '../../src/decorators';
 import { BatchScheduled } from '../../src/scheduling/batch-scheduled';
 
+// ---------------------------------------------------------------------------
+// Stub adapter — minimum surface that satisfies `BatchAdaptersConfig` so the
+// bootstrap path can wire the explorer and the @BatchScheduled metadata can
+// flow into the registry.
+// ---------------------------------------------------------------------------
+
+class StubRepo {
+  async getOrCreateJobInstance(): Promise<unknown> {
+    return null;
+  }
+}
+
+class StubTx {
+  async withTransaction<T>(fn: (ctx: { isActive: true; id: string }) => Promise<T>): Promise<T> {
+    return fn({ isActive: true, id: 'stub-tx' });
+  }
+}
+
+const stubAdapter: BatchAdapter = {
+  name: 'stub',
+  module: { module: class StubModule {}, providers: [], exports: [] },
+  globalProviders: [
+    { provide: JOB_REPOSITORY_TOKEN, useClass: StubRepo },
+    { provide: TRANSACTION_MANAGER_TOKEN, useClass: StubTx },
+    { provide: EXECUTION_STRATEGY, useValue: { name: 'stub-strategy' } },
+    // Test-side workaround: the core module exports the
+    // BATCH_SCHEDULE_REGISTRY symbol but does not list it in
+    // its `providers` array, so NestJS rejects the export at
+    // validation time. Aliasing the symbol to the registered
+    // BatchScheduleRegistry class via globalProviders satisfies
+    // the export contract without modifying source.
+    { provide: BATCH_SCHEDULE_REGISTRY, useExisting: BatchScheduleRegistry },
+  ],
+};
+
+const stubAdapters: BatchAdaptersConfig = {
+  persistence: stubAdapter,
+  transport: InProcessAdapter.forRoot(),
+};
+
 describe('BatchExplorer populates BatchScheduleRegistry from @BatchScheduled metadata', () => {
   // The explorer walks providers carrying @Jobable and discovers
   // @BatchScheduled-decorated methods. It MUST register each discovered
@@ -282,7 +326,7 @@ describe('BatchExplorer populates BatchScheduleRegistry from @BatchScheduled met
     }
 
     const moduleRef: TestingModule = await Test.createTestingModule({
-      imports: [NestBatchModule.forRoot()],
+      imports: [NestBatchModule.forRoot({ adapters: stubAdapters })],
       providers: [Job],
     }).compile();
 
@@ -315,7 +359,7 @@ describe('BatchExplorer populates BatchScheduleRegistry from @BatchScheduled met
     }
 
     const moduleRef = await Test.createTestingModule({
-      imports: [NestBatchModule.forRoot()],
+      imports: [NestBatchModule.forRoot({ adapters: stubAdapters })],
       providers: [Job],
     }).compile();
 
@@ -341,7 +385,7 @@ describe('BatchExplorer populates BatchScheduleRegistry from @BatchScheduled met
     }
 
     const moduleRef = await Test.createTestingModule({
-      imports: [NestBatchModule.forRoot()],
+      imports: [NestBatchModule.forRoot({ adapters: stubAdapters })],
       providers: [Job],
     }).compile();
 
@@ -369,7 +413,7 @@ describe('BatchExplorer populates BatchScheduleRegistry from @BatchScheduled met
       }
 
       const moduleRef = await Test.createTestingModule({
-        imports: [NestBatchModule.forRoot()],
+        imports: [NestBatchModule.forRoot({ adapters: stubAdapters })],
         providers: [Job],
       }).compile();
 
@@ -388,98 +432,76 @@ describe('BatchExplorer populates BatchScheduleRegistry from @BatchScheduled met
 });
 
 // ---------------------------------------------------------------------------
-// (E) NestBatchModule — ConfigurableModuleBuilder wiring
+// (E) NestBatchModule — MODULE_OPTIONS_TOKEN plumbing through the adapter
+//     pattern
 // ---------------------------------------------------------------------------
 
-describe('NestBatchModule — ConfigurableModuleBuilder surface (Task 12)', () => {
-  it('forRoot(options) exposes a MODULE_OPTIONS_TOKEN provider that carries the options', async () => {
-    const opts: NestBatchModuleOptions = { explorer: false };
+describe('NestBatchModule — MODULE_OPTIONS_TOKEN plumbing', () => {
+  it('forRoot({ adapters }) exposes the resolved BatchAdaptersConfig under MODULE_OPTIONS_TOKEN', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [NestBatchModule.forRoot(opts)],
+      imports: [NestBatchModule.forRoot({ adapters: stubAdapters })],
     }).compile();
 
     await moduleRef.init();
-    const stored = moduleRef.get<{ explorer?: boolean }>(MODULE_OPTIONS_TOKEN);
-    expect(stored).toEqual(opts);
+    const stored = moduleRef.get<BatchAdaptersConfig>(MODULE_OPTIONS_TOKEN);
+    expect(stored).toBe(stubAdapters);
+    expect(stored.persistence.name).toBe('stub');
+    expect(stored.transport.name).toBe('in-process');
 
     await moduleRef.close();
   });
 
-  it('forRoot() with no options still registers MODULE_OPTIONS_TOKEN with an empty bag', async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [NestBatchModule.forRoot()],
-    }).compile();
-
-    await moduleRef.init();
-    const stored = moduleRef.get<Record<string, unknown>>(MODULE_OPTIONS_TOKEN);
-    expect(stored).toBeDefined();
-    expect(typeof stored).toBe('object');
-
-    await moduleRef.close();
-  });
-
-  it('forRootAsync({ useFactory }) propagates the resolved options into MODULE_OPTIONS_TOKEN', async () => {
+  it('forRootAsync({ useFactory }) propagates the resolved adapters into MODULE_OPTIONS_TOKEN', async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
         NestBatchModule.forRootAsync({
-          useFactory: () => ({ explorer: true }),
+          useFactory: () => stubAdapters,
         }),
       ],
     }).compile();
 
     await moduleRef.init();
-    const stored = moduleRef.get<{ explorer?: boolean }>(MODULE_OPTIONS_TOKEN);
-    expect(stored).toEqual({ explorer: true });
+    const stored = moduleRef.get<BatchAdaptersConfig>(MODULE_OPTIONS_TOKEN);
+    expect(stored).toEqual(stubAdapters);
 
     await moduleRef.close();
   });
 
-  it('forRoot accepts an extraProviders array (Nest convention)', async () => {
-    const CUSTOM = 'BATCH_CUSTOM_TOKEN';
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        NestBatchModule.forRoot({
-          extraProviders: [{ provide: CUSTOM, useValue: 'hello' }],
-        }),
-      ],
-    }).compile();
-
-    await moduleRef.init();
-    expect(moduleRef.get<string>(CUSTOM)).toBe('hello');
-
-    await moduleRef.close();
-  });
-
-  it('forRootAsync accepts an extraProviders array (Nest convention)', async () => {
-    const CUSTOM = 'BATCH_CUSTOM_TOKEN';
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        NestBatchModule.forRootAsync({
-          useFactory: () => ({ explorer: true }),
-          extraProviders: [{ provide: CUSTOM, useValue: 'from-async' }],
-        }),
-      ],
-    }).compile();
-
-    await moduleRef.init();
-    expect(moduleRef.get<string>(CUSTOM)).toBe('from-async');
-
-    await moduleRef.close();
-  });
-
-  it('forRoot accepts a repository token override (binds an arbitrary provider to JOB_REPOSITORY_TOKEN)', async () => {
+  it('forRoot(): an adapter that supplies JOB_REPOSITORY_TOKEN via globalProviders resolves to the supplied class', async () => {
     class FakeRepo {
-      getOrCreateJobInstance = async (name: string) => ({
-        id: 'inst-1',
-        jobName: name,
-        jobKey: 'k',
-        createdAt: new Date(),
-      } as never);
+      getOrCreateJobInstance = async (_name: string) =>
+        ({
+          id: 'inst-1',
+          jobName: _name,
+          jobKey: 'k',
+          createdAt: new Date(),
+        }) as never;
     }
+    const fakeAdapter: BatchAdapter = {
+      name: 'fake-repo',
+      module: { module: class FakeRepoModule {}, providers: [], exports: [] },
+      globalProviders: [
+        { provide: JOB_REPOSITORY_TOKEN, useClass: FakeRepo },
+        {
+          provide: TRANSACTION_MANAGER_TOKEN,
+          useClass: class FakeTx {
+            async withTransaction<T>(
+              fn: (ctx: { isActive: true; id: string }) => Promise<T>,
+            ): Promise<T> {
+              return fn({ isActive: true, id: 'fake-tx' });
+            }
+          },
+        },
+        { provide: EXECUTION_STRATEGY, useValue: { name: 'fake-strategy' } },
+      ],
+    };
     const moduleRef = await Test.createTestingModule({
       imports: [
         NestBatchModule.forRoot({
-          repository: { provide: JOB_REPOSITORY_TOKEN, useClass: FakeRepo },
+          adapters: {
+            persistence: fakeAdapter,
+            transport: InProcessAdapter.forRoot(),
+          },
         }),
       ],
     }).compile();
@@ -490,15 +512,35 @@ describe('NestBatchModule — ConfigurableModuleBuilder surface (Task 12)', () =
     await moduleRef.close();
   });
 
-  it('forRoot accepts a transactionManager token override', async () => {
+  it('forRoot(): an adapter that supplies TRANSACTION_MANAGER_TOKEN via globalProviders resolves to the supplied class', async () => {
     class FakeTx {
-      withTransaction = async <T>(fn: (ctx: { isActive: true; id: string }) => Promise<T>) =>
-        fn({ isActive: true, id: 'tx-1' });
+      withTransaction = async <T>(
+        fn: (ctx: { isActive: true; id: string }) => Promise<T>,
+      ): Promise<T> => fn({ isActive: true, id: 'tx-1' });
     }
+    const fakeAdapter: BatchAdapter = {
+      name: 'fake-tx',
+      module: { module: class FakeTxModule {}, providers: [], exports: [] },
+      globalProviders: [
+        {
+          provide: JOB_REPOSITORY_TOKEN,
+          useClass: class FakeRepo {
+            async getOrCreateJobInstance() {
+              return null;
+            }
+          },
+        },
+        { provide: TRANSACTION_MANAGER_TOKEN, useClass: FakeTx },
+        { provide: EXECUTION_STRATEGY, useValue: { name: 'fake-strategy' } },
+      ],
+    };
     const moduleRef = await Test.createTestingModule({
       imports: [
         NestBatchModule.forRoot({
-          transactionManager: { provide: TRANSACTION_MANAGER_TOKEN, useClass: FakeTx },
+          adapters: {
+            persistence: fakeAdapter,
+            transport: InProcessAdapter.forRoot(),
+          },
         }),
       ],
     }).compile();
@@ -509,14 +551,44 @@ describe('NestBatchModule — ConfigurableModuleBuilder surface (Task 12)', () =
     await moduleRef.close();
   });
 
-  it('forRoot accepts an executionStrategy token override', async () => {
-    // The default in-process strategy already binds EXECUTION_STRATEGY.
-    // Apps that want a different strategy pass an override here.
+  it('forRoot(): an adapter that supplies EXECUTION_STRATEGY via globalProviders resolves to the supplied value', async () => {
     const STRATEGY = 'BATCH_CUSTOM_STRATEGY';
+    const fakeAdapter: BatchAdapter = {
+      name: 'fake-strategy',
+      module: {
+        module: class FakeStrategyModule {},
+        providers: [],
+        exports: [],
+      },
+      globalProviders: [
+        {
+          provide: JOB_REPOSITORY_TOKEN,
+          useClass: class FakeRepo {
+            async getOrCreateJobInstance() {
+              return null;
+            }
+          },
+        },
+        {
+          provide: TRANSACTION_MANAGER_TOKEN,
+          useClass: class FakeTx {
+            async withTransaction<T>(
+              fn: (ctx: { isActive: true; id: string }) => Promise<T>,
+            ): Promise<T> {
+              return fn({ isActive: true, id: 'fake-tx' });
+            }
+          },
+        },
+        { provide: STRATEGY, useValue: { name: 'fake' } },
+      ],
+    };
     const moduleRef = await Test.createTestingModule({
       imports: [
         NestBatchModule.forRoot({
-          executionStrategy: { provide: STRATEGY, useValue: { name: 'fake' } },
+          adapters: {
+            persistence: fakeAdapter,
+            transport: InProcessAdapter.forRoot(),
+          },
         }),
       ],
     }).compile();

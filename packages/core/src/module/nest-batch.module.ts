@@ -16,6 +16,7 @@ import { JobExecutor } from '../execution/job-executor';
 import { ChunkStepExecutor } from '../execution/chunk-step-executor';
 import { TaskletStepExecutor } from '../execution/tasklet-step-executor';
 import { ListenerInvoker } from '../execution/listener-invoker';
+import { JobLauncher } from '../execution/job-launcher';
 import {
   InProcessExecutionStrategy,
   IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
@@ -322,10 +323,19 @@ export class NestBatchModule {
         ChunkStepExecutor,
         TaskletStepExecutor,
         ListenerInvoker,
+        JobLauncher,
         // Resolved options bag for adapter introspection.
         {
           provide: MODULE_OPTIONS_TOKEN,
           useValue: adapters,
+        },
+        // Schedule registry symbol alias — the symbol itself
+        // must be a provider (not just a class export) so the
+        // `exports` entry below resolves through Nest's DI
+        // validation.
+        {
+          provide: BATCH_SCHEDULE_REGISTRY,
+          useExisting: BatchScheduleRegistry,
         },
         // Adapter-supplied global providers (e.g. JobRepository
         // / TransactionManager implementations).
@@ -353,6 +363,7 @@ export class NestBatchModule {
         ChunkStepExecutor,
         TaskletStepExecutor,
         ListenerInvoker,
+        JobLauncher,
         // Adapter-supplied global providers — re-exported so the
         // host can resolve the persistence + transport bindings
         // from the global module chain.
@@ -421,6 +432,11 @@ export class NestBatchModule {
         ChunkStepExecutor,
         TaskletStepExecutor,
         ListenerInvoker,
+        JobLauncher,
+        {
+          provide: BATCH_SCHEDULE_REGISTRY,
+          useExisting: BatchScheduleRegistry,
+        },
         // Sentinel factory + options provider (the async path).
         factoryProvider,
         optionsProvider,
@@ -441,6 +457,7 @@ export class NestBatchModule {
         ChunkStepExecutor,
         TaskletStepExecutor,
         ListenerInvoker,
+        JobLauncher,
       ],
     };
   }
