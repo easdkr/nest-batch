@@ -152,14 +152,22 @@
 
 ### Reference pattern
 - T5 (MikroOrmAdapter) has NOT landed at the time T7 ran — no `packages/mikro-orm/src/adapters/mikro-orm.adapter.ts` file exists. T7 used `InProcessAdapter` (in `packages/core/src/adapters/in-process.adapter.ts`) as the primary pattern reference and the existing `NestBatchMikroOrmModule.forRoot` (in `packages/mikro-orm/src/nest-batch-mikro-orm.module.ts`) as the secondary reference for the entity-merging shape.
-- When T5 lands, the two adapter files should be in lockstep — same options-merging shape, same token bindings, same `name` literal convention. If T5 picks a different shape, T7 may need a follow-up refactor.
+- UPDATE: T5 landed as commit `68140a0` between when T7 was scheduled and when T7 actually ran. T7 was re-aligned to match T5 exactly so the two adapter files are in lockstep:
+  - `BATCH_META_ENTITIES` const tuple (not the `batchMetaEntities()` function) for entity merging
+  - Dedicated empty `@Module({})` carrier class (`TypeOrmBatchModule`) — cannot reuse the imported `TypeOrmModule` because it has its own `forRoot()` factory and a second config for the same class would collide
+  - `global: true` on the wrapping module (mirrors `NestBatchModule`, `InProcessAdapter`, `MikroOrmAdapter`)
+  - `useExisting` in the module's own `providers` so the symbol tokens and the concrete class share a single instance
+  - `useClass` in `globalProviders` so the core engine can construct the binding independently if the host's `AppModule` resolves it directly
+  - Token-only `exports` (the concrete classes are reachable via the `useExisting` chain)
+- When T5 picks a different shape, T7 may need a follow-up refactor.
 
 ### Design choices
 1. **Static `forRoot`, no `forRootAsync`.** Same as InProcessAdapter. Consumers needing async config can wrap `TypeOrmModule.forRootAsync({...})` in a thin custom factory. Adding a parallel `forRootAsync` on top would be a re-skinned `useFactory` and would obscure the host's actual async source.
 2. **Self-contained, no BYO DataSource.** The previous README described a "BYO DataSource" shape; deliberately not exposed through this factory because `@nestjs/typeorm` does not support two `forRoot()` calls in the same app. The README example showing `dataSource: /* your DataSource */` is now stale — the new factory is the source of truth.
-3. **Module is NOT `global: true`.** `globalProviders` is the documented mechanism for host-visible bindings (T1 rationale). Marking the module global would only matter for `@Inject` from sibling sub-modules, which the engine does not require.
+3. **Module IS `global: true`** (after T5 alignment, was originally going to skip it). Mirrors `NestBatchModule`, `InProcessAdapter`, and `MikroOrmAdapter`. The `globalProviders` field is still populated, but the module itself is also marked global so `@Inject` from sibling sub-modules works without forcing the host to re-import this module everywhere.
 4. **Use `BATCH_META_ENTITIES` const, not the `batchMetaEntities()` function.** The const tuple has a clean `Function` element type that matches TypeORM's `MixedList<string | Function | EntitySchema<any>>` without a cast. The function form returns `EntityTarget<unknown>[]` which is too broad (includes the `{ name; type }` object form, not a valid `MixedList` element).
 5. **One cast at the merge boundary.** The spread `{...options, entities}` loses the discriminated-union narrowing on `type` (postgres vs mysql vs ...); the final result is cast to `TypeOrmModuleOptions` to restore the contract. Safe because the host's options were already typed as `Omit<TypeOrmModuleOptions, 'entities'>`.
+6. **`useExisting` in module providers, `useClass` in globalProviders** (after T5 alignment). `useExisting` chains the symbol token to the concrete class instance within the adapter's own module (no duplicate instances). `useClass` in `globalProviders` lets the core engine construct the binding independently if it needs to inject the token without going through the adapter's module.
 
 ### Typecheck/build status
 - `pnpm --filter @nest-batch/typeorm typecheck` → 0 errors (see `.omo/evidence/task-7-typeorm-typecheck.log`).
@@ -169,6 +177,7 @@
 ### T5 coordination note
 - T7 deliberately mirrors the `InProcessAdapter` shape (a class with a static `forRoot()` method), not the `as const satisfies BatchAdapter` literal-object form shown in the T1 JSDoc example. The reason: `InProcessAdapter` (T4) is the only T1–T7 task to have landed at the time of T7, so it's the only empirically proven shape. If T5 picks the literal-object form, T7 should be reviewed for shape parity but the contract is the same.
 - The `name` field is the string literal `'typeorm'` (not `as const`) because the class doesn't support literal narrowing without a const assertion. If the compiler complains in T2's adapter-validation code, T7 may need to switch to `as const satisfies BatchAdapter` (and an explicit `readonly name: 'typeorm'`).
+- **UPDATE after T5 landed (commit 68140a0):** T5 uses the same class-with-static-forRoot shape as InProcessAdapter and T7, so the class-vs-literal decision is settled — all three adapter factories (InProcess, MikroOrm, TypeOrm) use the class form. T5 also uses the same `useClass` shape in `globalProviders`, confirming T2 should accept this pattern. T7 has been re-aligned to T5's exact `useExisting` + token-only-exports shape.
 
 
 ---
