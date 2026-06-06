@@ -266,9 +266,10 @@ export async function buildBullmqE2EModule(options: {
    */
   noWorker?: boolean;
   /**
-   * Optional override for the per-queue `defaultJobOptions` used by
-   * the producer. Tests use this to set a low `attempts` so the
-   * "no BullMQ technical attempts" assertion is meaningful.
+   * Per-queue `defaultJobOptions` for the producer. Reserved for
+   * tests that want to override the runtime service's hard-coded
+   * defaults; not consumed by any current test. Kept on the
+   * fixture's options surface for forward-compat.
    */
   defaultJobOptions?: Record<string, unknown>;
 }): Promise<{ moduleRef: import('@nestjs/core').TestingModule }> {
@@ -276,87 +277,65 @@ export async function buildBullmqE2EModule(options: {
   const core = await import('@nest-batch/core');
   const bullmqAdapter = await import('../src');
 
-  // The in-memory repository and transaction manager are registered
-  // as `useValue` providers (not bare class providers) because
-  // `InMemoryJobRepository` needs an `IdGenerator` at construction
-  // time, and we want to control the exact instance the launcher
-  // resolves to.
-  const repository = new core.InMemoryJobRepository();
-  const transactionManager = new core.InMemoryTransactionManager();
-
   // `NestFactory.createApplicationContext` boots the module graph
   // but skips the HTTP server. It is the right primitive for an
   // e2e test that drives the DI container directly.
+  //
+  // `useFactory` constructs the singletons with their default
+  // `IdGenerator` (a `useClass` provider would fail Nest's DI
+  // resolution because the constructor's optional arg has no
+  // binding in this fixture). `useExisting` aliases the abstract
+  // class keys to the same Nest-managed instance.
+  const inMemoryPersistence: import('@nest-batch/core').BatchAdapter = {
+    name: 'in-memory',
+    module: {
+      module: class InMemoryPersistenceModule {},
+      global: true,
+      providers: [
+        {
+          provide: core.InMemoryJobRepository,
+          useFactory: () => new core.InMemoryJobRepository(),
+        },
+        {
+          provide: core.InMemoryTransactionManager,
+          useFactory: () => new core.InMemoryTransactionManager(),
+        },
+        { provide: core.JobRepository, useExisting: core.InMemoryJobRepository },
+        { provide: core.TransactionManager, useExisting: core.InMemoryTransactionManager },
+      ],
+      exports: [
+        core.InMemoryJobRepository,
+        core.InMemoryTransactionManager,
+        core.JobRepository,
+        core.TransactionManager,
+      ],
+    },
+    globalProviders: [
+      { provide: core.JOB_REPOSITORY_TOKEN, useExisting: core.InMemoryJobRepository },
+      { provide: core.TRANSACTION_MANAGER_TOKEN, useExisting: core.InMemoryTransactionManager },
+      { provide: core.JobRepository, useExisting: core.InMemoryJobRepository },
+      { provide: core.TransactionManager, useExisting: core.InMemoryTransactionManager },
+    ],
+  };
+
   const app = await NestFactory.createApplicationContext(
     {
       module: class TestRootModule {},
       global: true,
       imports: [
         core.NestBatchModule.forRoot({
-          // Bind the abstract core tokens to the concrete in-memory
-          // implementations via the `forRoot` options. This is the
-          // recommended path (see the `repository` / `transactionManager`
-          // overrides in `NestBatchModuleOptions`) — it makes the
-          // bindings available through `JOB_REPOSITORY_TOKEN` /
-          // `TRANSACTION_MANAGER_TOKEN` so adapter packages can
-          // resolve them by the canonical token.
-          repository: { provide: core.JOB_REPOSITORY_TOKEN, useValue: repository },
-          transactionManager: {
-            provide: core.TRANSACTION_MANAGER_TOKEN,
-            useValue: transactionManager,
+          adapters: {
+            persistence: inMemoryPersistence,
+            transport: bullmqAdapter.BullmqAdapter.forRoot({
+              connection: {
+                host: options.redis.host,
+                port: options.redis.port,
+                keyPrefix: options.redis.keyPrefix,
+              },
+              autoStartWorker: options.noWorker === true ? false : true,
+            }),
           },
         }),
-        bullmqAdapter.BullmqBatchModule.forRoot({
-          connection: {
-            host: options.redis.host,
-            port: options.redis.port,
-            keyPrefix: options.redis.keyPrefix,
-          },
-          autoStartWorker: options.noWorker === true ? false : true,
-        }),
-      ],
-      providers: [
-        // JobExecutor / TaskletStepExecutor / ChunkStepExecutor /
-        // ListenerInvoker / FlowEvaluator / JobLauncher are not
-        // auto-registered by NestBatchModule — their constructors
-        // need runtime deps the host owns. We register them on
-        // the TEST ROOT MODULE and re-export below so the sibling
-        // `BullmqBatchModule` (which is the consumer that needs
-        // them) can resolve them through the module hierarchy.
-        core.JobExecutor,
-        core.TaskletStepExecutor,
-        core.ChunkStepExecutor,
-        core.ListenerInvoker,
-        core.FlowEvaluator,
-        core.JobLauncher,
-        // Expose the in-memory concrete classes for any consumer
-        // that wants to inspect the test instance directly.
-        { provide: core.InMemoryJobRepository, useValue: repository },
-        { provide: core.InMemoryTransactionManager, useValue: transactionManager },
-        // Also expose the abstract class tokens as providers so
-        // the test root module itself can resolve them via
-        // `moduleRef.get(JobRepository)` (BullmqRuntimeService
-        // resolves by the canonical `JOB_REPOSITORY_TOKEN`, but
-        // the test code may want the abstract-class key).
-        { provide: core.JobRepository, useValue: repository },
-        { provide: core.TransactionManager, useValue: transactionManager },
-      ],
-      // Re-export the providers the child `BullmqBatchModule`
-      // needs at construction time. Without `exports`, Nest
-      // treats the providers as private to the test root module
-      // and the runtime service hits `UnknownDependenciesException`
-      // for every class the test rebinds via `useValue`.
-      exports: [
-        core.JobExecutor,
-        core.TaskletStepExecutor,
-        core.ChunkStepExecutor,
-        core.ListenerInvoker,
-        core.FlowEvaluator,
-        core.JobLauncher,
-        core.JobRepository,
-        core.TransactionManager,
-        core.InMemoryJobRepository,
-        core.InMemoryTransactionManager,
       ],
     },
     { logger: ['error', 'warn'] },
