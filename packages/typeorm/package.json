@@ -1,8 +1,26 @@
 {
   "name": "@nest-batch/typeorm",
   "version": "0.1.0",
-  "private": true,
   "description": "TypeORM 1.0.0 adapter for @nest-batch/core. Provides TypeOrmJobRepository and TypeOrmTransactionManager, owns the six Spring Batch-compatible batch meta tables (entities + migration), and runs the shared contract suite against a real TypeORM DataSource.",
+  "license": "MIT",
+  "author": "easdkr",
+  "homepage": "https://github.com/easdkr/nest-batch/tree/main/packages/typeorm#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/easdkr/nest-batch.git",
+    "directory": "packages/typeorm"
+  },
+  "bugs": {
+    "url": "https://github.com/easdkr/nest-batch/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "batch",
+    "spring-batch",
+    "typeorm",
+    "job-repository",
+    "persistence"
+  ],
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "files": [
@@ -10,6 +28,9 @@
     "src",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly -p tsconfig.build.json",
     "test": "vitest run",
@@ -17,7 +38,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@nest-batch/core": "workspace:*",
+    "@nest-batch/core": "workspace:^",
     "@nestjs/common": "^10 || ^11",
     "@nestjs/typeorm": "^10 || ^11",
     "typeorm": "^1.0.0"

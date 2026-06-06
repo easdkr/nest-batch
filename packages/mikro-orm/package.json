@@ -1,7 +1,26 @@
 {
   "name": "@nest-batch/mikro-orm",
   "version": "0.1.0",
-  "private": true,
+  "description": "MikroORM adapter for @nest-batch/core — JobRepository and TransactionManager backed by a MikroORM PostgreSQL EntityManager.",
+  "license": "MIT",
+  "author": "easdkr",
+  "homepage": "https://github.com/easdkr/nest-batch/tree/main/packages/mikro-orm#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/easdkr/nest-batch.git",
+    "directory": "packages/mikro-orm"
+  },
+  "bugs": {
+    "url": "https://github.com/easdkr/nest-batch/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "batch",
+    "spring-batch",
+    "mikro-orm",
+    "job-repository",
+    "persistence"
+  ],
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "files": [
@@ -9,6 +28,9 @@
     "src",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly -p tsconfig.build.json",
     "test": "vitest run",
@@ -20,7 +42,7 @@
     "@mikro-orm/core": "^6.0.0",
     "@mikro-orm/nestjs": "^6.0.0",
     "@mikro-orm/postgresql": "^6.0.0",
-    "@nest-batch/core": "workspace:*",
+    "@nest-batch/core": "workspace:^",
     "@nestjs/common": "^10 || ^11"
   },
   "peerDependenciesMeta": {

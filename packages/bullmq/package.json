@@ -1,7 +1,26 @@
 {
   "name": "@nest-batch/bullmq",
   "version": "0.1.0",
-  "private": true,
+  "description": "BullMQ runtime adapter for @nest-batch/core — runs batch jobs and partitioned steps as BullMQ queues and workers.",
+  "license": "MIT",
+  "author": "easdkr",
+  "homepage": "https://github.com/easdkr/nest-batch/tree/main/packages/bullmq#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/easdkr/nest-batch.git",
+    "directory": "packages/bullmq"
+  },
+  "bugs": {
+    "url": "https://github.com/easdkr/nest-batch/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "batch",
+    "spring-batch",
+    "bullmq",
+    "queue",
+    "worker"
+  ],
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "files": [
@@ -9,6 +28,9 @@
     "src",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly -p tsconfig.build.json",
     "test": "vitest run",
@@ -16,7 +38,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@nest-batch/core": "workspace:*",
+    "@nest-batch/core": "workspace:^",
     "@nestjs/common": "^10 || ^11",
     "@nestjs/core": "^10 || ^11",
     "bullmq": "^5.0.0"

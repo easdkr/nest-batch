@@ -1,7 +1,28 @@
 {
   "name": "@nest-batch/core",
   "version": "0.1.0",
-  "private": true,
+  "description": "Spring Batch-style batch processing engine for NestJS — jobs, steps, chunk-oriented processing, and the persistence/transport contracts the @nest-batch adapters implement.",
+  "license": "MIT",
+  "author": "easdkr",
+  "homepage": "https://github.com/easdkr/nest-batch/tree/main/packages/core#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/easdkr/nest-batch.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/easdkr/nest-batch/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "batch",
+    "spring-batch",
+    "job",
+    "step",
+    "chunk",
+    "etl",
+    "worker"
+  ],
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "files": [
@@ -19,6 +40,9 @@
       "types": "./dist/tests/contracts/index.d.ts",
       "default": "./dist/tests/contracts/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "swc src -d dist --config-file ../../.swcrc && swc tests/contracts/index.ts -o dist/tests/contracts/index.js --config-file ../../.swcrc && swc tests/contracts/job-repository.contract.ts -o dist/tests/contracts/job-repository.contract.js --config-file ../../.swcrc && tsc --emitDeclarationOnly -p tsconfig.build.json",
