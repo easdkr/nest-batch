@@ -203,3 +203,53 @@ When two parallel tasks target the same file with edits, one should use a "creat
 
 ### Boundary test status
 - No new imports of `bullmq` / `mikro-orm` / `typeorm` / `drizzle-orm` / `cron` in core (T6 doesn't touch core). The new `bullmq.adapter.ts` only imports from `@nestjs/common` (`Module`, `DynamicModule`, `Provider`) and `@nest-batch/core` (`EXECUTION_STRATEGY`, `BatchAdapter`). The core boundary test will keep passing.
+
+
+---
+
+## T5: MikroOrmAdapter factory — Key Decisions
+
+### Shape chosen
+- `MikroOrmAdapter.forRoot(options: Omit<MikroOrmModuleOptions, 'entities'> & { entities?: MikroOrmModuleOptions['entities'] }): BatchAdapter` (sync only — no `forRootAsync` in this release; async can be added by T9/T10 if needed, mirroring the `BullmqAdapter.forRootAsync` sentinel pattern).
+- Static method, no constructor (mirrors `InProcessAdapter.forRoot()`).
+- `MikroOrmAdapterModule` is an empty `@Module({})` class — minimum possible surface, no lifecycle hooks, no metadata.
+
+### Module structure (DynamicModule payload)
+- `module: MikroOrmAdapterModule` (the empty class — NOT the imported `MikroOrmModule`).
+- `global: true` (mirrors `NestBatchModule` so the `JobRepository` / `TransactionManager` tokens are visible to the core engine at the app level).
+- `imports: [MikroOrmModule.forRoot(merged)]` — the `MikroOrmModule` from `@mikro-orm/nestjs`, called with `BATCH_META_ENTITIES` spread into `entities` next to the host's user-domain entities.
+- `providers`:
+  - `MikroORMJobRepository` (class) — DI-instantiable.
+  - `MikroORMTransactionManager` (class) — DI-instantiable.
+  - `{ provide: JOB_REPOSITORY_TOKEN, useExisting: MikroORMJobRepository }` — symbol alias.
+  - `{ provide: TRANSACTION_MANAGER_TOKEN, useExisting: MikroORMTransactionManager }` — symbol alias.
+- `exports`: `JOB_REPOSITORY_TOKEN`, `TRANSACTION_MANAGER_TOKEN` — both symbol tokens (not the classes) so other modules resolve by the canonical DI token.
+
+### Why a dedicated `MikroOrmAdapterModule` class (not the imported `MikroOrmModule`)
+- The task spec said `module: MikroOrmModule` in the prose, but using the imported `MikroOrmModule` from `@mikro-orm/nestjs` as the `module:` field would collide with the same class appearing in `imports` (via `MikroOrmModule.forRoot(merged)`). Nest would see two `DynamicModule` configs for the same class. The cleanest fix is a dedicated empty class — same pattern as `InProcessModule` (T4) and `BullmqModule` (T6).
+- The dedicated class also makes the `BatchAdapter` self-describing: the host can read the `module.module` field and see that this is the adapter's own carrier, not a third-party module reference.
+- The class is `@Module({})` — no static providers, no decorators beyond the empty module marker. All configuration lives in the `DynamicModule` literal returned by `forRoot()`.
+
+### Why `globalProviders` is USED here (not omitted, unlike T4 and T6)
+- T4's `InProcessAdapter` and T6's `BullmqAdapter` omit `globalProviders` because their strategy classes live in the adapter's own module and are exported by the symbol (`EXECUTION_STRATEGY`).
+- T5's `MikroOrmAdapter` uses `globalProviders` because the `JobRepository` / `TransactionManager` bindings are needed by `@nest-batch/core`'s engine (`JobLauncher`, `JobExecutor`) — which is a *separate* module. Even though the wrapping module is `global: true` and exports the symbols, the `BatchAdapter.globalProviders` field is the explicit signal to `NestBatchModule` (T2) to register the bindings into core's own DI scope, so the engine can resolve them through core's own container.
+- The shape is `{ provide: JOB_REPOSITORY_TOKEN, useClass: MikroORMJobRepository }` and `{ provide: TRANSACTION_MANAGER_TOKEN, useClass: MikroORMTransactionManager }` — the canonical symbol form (not the abstract class form the README uses). This matches the existing pattern in T4 (which uses `EXECUTION_STRATEGY` symbol) and the MUST DO clause of the T5 prompt.
+
+### Why `useClass` in `globalProviders` (not `useExisting`)
+- The adapter's own `DynamicModule.providers` uses `useExisting` to alias the symbol to the already-DI-managed class instance (one MikroORM connection, one repository instance, one transaction-manager instance).
+- The adapter's `globalProviders` is the *list* core will register into its own DI scope. Core does not import this adapter's `DynamicModule.imports` (so it cannot reach `MikroORMJobRepository` through DI to alias it), and `useExisting` would resolve to `undefined` (no instance to alias). `useClass` lets Nest construct a fresh instance from the class's own injection metadata — the `EntityManager` from the `MikroOrmModule.forRoot(...)` registration — and that fresh instance is the same instance the adapter's own `useExisting` was pointing at. So both paths resolve to the same singleton, but the registration mechanism is different.
+
+### Legacy file deleted, `BATCH_META_ENTITIES` re-homed
+- `packages/mikro-orm/src/nest-batch-mikro-orm.module.ts` was DELETED. The plan said "Do NOT keep old module class as primary export" so the legacy class is gone.
+- `BATCH_META_ENTITIES` (the typed tuple of the six batch meta entities) was moved to `packages/mikro-orm/src/entities/job-meta.entities.ts` — the natural home (it IS the list of those entities). The JSDoc was updated to mention the new `MikroOrmAdapter.forRoot()` factory.
+- `packages/mikro-orm/src/mikro-orm.config.ts` (which imports `BATCH_META_ENTITIES` for the `createBatchMikroOrmConfig` helper) had its import path updated from `./nest-batch-mikro-orm.module` to `./entities/job-meta.entities`.
+- The package barrel (`packages/mikro-orm/src/index.ts`) replaces the old `export * from './nest-batch-mikro-orm.module'` with `export * from './adapters'`. The header JSDoc was updated to document the new factory-pattern wiring (`NestBatchModule.forRoot({ adapters: { persistence: MikroOrmAdapter.forRoot({...}) } })`).
+- Tests (`tests/contract.test.ts`, `tests/mikroorm-backend.test.ts`) do not import `NestBatchMikroOrmModule` or `BATCH_META_ENTITIES` — they use the entity classes and the concrete impl classes, which are still exported. T10 owns the test migration to the new factory API.
+
+### Typecheck / build status
+- `pnpm --filter @nest-batch/mikro-orm typecheck` → 0 errors (src-only, tests excluded by tsconfig include).
+- `pnpm --filter @nest-batch/mikro-orm build` → "Successfully compiled: 11 files with swc" (5 unchanged src files + 2 new adapter files + 3 migration files + 1 emitted declaration file = 11 swc entries). `tsc --emitDeclarationOnly` also passes (exit 0).
+- Clean dist verified: removed `dist/` and re-ran build — no stale `nest-batch-mikro-orm.module.{d.ts,js}` left over; new `dist/src/adapters/{mikro-orm.adapter,index}.{d.ts,js}` present.
+
+### Boundary test status
+- No new imports of `bullmq` / `mikro-orm` / `typeorm` / `drizzle-orm` / `cron` in core (T5 doesn't touch core). The new `mikro-orm.adapter.ts` only imports from `@nestjs/common` (`Module`, `DynamicModule`, `Provider`), `@mikro-orm/nestjs` (`MikroOrmModule`, `MikroOrmModuleOptions`), and `@nest-batch/core` (`JOB_REPOSITORY_TOKEN`, `TRANSACTION_MANAGER_TOKEN`, `BatchAdapter`). The core boundary test will keep passing.
