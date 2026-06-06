@@ -67,15 +67,16 @@ export const BATCH_SCHEDULE_REGISTRY: symbol = Symbol.for(
 /**
  * Injection token for the module's resolved options bag.
  *
- * Backed by `ConfigurableModuleBuilder` — sibling packages and the host
- * app can read the resolved options (after `useFactory` runs for
- * `forRootAsync`) by injecting this token. The shape is the union of
- * `NestBatchModuleOptions` plus whatever an adapter's `extraOptions`
- * contributed, so the value is a `Record<string, unknown>` at runtime.
+ * Backs the post-`useFactory` options read (T2 will wire the async
+ * factory provider to write into this slot). Sibling packages and the
+ * host app can read the resolved options by injecting this token. The
+ * shape is the union of `NestBatchModuleOptions` plus whatever an
+ * adapter's own config contributed, so the value is a
+ * `Record<string, unknown>` at runtime.
  *
- * Replaces the previous `'BATCH_OPTIONS'` string token. The string token
- * is kept as a deprecated alias for one release so existing
- * `moduleRef.get('BATCH_OPTIONS')` callers do not break.
+ * The previous `'BATCH_OPTIONS'` string alias was removed in the
+ * T1 type-contract refactor — hosts that need the options bag should
+ * inject `MODULE_OPTIONS_TOKEN` instead.
  */
 export const MODULE_OPTIONS_TOKEN: symbol = Symbol.for(
   '@nest-batch/core/MODULE_OPTIONS',
@@ -92,14 +93,3 @@ export const MODULE_OPTIONS_TOKEN: symbol = Symbol.for(
  * token.
  */
 export { EXECUTION_STRATEGY };
-
-/**
- * Deprecated string alias for the legacy `'BATCH_OPTIONS'` provider.
- *
- * The previous module shape used a string token. `MODULE_OPTIONS_TOKEN`
- * is the new canonical symbol. We keep the string as an alias so any
- * existing host that does `moduleRef.get('BATCH_OPTIONS')` continues to
- * resolve during the migration window. The alias is registered in
- * `nest-batch.module.ts`.
- */
-export const LEGACY_BATCH_OPTIONS_TOKEN = 'BATCH_OPTIONS' as const;
