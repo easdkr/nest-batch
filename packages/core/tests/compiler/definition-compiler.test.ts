@@ -191,15 +191,12 @@ describe('DefinitionCompiler.compileFromDiscovered — chunk step', () => {
     const step = job.steps['c1']!;
     if (step.kind === 'chunk') {
       expect(step.chunkSize).toBe(25);
-      expect(step.reader.kind).toBe(RefKind.Method);
-      expect(step.reader.classToken).toBe('DiscoveredChunkJob');
-      expect(step.reader.methodName).toBe('read');
-      expect(step.processor?.kind).toBe(RefKind.Method);
-      expect(step.processor?.classToken).toBe('DiscoveredChunkJob');
-      expect(step.processor?.methodName).toBe('process');
-      expect(step.writer.kind).toBe(RefKind.Method);
-      expect(step.writer.classToken).toBe('DiscoveredChunkJob');
-      expect(step.writer.methodName).toBe('write');
+      expect(step.reader.kind).toBe(RefKind.BuilderLambda);
+      expect(typeof step.reader.fn).toBe('function');
+      expect(step.processor?.kind).toBe(RefKind.BuilderLambda);
+      expect(typeof step.processor?.fn).toBe('function');
+      expect(step.writer.kind).toBe(RefKind.BuilderLambda);
+      expect(typeof step.writer.fn).toBe('function');
     }
   });
 
@@ -431,7 +428,7 @@ describe('DefinitionCompiler — decorator ↔ builder parity', () => {
       expect(fromBuilder.steps['c1']!.chunkSize).toBe(10);
       expect(fromDecorator.steps['c1']!.chunkSize).toBe(25);
       // Decorator: Method refs, Builder: ProviderToken refs
-      expect(fromDecorator.steps['c1']!.reader.kind).toBe(RefKind.Method);
+      expect(fromDecorator.steps['c1']!.reader.kind).toBe(RefKind.BuilderLambda);
       expect(fromBuilder.steps['c1']!.reader.kind).toBe(RefKind.ProviderToken);
     }
   });

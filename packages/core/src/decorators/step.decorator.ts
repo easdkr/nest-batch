@@ -1,9 +1,12 @@
 import 'reflect-metadata';
 import { BATCH_STEP_METADATA } from './constants';
+import type { RetryPolicyConfig, SkipPolicyConfig } from '../core/ir';
 
 export interface StepableOptions {
   id: string;
   chunkSize?: number; // 0 or undefined = tasklet step
+  skipPolicy?: SkipPolicyConfig;
+  retryPolicy?: RetryPolicyConfig;
 }
 
 /**

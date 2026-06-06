@@ -195,7 +195,7 @@ export class DefinitionCompiler {
       | undefined;
     const method = instance?.[step.methodName];
     const taskletRef: TaskletRef = method
-      ? { kind: RefKind.BuilderLambda, fn: method.bind(discovered.instance) }
+      ? { kind: RefKind.BuilderLambda, fn: () => method.bind(discovered.instance) }
       : { kind: RefKind.Method, classToken, methodName: step.methodName };
     return {
       kind: 'tasklet',
@@ -232,16 +232,8 @@ export class DefinitionCompiler {
       );
     }
 
-    const readerRef: ReaderRef = {
-      kind: RefKind.Method,
-      classToken,
-      methodName: reader,
-    };
-    const writerRef: WriterRef = {
-      kind: RefKind.Method,
-      classToken,
-      methodName: writer,
-    };
+    const readerRef: ReaderRef = this.buildItemMethodRef(discovered, classToken, reader);
+    const writerRef: WriterRef = this.buildItemMethodRef(discovered, classToken, writer);
 
     return {
       kind: 'chunk',
@@ -249,16 +241,36 @@ export class DefinitionCompiler {
       chunkSize: step.options.chunkSize ?? 100,
       reader: readerRef,
       writer: writerRef,
+      skipPolicy: step.options.skipPolicy,
+      retryPolicy: step.options.retryPolicy,
       listeners: [],
       ...(processor
         ? {
-            processor: {
-              kind: RefKind.Method,
-              classToken,
-              methodName: processor,
-            } satisfies ProcessorRef,
+            processor: this.buildItemMethodRef(discovered, classToken, processor) satisfies ProcessorRef,
           }
         : {}),
+    };
+  }
+
+  private buildItemMethodRef(
+    discovered: DiscoveredJob,
+    classToken: string,
+    methodName: string,
+  ): ReaderRef | ProcessorRef | WriterRef {
+    const instance = discovered.instance as
+      | Record<string, (...args: unknown[]) => unknown>
+      | undefined;
+    const method = instance?.[methodName];
+    if (method) {
+      return {
+        kind: RefKind.BuilderLambda,
+        fn: () => method.bind(discovered.instance),
+      };
+    }
+    return {
+      kind: RefKind.Method,
+      classToken,
+      methodName,
     };
   }
 

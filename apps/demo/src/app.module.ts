@@ -1,5 +1,6 @@
 import { PostgreSqlDriver } from '@mikro-orm/postgresql';
 import {
+  BatchExplorer,
   ChunkStepExecutor,
   DefinitionCompiler,
   InProcessExecutionStrategy,
@@ -35,8 +36,6 @@ import { ImportProductsJob } from './jobs/import-products/import-products.job';
 import { SkipLoggerListener } from './jobs/import-products/listeners/skip-logger.listener';
 import { StepMetricsListener } from './jobs/import-products/listeners/step-metrics.listener';
 import { ProductProcessor } from './jobs/import-products/processor/product.processor';
-import { CsvProductReader } from './jobs/import-products/reader/csv-product.reader';
-import { ValidateCsvTasklet } from './jobs/import-products/validate-csv.tasklet';
 import { ProductWriter } from './jobs/import-products/writer/product.writer';
 
 const DEFAULT_IMPORT_FILE = 'sample-data/products-valid.csv';
@@ -86,19 +85,27 @@ class ImportProductsJobRegistrar implements OnApplicationBootstrap {
   constructor(
     private readonly registry: JobRegistry,
     private readonly compiler: DefinitionCompiler,
-    private readonly productProcessor: ProductProcessor,
-    private readonly productWriter: ProductWriter,
+    private readonly explorer: BatchExplorer,
+    private readonly importProductsJob: ImportProductsJob,
   ) {}
 
   onApplicationBootstrap(): void {
     const filePath = process.env.IMPORT_FILE ?? DEFAULT_IMPORT_FILE;
-    const config = ImportProductsJob.build(
-      filePath,
-      () => new CsvProductReader(filePath),
-      () => this.productProcessor,
-      () => this.productWriter,
-    );
-    const def = this.compiler.compileFromBuilderConfig(config);
+    this.importProductsJob.configure(filePath);
+
+    const [discovered] = this.explorer.discoverFromProviders([
+      { metatype: ImportProductsJob, instance: this.importProductsJob },
+    ]);
+    if (!discovered) {
+      throw new Error('ImportProductsJob decorator metadata was not discovered');
+    }
+
+    const def = this.compiler.compileFromDiscovered(discovered);
+    if (this.registry.has(def.id)) {
+      this.logger.log(`Job "${def.id}" already registered; skipping duplicate registration`);
+      return;
+    }
+
     this.registry.register(def);
     this.logger.log(`Registered job "import-products" with filePath=${filePath}`);
   }
@@ -129,6 +136,7 @@ class ImportProductsJobRegistrar implements OnApplicationBootstrap {
 const COMMON_PROVIDERS: readonly Provider[] = [
   ProductProcessor,
   ProductWriter,
+  ImportProductsJob,
   SkipLoggerListener,
   StepMetricsListener,
   {
@@ -136,10 +144,10 @@ const COMMON_PROVIDERS: readonly Provider[] = [
     useFactory: (
       registry: JobRegistry,
       compiler: DefinitionCompiler,
-      processor: ProductProcessor,
-      writer: ProductWriter,
-    ) => new ImportProductsJobRegistrar(registry, compiler, processor, writer),
-    inject: [JobRegistry, DefinitionCompiler, ProductProcessor, ProductWriter],
+      explorer: BatchExplorer,
+      importProductsJob: ImportProductsJob,
+    ) => new ImportProductsJobRegistrar(registry, compiler, explorer, importProductsJob),
+    inject: [JobRegistry, DefinitionCompiler, BatchExplorer, ImportProductsJob],
   },
   JobLauncher,
 ];

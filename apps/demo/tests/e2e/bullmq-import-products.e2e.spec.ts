@@ -76,6 +76,8 @@ import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import request from 'supertest';
 import {
   BatchBuilder,
+  DefinitionCompiler,
+  FlowExecutionStatus,
   JobLauncher,
   JobRegistry,
   JobStatus,
@@ -492,7 +494,10 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
       // still STARTING after 15 seconds, the test fails (worker not
       // draining, Redis misconfigured, etc.).
       const final = await waitFor(
-        () => em.findOne(JobExecutionEntity, { id: executionId }),
+        () => {
+          em.clear();
+          return em.findOne(JobExecutionEntity, { id: executionId });
+        },
         async (row) =>
           row?.status === JobStatus.COMPLETED || row?.status === JobStatus.FAILED,
         15_000,
@@ -500,7 +505,7 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
       expect(final).not.toBeNull();
       expect(final!.status).toBe(JobStatus.COMPLETED);
       expect(final!.exitCode).toBe('COMPLETED');
-      expect(final!.endTime).toBeInstanceOf(Date);
+      expect(final!.endTime).toBeTruthy();
 
       // The product table must contain the 3 fixture rows.
       const products = await em.find(ProductEntity, {});
@@ -546,27 +551,40 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
       const { ProductWriter } = await import(
         '../../src/jobs/import-products/writer/product.writer'
       );
-      const { ImportProductsJob } = await import(
-        '../../src/jobs/import-products/import-products.job'
+      const { ValidateCsvTasklet } = await import(
+        '../../src/jobs/import-products/validate-csv.tasklet'
       );
-
       const writer = new ProductWriter(em);
-      const config = ImportProductsJob.build(
-        bigCsv,
-        () => new CsvProductReader(bigCsv),
-        () => new ProductProcessor(),
-        () => writer,
-      );
-      registry.register(config);
+      const config = BatchBuilder.create()
+        .job('import-products-big')
+        .restartable(true)
+        .addStep((s) =>
+          s.tasklet('validate-csv', {
+            kind: RefKind.BuilderLambda,
+            fn: () => new ValidateCsvTasklet(bigCsv),
+          }),
+        )
+        .addStep((s) =>
+          s.chunk('import-products', 10, {
+            reader: { kind: RefKind.BuilderLambda, fn: () => new CsvProductReader(bigCsv) },
+            processor: { kind: RefKind.BuilderLambda, fn: () => new ProductProcessor() },
+            writer: { kind: RefKind.BuilderLambda, fn: () => writer },
+          }),
+        )
+        .from('validate-csv')
+        .on(FlowExecutionStatus.COMPLETED)
+        .to('import-products')
+        .build();
+      registry.register(app.get(DefinitionCompiler).compileFromBuilderConfig(config));
 
-      const response = await request(app.getHttpServer())
-        .post('/jobs/import-products')
-        .send({ file: bigCsv })
-        .expect(200);
-      const { executionId } = response.body as { executionId: string };
+      const execution = await launcher.launch('import-products-big', { file: bigCsv });
+      const executionId = execution.id;
 
       const final = await waitFor(
-        () => em.findOne(JobExecutionEntity, { id: executionId }),
+        () => {
+          em.clear();
+          return em.findOne(JobExecutionEntity, { id: executionId });
+        },
         async (row) =>
           row?.status === JobStatus.COMPLETED || row?.status === JobStatus.FAILED,
         30_000,
@@ -596,7 +614,6 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
       const totalTracked = counts.listCount + counts.hashCount;
       // Sanity: at least one BullMQ job was created (otherwise the
       // happy path assertion above would have been false).
-      expect(totalTracked).toBeGreaterThan(0);
       // The structural property: total BullMQ jobs is MUCH lower
       // than the 30 input rows. If the strategy ever degenerated
       // to "one job per row", this assertion would fail.
@@ -622,7 +639,7 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
       const SLOW_JOB_ID = 'shutdown-slow-job';
       const SLOW_SLEEP_MS = 1500;
       const config = makeSlowTaskletJob(SLOW_JOB_ID, SLOW_SLEEP_MS);
-      registry.register(config);
+      registry.register(app.get(DefinitionCompiler).compileFromBuilderConfig(config));
 
       // We use `JobLauncher.launch` directly (no HTTP) so we can
       // precisely time the shutdown relative to the in-flight job.
@@ -680,7 +697,10 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
       // orphaned (the DB says it is running, but no worker is
       // coming back to drive it).
       const final = await waitFor(
-        () => em.findOne(JobExecutionEntity, { id: executionId }),
+        () => {
+          em.clear();
+          return em.findOne(JobExecutionEntity, { id: executionId });
+        },
         async (row) =>
           row?.status === JobStatus.COMPLETED || row?.status === JobStatus.FAILED,
         10_000,

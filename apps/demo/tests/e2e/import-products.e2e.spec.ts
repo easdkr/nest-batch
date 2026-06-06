@@ -66,7 +66,10 @@ import {
   SkipLimitExceededError,
   StepStatus,
   TaskletStepExecutor,
-  type JobBuilderConfig,
+  type JobDefinition,
+  type ItemProcessor,
+  type ItemReader,
+  type ItemWriter,
   type ListenerEntry,
   type ResolverMap,
 } from '@nest-batch/core';
@@ -142,19 +145,43 @@ function readCsv(file: string): string {
  *  and an OPTIONAL custom writer. The default writer is the real
  *  `ProductWriter` bound to the per-test `EntityManager` so committed
  *  entities actually land in the database. */
-function buildImportJobConfig(
+function buildImportJobDefinition(
   filePath: string,
   em: EntityManager,
   overrides: {
-    reader?: () => unknown;
-    processor?: () => unknown;
-    writer?: () => unknown;
+    reader?: () => ItemReader;
+    processor?: () => ItemProcessor;
+    writer?: () => ItemWriter;
   } = {},
-): JobBuilderConfig {
-  const reader = overrides.reader ?? (() => new CsvProductReader(filePath));
+): JobDefinition {
   const processor = overrides.processor ?? (() => new ProductProcessor());
   const writer = overrides.writer ?? (() => new ProductWriter(em));
-  return ImportProductsJob.build(filePath, reader, processor, writer);
+  const job = new ImportProductsJob(processor() as ProductProcessor, writer() as ProductWriter);
+  job.configure(filePath);
+
+  if (overrides.reader) {
+    Object.defineProperty(job, 'reader', {
+      configurable: true,
+      value: overrides.reader(),
+    });
+  }
+
+  return new DefinitionCompiler().compileFromDiscovered({
+    classRef: ImportProductsJob,
+    instance: job,
+    jobOptions: Reflect.getMetadata('nest-batch:job', ImportProductsJob),
+    stepMethods: [
+      { methodName: 'validateCsv', options: Reflect.getMetadata('nest-batch:step', ImportProductsJob.prototype, 'validateCsv'), isTasklet: true },
+      { methodName: 'importProducts', options: Reflect.getMetadata('nest-batch:step', ImportProductsJob.prototype, 'importProducts'), isTasklet: false },
+    ],
+    listenerMethods: [],
+    transitionMethods: [
+      {
+        methodName: 'afterValidationCompleted',
+        ...Reflect.getMetadata('nest-batch:transition', ImportProductsJob.prototype, 'afterValidationCompleted'),
+      },
+    ],
+  });
 }
 
 /** Build a fully-wired JobLauncher (and friends) on top of the live
@@ -251,10 +278,8 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
   // 1. Happy path
   // -------------------------------------------------------------------------
   test('1. Happy path: products-valid.csv → 3 products inserted, status COMPLETED', async () => {
-    const config = buildImportJobConfig(VALID_CSV, em);
-    registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(config),
-    );
+    const config = buildImportJobDefinition(VALID_CSV, em);
+    registry.register(config);
 
     console.log('TEST: About to launch...');
     const execution = await launcher.launch('import-products', { file: VALID_CSV });
@@ -282,10 +307,8 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
   // 2. Skip behavior
   // -------------------------------------------------------------------------
   test('2. Skip behavior: products-with-errors.csv → 2 products inserted, 3 skips', async () => {
-    const config = buildImportJobConfig(ERRORS_CSV, em);
-    registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(config),
-    );
+    const config = buildImportJobDefinition(ERRORS_CSV, em);
+    registry.register(config);
 
     const execution = await launcher.launch('import-products', { file: ERRORS_CSV });
 
@@ -397,11 +420,11 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
       },
     });
 
-    const config = buildImportJobConfig(VALID_CSV, em, {
+    const config = buildImportJobDefinition(VALID_CSV, em, {
       writer: flakyWriter,
     });
     registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(config),
+      config,
     );
 
     const execution = await launcher.launch('import-products', { file: VALID_CSV });
@@ -426,11 +449,11 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
       },
     });
 
-    const config = buildImportJobConfig(VALID_CSV, em, {
+    const config = buildImportJobDefinition(VALID_CSV, em, {
       writer: alwaysFailingWriter,
     });
     registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(config),
+      config,
     );
 
     const execution = await launcher.launch('import-products', { file: VALID_CSV });
@@ -459,12 +482,10 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
         throw new Error('synthetic crash on every chunk');
       },
     });
-    const failingConfig = buildImportJobConfig(VALID_CSV, em, {
+    const failingConfig = buildImportJobDefinition(VALID_CSV, em, {
       writer: alwaysFailingWriter,
     });
-    registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(failingConfig),
-    );
+    registry.register(failingConfig);
 
     const failedExecution = await launcher.launch('import-products', {
       file: VALID_CSV,
@@ -485,11 +506,8 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
     registry = ctx2.registry;
     em = ctx2.em;
 
-    const workingConfig = buildImportJobConfig(VALID_CSV, em);
-    const jobDef = moduleRef
-      .get(DefinitionCompiler)
-      .compileFromBuilderConfig(workingConfig);
-    registry.register(jobDef);
+    const workingConfig = buildImportJobDefinition(VALID_CSV, em);
+    registry.register(workingConfig);
 
     // Re-fetch the FAILED execution from the DB (it has status FAILED
     // persisted by the first run). The library's restart path uses
@@ -512,7 +530,7 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
         exitMessage: persistedFailed!.exitMessage,
         params: { file: VALID_CSV },
       },
-      jobDef,
+      workingConfig,
     );
 
     expect(restarted.status).toBe(JobStatus.COMPLETED);
@@ -528,9 +546,9 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
   // 7. Concurrent launch
   // -------------------------------------------------------------------------
   test('7. Concurrent launch: 2 parallel launches of same job+params → second throws JobExecutionAlreadyRunningError', async () => {
-    const config = buildImportJobConfig(VALID_CSV, em);
+    const config = buildImportJobDefinition(VALID_CSV, em);
     registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(config),
+      config,
     );
 
     // Use a "slow" writer so the first launch is still in-flight when
@@ -543,7 +561,7 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
         return new ProductWriter(em).write(items);
       },
     });
-    const slowConfig = buildImportJobConfig(VALID_CSV, em, {
+    const slowConfig = buildImportJobDefinition(VALID_CSV, em, {
       writer: slowProductWriter,
     });
     // Re-register the slow variant (the previous register call was a
@@ -555,9 +573,7 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
     launcher = ctx2.launcher;
     registry = ctx2.registry;
     em = ctx2.em;
-    registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(slowConfig),
-    );
+    registry.register(slowConfig);
 
     // Both launches use the SAME `params` → same canonical jobKey →
     // same JobInstance → concurrency check should fire.
@@ -603,9 +619,9 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
     // data row" check throws → chunk step is never reached.
     const headerOnlyCsv = makeTempCsv('id,name,sku,price,category\n');
 
-    const config = buildImportJobConfig(headerOnlyCsv, em);
+    const config = buildImportJobDefinition(headerOnlyCsv, em);
     registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(config),
+      config,
     );
 
     const execution = await launcher.launch('import-products', {
@@ -635,9 +651,9 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
   // 9. Malformed CSV
   // -------------------------------------------------------------------------
   test('9. Malformed CSV: products-malformed.csv → CsvProductReader throws → chunk step FAILED', async () => {
-    const config = buildImportJobConfig(MALFORMED_CSV, em);
+    const config = buildImportJobDefinition(MALFORMED_CSV, em);
     registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(config),
+      config,
     );
 
     // Reading the file succeeds (the row exists), but the column
