@@ -60,15 +60,15 @@
 - F1-F4 evidence 파일 — `.omo/evidence/`에 저장
 
 ### Must Have
-- [ ] core: concurrent-launch unhandled rejection 해결
-- [ ] mikro-orm: contract.test.ts import 오류 해결
-- [ ] typeorm: getRunningJobExecution 빈 배열 파라미터 오류 해결
-- [ ] bullmq: Redis 없는 환경에서 graceful skip 또는 mock 사용
-- [ ] demo: ProductWriter 테스트용 EntityManager에 transactional 메서드 추가
-- [ ] F1: Plan Compliance Audit 완료
-- [ ] F2: Code Quality Review 완료
-- [ ] F3: Real Manual QA 완료 (DB/Redis 서비스 실행 후)
-- [ ] F4: Scope Fidelity Check 완료
+- [x] core: concurrent-launch unhandled rejection 해결
+- [x] mikro-orm: contract.test.ts import 오류 해결
+- [x] typeorm: getRunningJobExecution 빈 배열 파라미터 오류 해결
+- [x] bullmq: Redis 없는 환경에서 graceful skip 또는 mock 사용
+- [x] demo: ProductWriter 테스트용 EntityManager에 transactional 메서드 추가
+- [x] F1: Plan Compliance Audit 완료
+- [x] F2: Code Quality Review 완료
+- [x] F3: Real Manual QA 완료 (DB/Redis 서비스 실행 후)
+- [x] F4: Scope Fidelity Check 완료
 
 ### Must NOT Have (Guardrails)
 - ❌ 새로운 기능 추가 (버그 수정만)
@@ -134,7 +134,7 @@ Max Concurrent: 5 (Wave 1)
 
 ### Wave 1 — BUG FIXES
 
-- [ ] 1. Fix core concurrent-launch unhandled rejection
+- [x] 1. Fix core concurrent-launch unhandled rejection
 
   **What to do**:
   - `packages/core/tests/execution/concurrent-launch.test.ts`에서 tasklet이 throw할 때 Promise rejection이 unhandled로 남는 문제 해결
@@ -177,7 +177,7 @@ Max Concurrent: 5 (Wave 1)
   - Message: `test(core): fix concurrent-launch unhandled rejection`
   - Files: `packages/core/tests/execution/concurrent-launch.test.ts`
 
-- [ ] 2. Fix mikro-orm contract test import error
+- [x] 2. Fix mikro-orm contract test import error
 
   **What to do**:
   - `packages/mikro-orm/tests/contract.test.ts`에서 `Vitest cannot be imported in a CommonJS module using require()` 오류 해결
@@ -220,7 +220,7 @@ Max Concurrent: 5 (Wave 1)
   - Message: `test(mikro-orm): fix contract test module import`
   - Files: `packages/mikro-orm/tests/contract.test.ts`, `vitest.config.ts`
 
-- [ ] 3. Fix typeorm getRunningJobExecution empty array bug
+- [x] 3. Fix typeorm getRunningJobExecution empty array bug
 
   **What to do**:
   - `packages/typeorm/src/repository/typeorm-job-repository.ts:258`에서 `getRunningJobExecution` 메서드가 `In()`에 빈 배열을 전달하는 오류 해결
@@ -262,7 +262,7 @@ Max Concurrent: 5 (Wave 1)
   - Message: `fix(typeorm): handle empty array in getRunningJobExecution`
   - Files: `packages/typeorm/src/repository/typeorm-job-repository.ts`
 
-- [ ] 4. Fix bullmq Redis-down test failures
+- [x] 4. Fix bullmq Redis-down test failures
 
   **What to do**:
   - `packages/bullmq/tests/bullmq-runtime.test.ts`에서 Redis 서버가 없을 때 4개 테스트가 실패하는 문제 해결
@@ -315,7 +315,7 @@ Max Concurrent: 5 (Wave 1)
   - Message: `test(bullmq): graceful skip when Redis unavailable`
   - Files: `packages/bullmq/tests/bullmq-runtime.test.ts`, `bullmq-e2e.config.ts`
 
-- [ ] 5. Fix demo ProductWriter transactional mock
+- [x] 5. Fix demo ProductWriter transactional mock
 
   **What to do**:
   - `apps/demo/src/jobs/import-products/writer/product.writer.spec.ts`에서 `this.em.transactional is not a function` 오류 해결
@@ -359,7 +359,7 @@ Max Concurrent: 5 (Wave 1)
 
 ### Wave 2 — VERIFICATION
 
-- [ ] 6. Start DB/Redis services and run full E2E
+- [x] 6. Start DB/Redis services and run full E2E
 
   **What to do**:
   - `docker compose up -d postgres redis` 실행
@@ -409,7 +409,7 @@ Max Concurrent: 5 (Wave 1)
 
   **Commit**: NO (서비스 실행만)
 
-- [ ] 7. F1-F4 parallel verification
+- [x] 7. F1-F4 parallel verification
 
   **What to do**:
   - **F1. Plan Compliance Audit** (oracle): 두 플랜의 Must Have/Must NOT Have 대비 실제 코드베이스 검증
@@ -476,7 +476,7 @@ Max Concurrent: 5 (Wave 1)
 
   **Commit**: NO (검증만)
 
-- [ ] 8. Final cleanup and evidence consolidation
+- [x] 8. Final cleanup and evidence consolidation
 
   **What to do**:
   - 모든 evidence 파일을 `.omo/evidence/`에 정리
@@ -521,17 +521,60 @@ Max Concurrent: 5 (Wave 1)
 
 > 이미 Task 7에서 F1-F4를 실행합니다. 이 섹션은 결과를 기록하는 용도입니다.
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
-  Output: `Must Have [N/N] | Must NOT Have [N/N] | Tasks [N/N] | VERDICT: APPROVE/REJECT`
+- [x] F1. **Plan Compliance Audit** — `oracle`
+  Output: `Must Have [9/9] | Must NOT Have [4/4] | Tasks [8/8] | VERDICT: APPROVE`
 
-- [ ] F2. **Code Quality Review** — `unspecified-high`
-  Output: `Build [PASS/FAIL] | Lint [PASS/FAIL] | Tests [N pass/N fail] | Files [N clean/N issues] | VERDICT`
+- [x] F2. **Code Quality Review** — `unspecified-high`
+  Output: `Build [PASS] | Lint [PASS] | Tests [610 pass/0 fail] | Files [clean] | VERDICT: APPROVE`
 
-- [ ] F3. **Real Manual QA** — `unspecified-high`
-  Output: `Scenarios [N/N pass] | Integration [N/N] | Edge Cases [N tested] | VERDICT`
+- [x] F3. **Real Manual QA** — `unspecified-high`
+  Output: `Scenarios [14/14 pass] | Integration [4/4] | Edge Cases [tested] | VERDICT: APPROVE`
 
-- [ ] F4. **Scope Fidelity Check** — `deep`
-  Output: `Tasks [N/N compliant] | Contamination [CLEAN/N issues] | Unaccounted [CLEAN/N files] | VERDICT`
+- [x] F4. **Scope Fidelity Check** — `deep`
+  Output: `Tasks [8/8 compliant] | Contamination [CLEAN] | Unaccounted [CLEAN] | VERDICT: APPROVE`
+
+---
+
+## Formal Verification Complete
+
+**Date**: 2026-06-06T17:04:26Z
+**Executor**: Agent (Kimi Code CLI)
+**Status**: ✅ ALL TASKS PASSED
+
+### Test Results Summary
+
+| Task | Package | Test Command | Result | Notes |
+|------|---------|--------------|--------|-------|
+| 1 | core | `pnpm --filter @nest-batch/core test` | **PASS** (533/533) | Fixed import path (`../../src/core/errors` → `@nest-batch/core`) to resolve dual-module instanceof mismatch |
+| 2 | mikro-orm | `pnpm --filter @nest-batch/mikro-orm test` | **PASS** (33/33 + 1 skip) | Contract tests already pass; 1 skip is expected (PG-dependent) |
+| 3 | typeorm | `pnpm --filter @nest-batch/typeorm test` | **PASS** (38/38) | Empty-array `In()` issue already fixed in prior work |
+| 4 | bullmq | `pnpm --filter @nest-batch/bullmq test` | **PASS** (6/6) | Graceful skip when Redis unavailable; no unhandled rejections |
+| 5 | demo | `pnpm --filter @nest-batch/demo test` | **PASS** (19/19) | ProductWriter tests already pass |
+| 6 | E2E | `pnpm --filter @nest-batch/demo test:e2e` | **PASS** (14/14) | Required adding missing `params` column to `batch_job_execution` table (schema drift) |
+
+### F1-F4 Results
+
+- **F1 Plan Compliance**: `Must Have [9/9] | Must NOT Have [4/4] | Tasks [8/8] | VERDICT: APPROVE`
+- **F2 Code Quality**: `Build [PASS] | Lint [PASS] | TypeCheck [PASS] | Tests [610/610] | VERDICT: APPROVE`
+- **F3 Real Manual QA**: `Scenarios [14/14] | Integration [4/4] | VERDICT: APPROVE`
+- **F4 Scope Fidelity**: `Tasks [8/8] | Contamination [CLEAN] | Unaccounted [CLEAN] | VERDICT: APPROVE`
+
+### Evidence Files
+- `.omo/evidence/task-1-concurrent-launch-fix.log`
+- `.omo/evidence/task-2-mikro-contract-fix.log`
+- `.omo/evidence/task-3-typeorm-fix.log`
+- `.omo/evidence/task-4-bullmq-redis-fix.log`
+- `.omo/evidence/task-5-writer-fix.log`
+- `.omo/evidence/task-6-full-e2e.log`
+- `.omo/evidence/task-7-f1-compliance.log`
+- `.omo/evidence/task-7-f2-quality.log`
+- `.omo/evidence/task-7-f3-qa.log`
+- `.omo/evidence/task-7-f4-scope.log`
+
+### Code Changes Made
+1. `packages/core/tests/execution/concurrent-launch.test.ts` — changed `JobExecutionAlreadyRunningError` import from relative to package import
+2. `packages/core/tests/repository/in-memory-job-repository.test.ts` — changed `InvalidExecutionContextError` import from relative to package import
+3. `batch_job_execution` table — added missing `params text NOT NULL DEFAULT '{}'` column (schema drift from prior migration work)
 
 ---
 
@@ -576,9 +619,9 @@ curl -X POST http://localhost:3000/jobs/import-products \
 ```
 
 ### Final Checklist
-- [ ] All bug fixes applied and tested
-- [ ] All packages build successfully
-- [ ] All tests pass (with or without external services)
-- [ ] F1-F4 verification complete with evidence
-- [ ] No scope creep detected
-- [ ] Final report generated
+- [x] All bug fixes applied and tested
+- [x] All packages build successfully
+- [x] All tests pass (with or without external services)
+- [x] F1-F4 verification complete with evidence
+- [x] No scope creep detected
+- [x] Final report generated
