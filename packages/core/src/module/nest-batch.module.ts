@@ -30,8 +30,12 @@ import {
 } from './batch-schedule-registry';
 import {
   BATCH_SCHEDULE_REGISTRY,
+  JOB_REPOSITORY_TOKEN,
   MODULE_OPTIONS_TOKEN,
+  TRANSACTION_MANAGER_TOKEN,
 } from './tokens';
+import { JobRepository } from '../core/repository/job-repository';
+import { TransactionManager } from '../core/transaction/transaction-manager';
 
 /**
  * Re-export the default in-process strategy and its token binding so
@@ -275,6 +279,139 @@ export class BatchBootstrapper implements OnApplicationBootstrap {
 @Module({})
 export class NestBatchModule {
   /**
+   * Build a provider list from an adapter's `globalProviders`,
+   * automatically aliasing the abstract `JobRepository` class to
+   * `JOB_REPOSITORY_TOKEN` when the symbol is present but the class
+   * itself is not directly provided.
+   *
+   * This fixes the NestJS DI resolution gap: `JobExecutor`,
+   * `JobLauncher`, and `InProcessExecutionStrategy` all inject the
+   * abstract `JobRepository`, but adapters typically bind their
+   * concrete implementation to `JOB_REPOSITORY_TOKEN`. NestJS cannot
+   * resolve abstract class → concrete subclass automatically, so we
+   * inject the alias here.
+   *
+   * Idempotent: if `JobRepository` is already directly provided (e.g.
+   * `{ provide: JobRepository, useClass: MyRepo }`), no extra alias is
+   * added.
+   */
+  private static buildProviders(adapterGlobalProviders: readonly Provider[]): Provider[] {
+    const providers = [...adapterGlobalProviders];
+
+    const hasJobRepositoryToken = providers.some(
+      (p) =>
+        typeof p === 'object' &&
+        p !== null &&
+        'provide' in p &&
+        p.provide === JOB_REPOSITORY_TOKEN,
+    );
+
+    const hasJobRepositoryClass = providers.some(
+      (p) =>
+        p === JobRepository ||
+        (typeof p === 'object' &&
+          p !== null &&
+          'provide' in p &&
+          p.provide === JobRepository),
+    );
+
+    if (hasJobRepositoryToken && !hasJobRepositoryClass) {
+      providers.push({
+        provide: JobRepository,
+        useExisting: JOB_REPOSITORY_TOKEN,
+      });
+    }
+
+    const hasTransactionManagerToken = providers.some(
+      (p) =>
+        typeof p === 'object' &&
+        p !== null &&
+        'provide' in p &&
+        p.provide === TRANSACTION_MANAGER_TOKEN,
+    );
+
+    const hasTransactionManagerClass = providers.some(
+      (p) =>
+        p === TransactionManager ||
+        (typeof p === 'object' &&
+          p !== null &&
+          'provide' in p &&
+          p.provide === TransactionManager),
+    );
+
+    if (hasTransactionManagerToken && !hasTransactionManagerClass) {
+      providers.push({
+        provide: TransactionManager,
+        useExisting: TRANSACTION_MANAGER_TOKEN,
+      });
+    }
+
+    return providers;
+  }
+
+  /**
+   * Best-effort resolution of `inject` tokens by reading the
+   * `providers` metadata of modules listed in `imports`. This lets
+   * `forRootAsync` evaluate a synchronous `useFactory` even when it
+   * declares `inject` deps, provided those deps are `useValue`
+   * providers exported by an imported module.
+   *
+   * Only `useValue` providers can be resolved this way — `useClass`
+   * and `useFactory` providers need Nest's DI container and are
+   * skipped.
+   */
+  private static resolveInjectValues(
+    imports: NestBatchModuleAsyncOptions['imports'],
+    inject: readonly unknown[],
+  ): unknown[] {
+    if (!inject || inject.length === 0) return [];
+
+    const values: unknown[] = [];
+    for (const token of inject) {
+      let resolved: unknown = undefined;
+      for (const mod of imports ?? []) {
+        if (!mod) continue;
+
+        let providers: Provider[] | undefined;
+
+        if (typeof mod === 'object' && 'module' in mod) {
+          const dynamicMod = mod as DynamicModule;
+          providers = dynamicMod.providers;
+          if (!providers && dynamicMod.module) {
+            try {
+              providers = Reflect.getMetadata('providers', dynamicMod.module);
+            } catch {
+              /* ignore metadata read failures */
+            }
+          }
+        } else if (typeof mod === 'function') {
+          try {
+            providers = Reflect.getMetadata('providers', mod);
+          } catch {
+            /* ignore metadata read failures */
+          }
+        }
+
+        for (const p of providers ?? []) {
+          if (
+            typeof p === 'object' &&
+            p !== null &&
+            'provide' in p &&
+            p.provide === token &&
+            'useValue' in p
+          ) {
+            resolved = p.useValue;
+            break;
+          }
+        }
+        if (resolved !== undefined) break;
+      }
+      values.push(resolved);
+    }
+    return values;
+  }
+
+  /**
    * Static (synchronous) configuration.
    *
    * Takes the resolved `BatchAdaptersConfig` and builds a
@@ -299,8 +436,12 @@ export class NestBatchModule {
    */
   static forRoot(options: NestBatchModuleOptions): DynamicModule {
     const { adapters } = options;
-    const persistenceProviders = adapters.persistence.globalProviders ?? [];
-    const transportProviders = adapters.transport.globalProviders ?? [];
+    const persistenceProviders = NestBatchModule.buildProviders(
+      adapters.persistence.globalProviders ?? [],
+    );
+    const transportProviders = NestBatchModule.buildProviders(
+      adapters.transport.globalProviders ?? [],
+    );
 
     return {
       module: NestBatchModule,
@@ -392,8 +533,47 @@ export class NestBatchModule {
    * array so Nest sees them in the module graph; the factory's
    * return value is used only for `MODULE_OPTIONS_TOKEN`.
    */
-  static forRootAsync(options: NestBatchModuleAsyncOptions): DynamicModule {
+  static forRootAsync(
+    options: NestBatchModuleAsyncOptions,
+  ): DynamicModule | Promise<DynamicModule> {
     const { imports = [], inject = [], useFactory } = options;
+
+    // Try to evaluate the factory synchronously so we can merge
+    // adapter `globalProviders` at module-build time (mirroring
+    // what `forRoot` does). If the factory is async or needs
+    // injected deps we can't resolve, fall back to the pure
+    // sentinel-factory path.
+    const injectValues = NestBatchModule.resolveInjectValues(imports, inject);
+    const factoryResult = useFactory(...injectValues);
+
+    if (factoryResult instanceof Promise) {
+      return factoryResult.then((adapters) =>
+        NestBatchModule.buildAsyncModule(options, adapters),
+      );
+    }
+
+    return NestBatchModule.buildAsyncModule(options, factoryResult);
+  }
+
+  /**
+   * Shared module builder used by both the sync and async branches
+   * of `forRootAsync`. When the factory result is available
+   * synchronously we merge adapter `globalProviders` (plus the
+   * `JobRepository` alias) into core's own provider list, exactly
+   * like `forRoot` does.
+   */
+  private static buildAsyncModule(
+    options: NestBatchModuleAsyncOptions,
+    adapters: BatchAdaptersConfig,
+  ): DynamicModule {
+    const { imports = [], inject = [], useFactory } = options;
+
+    const persistenceProviders = NestBatchModule.buildProviders(
+      adapters.persistence.globalProviders ?? [],
+    );
+    const transportProviders = NestBatchModule.buildProviders(
+      adapters.transport.globalProviders ?? [],
+    );
 
     // Sentinel factory provider: holds the user's `useFactory` and
     // any `inject` deps. Other providers can pull the resolved
@@ -410,15 +590,21 @@ export class NestBatchModule {
     // read the resolved config by its stable symbol.
     const optionsProvider: Provider = {
       provide: MODULE_OPTIONS_TOKEN,
-      useFactory: (fromFactory: BatchAdaptersConfig | undefined): BatchAdaptersConfig | undefined =>
-        fromFactory,
+      useFactory: (
+        fromFactory: BatchAdaptersConfig | undefined,
+      ): BatchAdaptersConfig | undefined => fromFactory,
       inject: [OPTIONS_FACTORY],
     };
 
     return {
       module: NestBatchModule,
       global: true,
-      imports: [...imports, DiscoveryModule],
+      imports: [
+        ...imports,
+        adapters.persistence.module,
+        adapters.transport.module,
+        DiscoveryModule,
+      ],
       providers: [
         // Core classes (discovery + compile + register).
         JobRegistry,
@@ -437,6 +623,10 @@ export class NestBatchModule {
           provide: BATCH_SCHEDULE_REGISTRY,
           useExisting: BatchScheduleRegistry,
         },
+        // Adapter-supplied global providers (e.g. JobRepository
+        // / TransactionManager implementations).
+        ...persistenceProviders,
+        ...transportProviders,
         // Sentinel factory + options provider (the async path).
         factoryProvider,
         optionsProvider,
@@ -458,6 +648,11 @@ export class NestBatchModule {
         TaskletStepExecutor,
         ListenerInvoker,
         JobLauncher,
+        // Adapter-supplied global providers — re-exported so the
+        // host can resolve the persistence + transport bindings
+        // from the global module chain.
+        ...persistenceProviders,
+        ...transportProviders,
       ],
     };
   }

@@ -148,6 +148,10 @@ export class InProcessAdapter {
     return {
       name: 'in-process',
       module: buildInProcessDynamicModule(),
+      globalProviders: [
+        InProcessExecutionStrategy,
+        IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
+      ],
     };
   }
 }
@@ -172,11 +176,7 @@ function buildInProcessDynamicModule(): DynamicModule {
   return {
     module: InProcessModule,
     global: true,
-    providers: [InProcessExecutionStrategy, IN_PROCESS_EXECUTION_STRATEGY_PROVIDER],
-    exports: [
-      InProcessExecutionStrategy,
-      IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
-      EXECUTION_STRATEGY,
-    ],
+    providers: [IN_PROCESS_EXECUTION_STRATEGY_PROVIDER],
+    exports: [IN_PROCESS_EXECUTION_STRATEGY_PROVIDER],
   };
 }
