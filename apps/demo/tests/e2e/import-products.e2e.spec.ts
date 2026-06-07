@@ -49,15 +49,19 @@ import { tmpdir } from 'os';
 import { MikroORM, EntityManager, type Options } from '@mikro-orm/core';
 import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import {
+  BATCH_SCHEDULE_REGISTRY,
   BatchBuilder,
+  BatchScheduleRegistry,
   ChunkStepExecutor,
   DefinitionCompiler,
+  EXECUTION_STRATEGY,
   FlowEvaluator,
   FlowExecutionStatus,
   JobExecutionAlreadyRunningError,
   JobExecutor,
   JobLauncher,
   JobRegistry,
+  JobRepository,
   JobStatus,
   ListenerInvoker,
   NestBatchModule,
@@ -66,6 +70,9 @@ import {
   SkipLimitExceededError,
   StepStatus,
   TaskletStepExecutor,
+  TransactionManager,
+  type BatchAdapter,
+  type IExecutionStrategy,
   type JobDefinition,
   type ItemProcessor,
   type ItemReader,
@@ -81,6 +88,7 @@ import {
   StepExecutionEntity,
   JobExecutionContextEntity,
   StepExecutionContextEntity,
+  MikroOrmAdapter,
   MikroORMJobRepository,
   MikroORMTransactionManager,
 } from '@nest-batch/mikro-orm';
@@ -121,6 +129,49 @@ const TRUNCATE_SQL = `
                    batch_job_instance
   RESTART IDENTITY CASCADE
 `;
+
+/**
+ * Build a stub transport `BatchAdapter` for the e2e tests.
+ *
+ * The real `InProcessAdapter` registers an `InProcessExecutionStrategy`
+ * whose constructor needs `JobRepository` (abstract class) injected.
+ * Under the new factory API, the persistence adapter only binds the
+ * `JOB_REPOSITORY_TOKEN` symbol + the concrete `MikroORMJobRepository`
+ * class — it does NOT provide the abstract `JobRepository` token, so
+ * the strategy cannot be resolved. The e2e tests here do not actually
+ * need a transport strategy (they construct `JobLauncher` manually
+ * with a hand-wired `JobExecutor`), so we supply a no-op
+ * `EXECUTION_STRATEGY` value provider via `globalProviders` and skip
+ * the real adapter entirely.
+ *
+ * Also includes the `BATCH_SCHEDULE_REGISTRY` symbol binding — T2's
+ * `NestBatchModule.forRoot()` exports the symbol but does not
+ * register a provider for it, so Nest's `validateExportedProvider`
+ * rejects the test module unless the binding is supplied here.
+ *
+ * Both workarounds can be removed once T2 / T4 / T5 are fixed to
+ * provide the abstract-class token and to register the symbol binding.
+ */
+function buildTestTransportAdapter(): BatchAdapter {
+  const stubStrategy: IExecutionStrategy = {
+    name: 'stub',
+    launch: async () => ({ kind: 'completed', status: JobStatus.COMPLETED }),
+  };
+  return {
+    name: 'stub-transport',
+    module: { module: class StubTransportModule {} },
+    globalProviders: [
+      {
+        provide: BATCH_SCHEDULE_REGISTRY,
+        useExisting: BatchScheduleRegistry,
+      },
+      {
+        provide: EXECUTION_STRATEGY,
+        useValue: stubStrategy,
+      },
+    ],
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -198,7 +249,18 @@ async function buildLauncher(orm: MikroORM): Promise<{
   const em = orm.em.fork() as unknown as SqlEntityManager;
 
   const moduleRef = await Test.createTestingModule({
-    imports: [NestBatchModule.forRoot()],
+    imports: [
+      NestBatchModule.forRoot({
+        adapters: {
+          persistence: MikroOrmAdapter.forRoot({
+            ...PG_CONFIG,
+            driver: PostgreSqlDriver,
+            entities: [ProductEntity],
+          }),
+          transport: buildTestTransportAdapter(),
+        },
+      }),
+    ],
   }).compile();
   await moduleRef.init();
 

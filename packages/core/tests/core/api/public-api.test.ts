@@ -57,7 +57,6 @@ describe('public API of @nest-batch/core', () => {
       'EXECUTION_STRATEGY',
       'BatchScheduleRegistry',
       'DuplicateBatchScheduleError',
-      'LEGACY_BATCH_OPTIONS_TOKEN',
       'NestBatchModule',
     ]) {
       expect(bag[name], `top-level export "${name}" must be defined`).toBeDefined();

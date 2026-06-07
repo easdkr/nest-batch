@@ -1,6 +1,6 @@
 import { defineConfig, type Options } from '@mikro-orm/core';
 import { Migrator } from '@mikro-orm/migrations';
-import { BATCH_META_ENTITIES } from './nest-batch-mikro-orm.module';
+import { BATCH_META_ENTITIES } from './entities/job-meta.entities';
 
 /**
  * Build a MikroORM config that owns the batch meta-schema

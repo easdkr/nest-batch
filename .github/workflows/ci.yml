@@ -33,11 +33,22 @@ jobs:
 
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+      # TypeORM tests + typeorm test factory read DB_*.
       DB_HOST: 127.0.0.1
       DB_PORT: '5432'
       DB_USER: demo
       DB_PASSWORD: demo
       DB_NAME: nest_batch_test
+      # MikroORM tests, demo e2e, demo app module, and demo migrate
+      # script all read DATABASE_*. Mirror the DB_* block so the
+      # same service container (127.0.0.1:5432) is reachable by both
+      # naming conventions. Without this, mikro-orm tests default
+      # to 5434 + database `nest_batch_mikro` and ECONNREFUSE.
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: '5432'
+      DATABASE_USER: demo
+      DATABASE_PASSWORD: demo
+      DATABASE_NAME: nest_batch_test
 
     steps:
       - name: Check out repository

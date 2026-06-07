@@ -4,7 +4,7 @@ import {
   DeterministicIdGenerator,
   UuidIdGenerator,
 } from '../../src/repository/id-generator';
-import { InvalidExecutionContextError } from '../../src/core/errors';
+import { InvalidExecutionContextError } from '@nest-batch/core';
 import { JobStatus, StepStatus } from '../../src/core/status';
 import type { JobParameters, ExecutionScope } from '../../src/core/repository/types';
 

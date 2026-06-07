@@ -9,7 +9,7 @@ import { FlowEvaluator } from '../../src/flow/flow-evaluator';
 import { InMemoryJobRepository } from '../../src/repository/in-memory/in-memory-job-repository';
 import { InMemoryTransactionManager } from '../../src/transaction/in-memory-transaction-manager';
 import { RefKind, type JobDefinition } from '../../src/core/ir';
-import { JobExecutionAlreadyRunningError } from '../../src/core/errors';
+import { JobExecutionAlreadyRunningError } from '@nest-batch/core';
 import { JobStatus } from '../../src/core/status';
 
 /**

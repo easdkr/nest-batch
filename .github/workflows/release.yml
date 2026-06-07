@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Never run two release jobs at once; do not cancel an in-flight publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write # create the version PR / push tags
+      pull-requests: write # open the "version packages" PR
+      id-token: write # OIDC trusted publishing to npm (no long-lived token)
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        # Node 22.14+ and pnpm 10.x are required for npm OIDC trusted publishing.
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Create release PR or publish to npm
+        # Publishes via OIDC trusted publishing — no NPM_TOKEN. Each @nest-batch/*
+        # package must have a trusted publisher (this repo + release.yml) registered
+        # on npmjs.com first; until then publish fails. The initial 0.1.0 must be
+        # bootstrapped with a token/local login since the packages do not exist yet.
+        uses: changesets/action@v1
+        with:
+          version: pnpm version-packages
+          publish: pnpm release
+          commit: 'chore(release): version packages'
+          title: 'chore(release): version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

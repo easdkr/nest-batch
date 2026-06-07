@@ -53,6 +53,9 @@ export class JobExecutionEntity {
 
   @Property({ default: '' })
   exitMessage!: string;
+
+  @Property({ type: 'text', default: '{}' })
+  params!: string;
 }
 
 /**
@@ -168,3 +171,33 @@ export class StepExecutionContextEntity {
   @Property({ default: 0 })
   version!: number;
 }
+
+/**
+ * The list of batch meta-entities owned by `@nest-batch/mikro-orm`.
+ *
+ * Apps that already configure `MikroOrmModule.forRoot()` with their
+ * own user-domain entities should spread this list into their
+ * `entities` array so the batch meta tables are wired in:
+ *
+ *   import { BATCH_META_ENTITIES } from '@nest-batch/mikro-orm';
+ *
+ *   MikroOrmModule.forRoot({
+ *     entities: [
+ *       ...BATCH_META_ENTITIES,
+ *       ProductEntity, // user-domain
+ *     ],
+ *     // ...
+ *   })
+ *
+ * The `MikroOrmAdapter.forRoot()` factory does this merge for you
+ * automatically — apps that wire the batch engine via the factory
+ * never need to touch this constant directly.
+ */
+export const BATCH_META_ENTITIES = [
+  JobInstanceEntity,
+  JobExecutionEntity,
+  JobExecutionParamsEntity,
+  StepExecutionEntity,
+  JobExecutionContextEntity,
+  StepExecutionContextEntity,
+] as const;

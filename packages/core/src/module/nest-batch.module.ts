@@ -8,23 +8,22 @@ import {
 } from '@nestjs/common';
 import { DiscoveryModule } from '@nestjs/core';
 
+import type { BatchAdaptersConfig } from './adapter';
 import { DefinitionCompiler } from '../compiler/definition-compiler';
+import { BatchExplorer } from '../explorer/batch-explorer';
+import { JobRegistry } from '../registry/job-registry';
+import { JobExecutor } from '../execution/job-executor';
 import { ChunkStepExecutor } from '../execution/chunk-step-executor';
+import { TaskletStepExecutor } from '../execution/tasklet-step-executor';
+import { ListenerInvoker } from '../execution/listener-invoker';
+import { JobLauncher } from '../execution/job-launcher';
 import {
   InProcessExecutionStrategy,
   IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
 } from '../execution/in-process-execution-strategy';
-import { JobExecutor } from '../execution/job-executor';
-import { JobLauncher } from '../execution/job-launcher';
-import { ListenerInvoker } from '../execution/listener-invoker';
-import { TaskletStepExecutor } from '../execution/tasklet-step-executor';
-import { BatchExplorer } from '../explorer/batch-explorer';
 import { FlowEvaluator } from '../flow/flow-evaluator';
-import { JobRegistry } from '../registry/job-registry';
 import { BATCH_SCHEDULED_OPTIONS } from '../decorators/constants';
 import type { BatchScheduledMetadata } from '../scheduling/batch-scheduled';
-
-import type { AdapterOptions } from './adapter-options';
 import {
   BatchScheduleRegistry,
   type BatchScheduleEntry,
@@ -32,319 +31,118 @@ import {
 import {
   BATCH_SCHEDULE_REGISTRY,
   JOB_REPOSITORY_TOKEN,
-  LEGACY_BATCH_OPTIONS_TOKEN,
   MODULE_OPTIONS_TOKEN,
   TRANSACTION_MANAGER_TOKEN,
-  EXECUTION_STRATEGY,
 } from './tokens';
+import { JobRepository } from '../core/repository/job-repository';
+import { TransactionManager } from '../core/transaction/transaction-manager';
 
 /**
  * Re-export the default in-process strategy and its token binding so
- * apps can wire them up alongside the rest of their `JobRepository` /
- * `JobExecutor` providers. The strategy is *not* auto-registered by
+ * the host app can wire them up alongside the rest of the batch
+ * engine. The strategy is *not* auto-registered by
  * `NestBatchModule.forRoot()` because its constructor requires
- * `JobRepository` and `JobExecutor` — runtime deps that the host app
- * owns (the module's discovery/registry surface intentionally stays
- * free of runtime-side providers). Apps that want the default
- * in-process execution target add the strategy to their own
- * `providers` array, e.g.:
+ * `JobRepository` and `JobExecutor` — runtime deps the host
+ * supplies. The T4 `InProcessAdapter` factory does the wiring through
+ * the adapter's own `DynamicModule.exports` so the runtime
+ * resolution chain works without the core module having to know which
+ * adapter is active.
  *
  * ```ts
+ * import { InProcessAdapter, MikroOrmAdapter, NestBatchModule } from '@nest-batch/core';
+ *
  * @Module({
- *   imports: [NestBatchModule.forRoot()],
- *   providers: [
- *     { provide: JobRepository, useClass: MikroORMJobRepository },
- *     JobExecutor,
- *     InProcessExecutionStrategy,
- *     IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
+ *   imports: [
+ *     NestBatchModule.forRoot({
+ *       adapters: {
+ *         persistence: MikroOrmAdapter,
+ *         transport: InProcessAdapter,
+ *       },
+ *     }),
  *   ],
  * })
  * class AppModule {}
  * ```
- *
- * Sibling packages (e.g. `@nest-batch/bullmq`) replace the
- * `IN_PROCESS_EXECUTION_STRATEGY_PROVIDER` binding with their own
- * transport strategy; `JobLauncher` itself is unchanged.
  */
 export { InProcessExecutionStrategy, IN_PROCESS_EXECUTION_STRATEGY_PROVIDER };
 
 /**
- * Token-override descriptor for a single integration.
+ * Options for `NestBatchModule.forRoot()`.
  *
- * Sibling packages (and host apps that prefer token-based DI over
- * class-based DI) describe their override as a standard Nest
- * `Provider`. The module accepts this directly so the host does not
- * have to learn a custom DSL.
+ * The whole configuration is the pair of adapters (persistence +
+ * transport) the host picked. Both are required — the compiler
+ * will reject an `adapters` bag that is missing one — and each
+ * adapter is a self-contained `DynamicModule` core will import.
+ * Sibling packages can no longer extend the options shape via
+ * interface merging: the old `AdapterOptions` extension point is
+ * gone because every adapter now owns its own `DynamicModule`
+ * (and therefore its own config). Adapter authors that want
+ * type-safe factory arguments should expose them on their own
+ * adapter factory (e.g. `MikroOrmAdapter.forRoot({ ... })`).
+ *
+ *   - `adapters.persistence` — the adapter that owns the
+ *     `JobRepository` + `TransactionManager` bindings (e.g.
+ *     `MikroOrmAdapter`, `TypeOrmAdapter`).
+ *   - `adapters.transport`   — the adapter that owns the
+ *     `IExecutionStrategy` binding (e.g. `InProcessAdapter`,
+ *     `BullmqAdapter`).
  */
-export type AdapterProvider = Provider;
-
-/**
- * Options for `NestBatchModule.forRoot()` and `forRootAsync()`.
- *
- * The base fields (`explorer`) are core-level. The shape is an
- * extension of `AdapterOptions` so sibling packages can contribute
- * their own fields via TypeScript interface merging. At runtime the
- * full options bag is stored under the `MODULE_OPTIONS_TOKEN` symbol
- * — adapters read it back through `Inject(MODULE_OPTIONS_TOKEN)`.
- *
- *   - `extraProviders`     — additional Nest `Provider` records
- *     contributed by sibling packages or the host app. They are
- *     appended to the module's `providers` array, so they are
- *     available to inject into the module's own wiring (e.g. the
- *     explorer / compiler) just like core's own providers.
- *
- *   - `repository`         — an explicit provider that binds the
- *     adapter's `JobRepository` implementation to the
- *     `JOB_REPOSITORY_TOKEN`. This is the recommended way for
- *     adapter packages to wire their repository into core without
- *     having to ask the host to add a separate `providers` entry.
- *
- *   - `transactionManager` — same idea, but for `TransactionManager`.
- *     The repository is expected to use the same transaction manager
- *     (e.g. share the same `EntityManager`).
- *
- *   - `executionStrategy`  — overrides the `EXECUTION_STRATEGY` token.
- *     The default is the in-process strategy (provided by the host
- *     via `IN_PROCESS_EXECUTION_STRATEGY_PROVIDER`). Sibling packages
- *     pass a transport strategy here.
- */
-export interface NestBatchModuleOptions extends AdapterOptions {
-  /** When `false`, skip automatic discovery of `@Jobable` providers.
-   *  Reserved for future use; not yet implemented. */
-  explorer?: boolean;
-
-  /** Additional providers contributed by sibling packages. */
-  extraProviders?: readonly AdapterProvider[];
-
-  /** Provider that binds an adapter's `JobRepository` to `JOB_REPOSITORY_TOKEN`. */
-  repository?: AdapterProvider;
-
-  /** Provider that binds an adapter's `TransactionManager` to `TRANSACTION_MANAGER_TOKEN`. */
-  transactionManager?: AdapterProvider;
-
-  /** Provider that binds a transport's `IExecutionStrategy` to `EXECUTION_STRATEGY`. */
-  executionStrategy?: AdapterProvider;
+export interface NestBatchModuleOptions {
+  readonly adapters: BatchAdaptersConfig;
 }
 
 /**
- * Options for `NestBatchModule.forRootAsync()`. Mirrors the standard
- * Nest dynamic-module factory shape (same as `ConfigModule.forRootAsync`,
- * `ScheduleModule.forRootAsync`, etc.) but exposes the same
- * `extraProviders` / `repository` / `transactionManager` /
- * `executionStrategy` overrides that `forRoot()` accepts.
+ * Options for `NestBatchModule.forRootAsync()`.
+ *
+ * `imports` + `inject` + `useFactory` mirror the standard
+ * `ConfigurableModuleBuilder` shape. The factory is registered as a
+ * sentinel provider under `OPTIONS_FACTORY` (a `Symbol.for` token
+ * stable across module boundaries), and `MODULE_OPTIONS_TOKEN` is
+ * bound to its resolved `BatchAdaptersConfig` via a follow-up
+ * `useFactory` provider.
+ *
+ * **Note on adapter module merging.** NestJS cannot dynamically
+ * import a `DynamicModule` at module-build time, so the
+ * `forRootAsync` path does NOT auto-merge the adapter modules'
+ * `globalProviders` into the core module's `providers` list the way
+ * `forRoot` does. Two consequences for the async path:
+ *
+ *   1. The adapter `DynamicModule`s must be passed in the caller's
+ *      `imports` array directly (e.g.
+ *      `imports: [MikroOrmAdapter.module, InProcessAdapter.module]`)
+ *      so Nest sees them in the module graph.
+ *   2. The factory's return value is used only for the
+ *      `MODULE_OPTIONS_TOKEN` binding (adapters introspection);
+ *      sibling packages and the host can read the resolved config
+ *      via `@Inject(MODULE_OPTIONS_TOKEN)`.
+ *
+ * For the full auto-merge (adapter modules + `globalProviders`
+ * registered into core's own DI scope), prefer `forRoot` with a
+ * pre-resolved `BatchAdaptersConfig`. The async path is for
+ * adapters whose factory needs to consult a config service or
+ * another async provider to decide which adapter to plug in.
  */
 export interface NestBatchModuleAsyncOptions {
   imports?: DynamicModule['imports'];
-  /**
-   * Factory that returns (or resolves to) `NestBatchModuleOptions`.
-   * Any provider listed in `inject` is available as an argument.
-   */
   useFactory: (
     ...args: unknown[]
-  ) => Promise<NestBatchModuleOptions> | NestBatchModuleOptions;
+  ) => Promise<BatchAdaptersConfig> | BatchAdaptersConfig;
   inject?: readonly unknown[];
-
-  /** Additional providers contributed by sibling packages. */
-  extraProviders?: readonly AdapterProvider[];
-
-  /** Provider that binds an adapter's `JobRepository` to `JOB_REPOSITORY_TOKEN`. */
-  repository?: AdapterProvider;
-
-  /** Provider that binds an adapter's `TransactionManager` to `TRANSACTION_MANAGER_TOKEN`. */
-  transactionManager?: AdapterProvider;
-
-  /** Provider that binds a transport's `IExecutionStrategy` to `EXECUTION_STRATEGY`. */
-  executionStrategy?: AdapterProvider;
 }
 
 /**
- * Internal helper: extract the four "module-owned" override fields
- * from a `NestBatchModuleOptions` bag, and return the extra options
- * (anything that is not one of those four) as the new bag we expose
- * via `MODULE_OPTIONS_TOKEN`. The returned `extraOptions` is what
- * adapter packages see when they inject `MODULE_OPTIONS_TOKEN`.
+ * Sentinel provider token used by `forRootAsync` to plumb the user's
+ * `useFactory` through DI. The factory is registered under this
+ * token, and `MODULE_OPTIONS_TOKEN` resolves to its output via a
+ * follow-up `useFactory` provider.
  *
- * This split lets the module grow more override slots (e.g.
- * `listeners`, `idGenerator`) without adapter packages having to
- * filter the bag themselves.
- *
- * `providerToken` is the actual DI token a provider binds to, when
- * the host supplied one (e.g. `JOB_REPOSITORY_TOKEN` for a
- * `repository: { provide: JOB_REPOSITORY_TOKEN, useClass: ... }`
- * override). We extract it so the export list can include the
- * user-facing token — Nest only exports registered providers, and
- * the user might use a custom string/symbol key.
+ * `Symbol.for(...)` makes the token stable across module boundaries:
+ * tooling or sibling packages that know the description string can
+ * resolve the same symbol without importing this file. Matches the
+ * convention used by `BATCH_SCHEDULE_REGISTRY`, `MODULE_OPTIONS_TOKEN`,
+ * `JOB_REPOSITORY_TOKEN`, etc. in `./tokens.ts`.
  */
-function splitOptions(
-  opts: NestBatchModuleOptions | undefined,
-): {
-  explorer: boolean;
-  extraProviders: readonly AdapterProvider[];
-  repository: AdapterProvider | undefined;
-  repositoryToken: symbol | string | Function | undefined;
-  transactionManager: AdapterProvider | undefined;
-  transactionManagerToken: symbol | string | Function | undefined;
-  executionStrategy: AdapterProvider | undefined;
-  executionStrategyToken: symbol | string | Function | undefined;
-  extraOptions: Record<string, unknown>;
-} {
-  if (opts === undefined) {
-    return {
-      explorer: true,
-      extraProviders: [],
-      repository: undefined,
-      repositoryToken: undefined,
-      transactionManager: undefined,
-      transactionManagerToken: undefined,
-      executionStrategy: undefined,
-      executionStrategyToken: undefined,
-      extraOptions: {},
-    };
-  }
-  const {
-    explorer = true,
-    extraProviders = [],
-    repository,
-    transactionManager,
-    executionStrategy,
-    ...extraOptions
-  } = opts;
-  return {
-    explorer,
-    extraProviders,
-    repository,
-    repositoryToken: extractToken(repository),
-    transactionManager,
-    transactionManagerToken: extractToken(transactionManager),
-    executionStrategy,
-    executionStrategyToken: extractToken(executionStrategy),
-    extraOptions,
-  };
-}
-
-/**
- * Extract the `provide` value from a Nest `Provider` record. Returns
- * the token (string, symbol, or class constructor) the provider
- * binds to, or `undefined` for providers that have no injectable
- * identity (e.g. a bare class provider that Nest auto-registers).
- *
- * For the `repository` / `transactionManager` / `executionStrategy`
- * options, the token is what must be added to the module's
- * `exports` list so that imported modules (e.g.
- * `@nest-batch/bullmq`'s `BullmqBatchModule`) can resolve the
- * binding through DI. Without the export, a class-based binding
- * like `{ provide: JobRepository, useClass: MikroORMJobRepository }`
- * is registered as a provider of `NestBatchModule` but invisible
- * to any provider outside the module.
- */
-function extractToken(
-  provider: AdapterProvider | undefined,
-): symbol | string | Function | undefined {
-  if (provider === undefined) return undefined;
-  if (typeof provider === 'function') return provider;
-  if (typeof provider !== 'object' || provider === null) return undefined;
-  const provide = (provider as { provide?: unknown }).provide;
-  if (typeof provide === 'string' || typeof provide === 'symbol') {
-    return provide;
-  }
-  if (typeof provide === 'function') return provide;
-  return undefined;
-}
-
-/**
- * Build the full provider list for the module, in declaration order:
- *
- *   1. `MODULE_OPTIONS_TOKEN` (symbol) — the resolved options bag.
- *   2. `LEGACY_BATCH_OPTIONS_TOKEN` (string) — the same bag under
- *      the old `'BATCH_OPTIONS'` key, for backwards compatibility.
- *   3. Optional token-override providers (`repository`,
- *      `transactionManager`, `executionStrategy`) when supplied.
- *   4. `extraProviders` contributed by sibling packages.
- *   5. Core's own providers (`BatchExplorer`, `DefinitionCompiler`,
- *      `JobRegistry`, `FlowEvaluator`, `BatchScheduleRegistry`,
- *      `BatchBootstrapper`).
- *
- * `BatchScheduleRegistry` is a singleton provided by the module so
- * `BatchExplorer` / `BatchBootstrapper` can inject it without the
- * host having to register it.
- */
-function buildProviders(
-  resolved: ReturnType<typeof splitOptions>,
-  originalOptions: NestBatchModuleOptions | undefined,
-): Provider[] {
-  const providers: Provider[] = [];
-
-  // 1. MODULE_OPTIONS_TOKEN (symbol) — the new canonical home.
-  //    The value is the FULL options bag minus the provider records
-  //    themselves (those are registered as their own providers, not
-  //    inlined in the options). `explorer` is included so adapter
-  //    packages can introspect whether discovery is enabled.
-  providers.push({
-    provide: MODULE_OPTIONS_TOKEN,
-    useValue: Object.freeze({
-      explorer: resolved.explorer,
-      ...resolved.extraOptions,
-    }),
-  });
-
-  // 2. LEGACY_BATCH_OPTIONS_TOKEN (string) — preserves the original
-  //    pre-Task-12 behaviour: the value is the options bag exactly as
-  //    the host passed it (so `forRoot()` → `{}` and
-  //    `forRoot({ explorer: true })` → `{ explorer: true }`).
-  //    Adapter packages SHOULD migrate to `MODULE_OPTIONS_TOKEN`.
-  providers.push({
-    provide: LEGACY_BATCH_OPTIONS_TOKEN,
-    useValue: Object.freeze({ ...(originalOptions ?? {}) }),
-  });
-
-  // 3. Token-override providers (only if the host supplied one).
-  if (resolved.repository !== undefined) {
-    providers.push(resolved.repository);
-    // Auto-alias JOB_REPOSITORY_TOKEN to the user-chosen token so
-    // symbol-based consumers (e.g. BullmqRuntimeService in
-    // `@nest-batch/bullmq`) resolve the same instance regardless of
-    // whether the host bound the repository to a class token (e.g.
-    // `JobRepository`) or directly to `JOB_REPOSITORY_TOKEN`.
-    // Idempotent: skip the alias when the host already used the
-    // canonical symbol (registering it twice would be a
-    // `duplicate provider` error from Nest's container).
-    if (resolved.repositoryToken !== JOB_REPOSITORY_TOKEN) {
-      providers.push({
-        provide: JOB_REPOSITORY_TOKEN,
-        useExisting: resolved.repositoryToken,
-      });
-    }
-  }
-  if (resolved.transactionManager !== undefined) {
-    providers.push(resolved.transactionManager);
-  }
-  if (resolved.executionStrategy !== undefined) {
-    providers.push(resolved.executionStrategy);
-  }
-
-  // 4. extraProviders from sibling packages.
-  for (const p of resolved.extraProviders) {
-    providers.push(p);
-  }
-
-  // 5. Core's own providers. The order here is the canonical source
-  //    of truth for the module's DI graph. The class is registered
-  //    as the canonical instance, and the symbol token is aliased to
-  //    it via `useExisting` so consumers can inject by either
-  //    `Inject(BatchScheduleRegistry)` or
-  //    `Inject(BATCH_SCHEDULE_REGISTRY)`.
-  providers.push(
-    BatchExplorer,
-    DefinitionCompiler,
-    JobRegistry,
-    FlowEvaluator,
-    BatchScheduleRegistry,
-    { provide: BATCH_SCHEDULE_REGISTRY, useExisting: BatchScheduleRegistry },
-    BatchBootstrapper,
-  );
-
-  return providers;
-}
+const OPTIONS_FACTORY: symbol = Symbol.for('@nest-batch/core/OPTIONS_FACTORY');
 
 /**
  * Hook that runs on `OnApplicationBootstrap` to wire together the
@@ -352,7 +150,7 @@ function buildProviders(
  *
  * Why a separate provider and not a method on `JobRegistry` or
  * `DefinitionCompiler`?
- *   - `BatchExplorer.onModuleInit` (Task 7) populates the discovered
+ *   - `BatchExplorer.onModuleInit` populates the discovered
  *     list once the DI container is ready. Compilation needs every
  *     `@Jobable` provider to be instantiated, so it must run *after*
  *     `onModuleInit`.
@@ -466,255 +264,395 @@ export class BatchBootstrapper implements OnApplicationBootstrap {
 /**
  * Public Nest module that wires up the @nest-batch/core library.
  *
- * Both `forRoot()` and `forRootAsync()`:
- *   - register `BatchExplorer`, `DefinitionCompiler`, `JobRegistry`,
- *     `BatchScheduleRegistry`, and `BatchBootstrapper` as providers;
- *   - import `DiscoveryModule` (for `DiscoveryService` + `MetadataScanner`);
- *   - export `JobRegistry`, `DefinitionCompiler`, `BatchExplorer`,
- *     `FlowEvaluator`, and `BatchScheduleRegistry` so consumers can
- *     inject them from outside;
- *   - expose the resolved options bag under `MODULE_OPTIONS_TOKEN`
- *     (symbol) AND `'BATCH_OPTIONS'` (string, legacy).
+ * The module is a `global: true` `DynamicModule` whose `imports`,
+ * `providers`, and `exports` are assembled at the call site by
+ * `forRoot` (synchronous) or `forRootAsync` (sentinel-factory
+ * pattern). In both paths the core providers and the executor
+ * subgraph are auto-registered so the host does not have to wire
+ * them by hand; adapter modules are imported as part of the same
+ * `DynamicModule` so Nest's discovery phase sees every job class.
  *
- * The module is `global: true` so consumers don't have to import it in
- * every sub-module. This matches `@nestjs/cqrs` and `@nestjs/schedule`
- * conventions.
+ * @see {@link NestBatchModuleOptions} for the synchronous options shape
+ * @see {@link NestBatchModuleAsyncOptions} for the async options shape
+ * @see {@link BatchAdaptersConfig} for the adapter contract
  */
 @Module({})
 export class NestBatchModule {
   /**
-   * Static (synchronous) configuration.
+   * Build a provider list from an adapter's `globalProviders`,
+   * automatically aliasing the abstract `JobRepository` class to
+   * `JOB_REPOSITORY_TOKEN` when the symbol is present but the class
+   * itself is not directly provided.
    *
-   * @example
-   * ```ts
-   * @Module({ imports: [NestBatchModule.forRoot()] })
-   * class AppModule {}
+   * This fixes the NestJS DI resolution gap: `JobExecutor`,
+   * `JobLauncher`, and `InProcessExecutionStrategy` all inject the
+   * abstract `JobRepository`, but adapters typically bind their
+   * concrete implementation to `JOB_REPOSITORY_TOKEN`. NestJS cannot
+   * resolve abstract class → concrete subclass automatically, so we
+   * inject the alias here.
    *
-   * // With sibling-package overrides
-   * @Module({
-   *   imports: [
-   *     NestBatchModule.forRoot({
-   *       repository: { provide: JOB_REPOSITORY_TOKEN, useClass: MikroORMJobRepository },
-   *       transactionManager: { provide: TRANSACTION_MANAGER_TOKEN, useClass: MikroORMTransactionManager },
-   *       extraProviders: [/* sibling wiring *\/],
-   *     }),
-   *   ],
-   * })
-   * class AppModule {}
-   * ```
+   * Idempotent: if `JobRepository` is already directly provided (e.g.
+   * `{ provide: JobRepository, useClass: MyRepo }`), no extra alias is
+   * added.
    */
-  static forRoot(options: NestBatchModuleOptions = {}): DynamicModule {
-    const resolved = splitOptions(options);
-    // Only export token-override providers that are actually
-    // registered. Nest refuses to export a token that is not part of
-    // the module's `providers` list, so we filter based on whether
-    // the host actually supplied an override.
-    //
-    // `extraProviders` contributed by sibling packages are also
-    // auto-exported: their entire purpose is to surface runtime
-    // classes (e.g. `JobExecutor`, the chunk / tasklet step
-    // executors) to the sibling package's own providers. Without
-    // the export, NestJS encapsulation would hide them from any
-    // provider outside the core module, which would break the
-    // BullMQ runtime's `JobExecutor` parameter resolution.
-    const exportsList: (string | symbol | Function | DynamicModule)[] = [
-      JobRegistry,
-      DefinitionCompiler,
-      BatchExplorer,
-      FlowEvaluator,
-      BatchScheduleRegistry,
-      MODULE_OPTIONS_TOKEN,
-    ];
-    if (resolved.repositoryToken !== undefined) {
-      exportsList.push(resolved.repositoryToken);
-      // Re-export the canonical `JOB_REPOSITORY_TOKEN` symbol too so
-      // sibling packages (e.g. `@nest-batch/bullmq`'s
-      // `BullmqRuntimeService`) can resolve the repository through
-      // the global module chain even when the host used a class
-      // token (e.g. `JobRepository`) for the override. Without
-      // this, the host's chosen token is registered but the
-      // symbol is invisible outside the module — the very bug
-      // that the `useExisting` alias in `buildProviders` is here
-      // to fix.
-      if (resolved.repositoryToken !== JOB_REPOSITORY_TOKEN) {
-        exportsList.push(JOB_REPOSITORY_TOKEN);
-      }
+  private static buildProviders(adapterGlobalProviders: readonly Provider[]): Provider[] {
+    const providers = [...adapterGlobalProviders];
+
+    const hasJobRepositoryToken = providers.some(
+      (p) =>
+        typeof p === 'object' &&
+        p !== null &&
+        'provide' in p &&
+        p.provide === JOB_REPOSITORY_TOKEN,
+    );
+
+    const hasJobRepositoryClass = providers.some(
+      (p) =>
+        p === JobRepository ||
+        (typeof p === 'object' &&
+          p !== null &&
+          'provide' in p &&
+          p.provide === JobRepository),
+    );
+
+    if (hasJobRepositoryToken && !hasJobRepositoryClass) {
+      providers.push({
+        provide: JobRepository,
+        useExisting: JOB_REPOSITORY_TOKEN,
+      });
     }
-    if (resolved.transactionManagerToken !== undefined) {
-      exportsList.push(resolved.transactionManagerToken);
+
+    const hasTransactionManagerToken = providers.some(
+      (p) =>
+        typeof p === 'object' &&
+        p !== null &&
+        'provide' in p &&
+        p.provide === TRANSACTION_MANAGER_TOKEN,
+    );
+
+    const hasTransactionManagerClass = providers.some(
+      (p) =>
+        p === TransactionManager ||
+        (typeof p === 'object' &&
+          p !== null &&
+          'provide' in p &&
+          p.provide === TransactionManager),
+    );
+
+    if (hasTransactionManagerToken && !hasTransactionManagerClass) {
+      providers.push({
+        provide: TransactionManager,
+        useExisting: TRANSACTION_MANAGER_TOKEN,
+      });
     }
-    if (resolved.executionStrategyToken !== undefined) {
-      exportsList.push(resolved.executionStrategyToken);
-    }
-    for (const p of resolved.extraProviders) {
-      if (typeof p === 'object' && p !== null && 'provide' in p) {
-        // Provider record — only export when the provide value is
-        // a class constructor (the common case for runtime
-        // classes). String / symbol token exports are handled
-        // through the dedicated `repository` / `transactionManager`
-        // / `executionStrategy` options above, where the host
-        // explicitly declares what to expose.
-        const provide = (p as { provide: unknown }).provide;
-        if (typeof provide === 'function') {
-          exportsList.push(provide);
-        }
-      } else if (typeof p === 'function') {
-        // Bare class provider — export the class itself.
-        exportsList.push(p);
-      }
-    }
-    return {
-      module: NestBatchModule,
-      global: true,
-      imports: [DiscoveryModule],
-      providers: buildProviders(resolved, options),
-      exports: exportsList,
-    };
+
+    return providers;
   }
 
   /**
-   * Async configuration — useful when options depend on other providers
-   * (e.g. `ConfigService`) or need to be loaded asynchronously (e.g.
-   * from a remote config service).
+   * Best-effort resolution of `inject` tokens by reading the
+   * `providers` metadata of modules listed in `imports`. This lets
+   * `forRootAsync` evaluate a synchronous `useFactory` even when it
+   * declares `inject` deps, provided those deps are `useValue`
+   * providers exported by an imported module.
    *
-   * The `useFactory` is the only place where adapter options can be
-   * resolved lazily; the module's provider list is then constructed
-   * from the resolved bag in the same way as `forRoot()`.
-   *
-   * @example
-   * ```ts
-   * NestBatchModule.forRootAsync({
-   *   imports: [ConfigModule],
-   *   inject: [ConfigService],
-   *   useFactory: (cfg: ConfigService) => ({
-   *     repository: { provide: JOB_REPOSITORY_TOKEN, useClass: cfg.get('BATCH_REPOSITORY') },
-   *   }),
-   * })
-   * ```
+   * Only `useValue` providers can be resolved this way — `useClass`
+   * and `useFactory` providers need Nest's DI container and are
+   * skipped.
    */
-  static forRootAsync(options: NestBatchModuleAsyncOptions): DynamicModule {
-    // We resolve the options *at module-build time* via a sentinel
-    // factory provider, then feed the result into `buildProviders`.
-    // The factory itself is registered in `providers` so it can
-    // honour `imports` + `inject`.
-    const OPTIONS_FACTORY = Symbol.for('@nest-batch/core/OPTIONS_FACTORY');
+  private static resolveInjectValues(
+    imports: NestBatchModuleAsyncOptions['imports'],
+    inject: readonly unknown[],
+  ): unknown[] {
+    if (!inject || inject.length === 0) return [];
 
-    const factoryProvider: Provider = {
-      provide: OPTIONS_FACTORY,
-      useFactory: options.useFactory as (...args: unknown[]) => unknown,
-      inject: [...(options.inject ?? [])] as Array<string | symbol | Function>,
-    };
+    const values: unknown[] = [];
+    for (const token of inject) {
+      let resolved: unknown = undefined;
+      for (const mod of imports ?? []) {
+        if (!mod) continue;
 
-    // Static overrides from the async options bag (these don't need
-    // the factory — they're known at module-build time).
-    const staticResolved = splitOptions({
-      extraProviders: options.extraProviders,
-      repository: options.repository,
-      transactionManager: options.transactionManager,
-      executionStrategy: options.executionStrategy,
-    });
+        let providers: Provider[] | undefined;
 
-    // The MODULE_OPTIONS_TOKEN / LEGACY_BATCH_OPTIONS_TOKEN providers
-    // need the *merged* result of the static overrides AND the
-    // factory's output. We achieve that with a small wrapper
-    // provider that reads both and produces the final value.
-    const mergedOptionsProvider: Provider = {
-      provide: MODULE_OPTIONS_TOKEN,
-      useFactory: (
-        fromFactory: NestBatchModuleOptions | undefined,
-      ): Record<string, unknown> => {
-        const fromFactoryResolved = splitOptions(fromFactory ?? {});
-        const merged: Record<string, unknown> = {
-          explorer: fromFactoryResolved.explorer,
-          ...fromFactoryResolved.extraOptions,
-        };
-        // Static overrides win on conflict for the well-known slots;
-        // the factory contributes any extra adapter fields.
-        if (staticResolved.repository !== undefined) {
-          merged['repository'] = '<static override>';
+        if (typeof mod === 'object' && 'module' in mod) {
+          const dynamicMod = mod as DynamicModule;
+          providers = dynamicMod.providers;
+          if (!providers && dynamicMod.module) {
+            try {
+              providers = Reflect.getMetadata('providers', dynamicMod.module);
+            } catch {
+              /* ignore metadata read failures */
+            }
+          }
+        } else if (typeof mod === 'function') {
+          try {
+            providers = Reflect.getMetadata('providers', mod);
+          } catch {
+            /* ignore metadata read failures */
+          }
         }
-        if (staticResolved.transactionManager !== undefined) {
-          merged['transactionManager'] = '<static override>';
-        }
-        if (staticResolved.executionStrategy !== undefined) {
-          merged['executionStrategy'] = '<static override>';
-        }
-        return Object.freeze(merged);
-      },
-      inject: [OPTIONS_FACTORY],
-    };
 
-    const legacyOptionsProvider: Provider = {
-      provide: LEGACY_BATCH_OPTIONS_TOKEN,
-      useFactory: (opts: Record<string, unknown> | undefined) => {
-        // Preserve pre-Task-12 behavior: the legacy `'BATCH_OPTIONS'`
-        // value is the bag exactly as the factory returned it (so
-        // `forRootAsync({ useFactory: () => ({ explorer: true }) })`
-        // resolves to `{ explorer: true }`, not to a resolved form).
-        return Object.freeze({ ...(opts ?? {}) });
-      },
-      inject: [OPTIONS_FACTORY],
-    };
+        for (const p of providers ?? []) {
+          if (
+            typeof p === 'object' &&
+            p !== null &&
+            'provide' in p &&
+            p.provide === token &&
+            'useValue' in p
+          ) {
+            resolved = p.useValue;
+            break;
+          }
+        }
+        if (resolved !== undefined) break;
+      }
+      values.push(resolved);
+    }
+    return values;
+  }
 
-    // Build the rest of the providers (token overrides + extra + core).
-    // We pass `undefined` for the legacy options bag because the
-    // async path has its own legacy provider below.
-    const rest = buildProviders(
-      {
-        ...staticResolved,
-        extraOptions: {}, // already merged into the wrapped provider above
-      },
-      undefined,
+  /**
+   * Static (synchronous) configuration.
+   *
+   * Takes the resolved `BatchAdaptersConfig` and builds a
+   * `global: true` `DynamicModule` that:
+   *
+   *   1. imports each adapter's `DynamicModule`
+   *      (`adapters.persistence.module` and `adapters.transport.module`);
+   *   2. imports `DiscoveryModule` from `@nestjs/core` so the explorer
+   *      can use Nest's `DiscoveryService`;
+   *   3. registers core's own providers — `JobRegistry`,
+   *      `DefinitionCompiler`, `BatchExplorer`, `FlowEvaluator`,
+   *      `BatchScheduleRegistry`, `BatchBootstrapper` — and the
+   *      executor subgraph (`JobExecutor`, `ChunkStepExecutor`,
+   *      `TaskletStepExecutor`, `ListenerInvoker`) so the host
+   *      does not have to wire them by hand;
+   *   4. registers each adapter's `globalProviders` (e.g. the
+   *      `JobRepository` / `TransactionManager` implementations
+   *      from a persistence adapter) so the host can inject them
+   *      too;
+   *   5. binds the `BatchAdaptersConfig` to `MODULE_OPTIONS_TOKEN`
+   *      via a value provider for adapter introspection.
+   */
+  static forRoot(options: NestBatchModuleOptions): DynamicModule {
+    const { adapters } = options;
+    const persistenceProviders = NestBatchModule.buildProviders(
+      adapters.persistence.globalProviders ?? [],
     );
-
-    // The factory is internal — drop the wrapped `MODULE_OPTIONS_TOKEN`
-    // entry from `rest` (it would conflict with `mergedOptionsProvider`).
-    const restFiltered = rest.filter(
-      (p) => !(typeof p === 'object' && p !== null && 'provide' in p && p.provide === MODULE_OPTIONS_TOKEN),
-    );
-    // Same for the legacy token.
-    const restFiltered2 = restFiltered.filter(
-      (p) => !(typeof p === 'object' && p !== null && 'provide' in p && p.provide === LEGACY_BATCH_OPTIONS_TOKEN),
+    const transportProviders = NestBatchModule.buildProviders(
+      adapters.transport.globalProviders ?? [],
     );
 
     return {
       module: NestBatchModule,
       global: true,
-      imports: [DiscoveryModule, ...(options.imports ?? [])],
-      providers: [
-        factoryProvider,
-        mergedOptionsProvider,
-        legacyOptionsProvider,
-        ...restFiltered2,
+      imports: [
+        adapters.persistence.module,
+        adapters.transport.module,
+        DiscoveryModule,
       ],
-      exports: [
+      providers: [
+        // Core classes (discovery + compile + register).
         JobRegistry,
         DefinitionCompiler,
         BatchExplorer,
         FlowEvaluator,
         BatchScheduleRegistry,
-        // Re-export the `BATCH_SCHEDULE_REGISTRY` symbol alongside
-        // the class. Sibling packages (e.g. `@nest-batch/bullmq`)
-        // inject the canonical symbol; without this entry the
-        // symbol is only resolvable from within the
-        // `NestBatchModule` itself.
+        BatchBootstrapper,
+        // Executor subgraph (JobExecutor → Chunk/Tasklet/Listener).
+        JobExecutor,
+        ChunkStepExecutor,
+        TaskletStepExecutor,
+        ListenerInvoker,
+        JobLauncher,
+        // Resolved options bag for adapter introspection.
+        {
+          provide: MODULE_OPTIONS_TOKEN,
+          useValue: adapters,
+        },
+        // Schedule registry symbol alias — the symbol itself
+        // must be a provider (not just a class export) so the
+        // `exports` entry below resolves through Nest's DI
+        // validation.
+        {
+          provide: BATCH_SCHEDULE_REGISTRY,
+          useExisting: BatchScheduleRegistry,
+        },
+        // Adapter-supplied global providers (e.g. JobRepository
+        // / TransactionManager implementations).
+        ...persistenceProviders,
+        ...transportProviders,
+      ],
+      exports: [
+        // Core classes — exported so sibling packages and the
+        // host app can resolve them from the global module chain.
+        JobRegistry,
+        DefinitionCompiler,
+        BatchExplorer,
+        FlowEvaluator,
+        BatchScheduleRegistry,
+        BatchBootstrapper,
+        // Tokens — exported so adapters can bind to them via
+        // `@Inject(MODULE_OPTIONS_TOKEN)` and host code can read
+        // the schedule registry by its stable symbol.
         BATCH_SCHEDULE_REGISTRY,
         MODULE_OPTIONS_TOKEN,
-        // Export the host's chosen repository token AND, when the
-        // host did not bind directly to `JOB_REPOSITORY_TOKEN`,
-        // the canonical symbol too — see `forRoot()` for the same
-        // alias logic.
-        ...(staticResolved.repositoryToken !== undefined
-          ? staticResolved.repositoryToken === JOB_REPOSITORY_TOKEN
-            ? [staticResolved.repositoryToken]
-            : [staticResolved.repositoryToken, JOB_REPOSITORY_TOKEN]
-          : []),
-        ...(staticResolved.transactionManagerToken !== undefined
-          ? [staticResolved.transactionManagerToken]
-          : []),
-        ...(staticResolved.executionStrategyToken !== undefined
-          ? [staticResolved.executionStrategyToken]
-          : []),
+        // Executor subgraph — exported so adapters (e.g. the
+        // `InProcessExecutionStrategy`) and host code can inject
+        // them.
+        JobExecutor,
+        ChunkStepExecutor,
+        TaskletStepExecutor,
+        ListenerInvoker,
+        JobLauncher,
+        // Adapter-supplied global providers — re-exported so the
+        // host can resolve the persistence + transport bindings
+        // from the global module chain.
+        ...persistenceProviders,
+        ...transportProviders,
+      ],
+    };
+  }
+
+  /**
+   * Async configuration — useful when the adapter set comes from a
+   * config service or another async source.
+   *
+   * Mirrors the `BullmqBatchModule.forRootAsync` pattern: the user's
+   * `useFactory` is registered as a sentinel provider under
+   * `OPTIONS_FACTORY`, and `MODULE_OPTIONS_TOKEN` is bound to its
+   * resolved `BatchAdaptersConfig` via a follow-up `useFactory`
+   * provider. The user's `imports` + `inject` are forwarded as-is
+   * so the factory can pull from `ConfigService` or any other
+   * DI-bound dependency.
+   *
+   * See the `NestBatchModuleAsyncOptions` JSDoc for the adapter
+   * module merging caveat — the async path does not auto-merge
+   * the adapter modules' `globalProviders`. The adapter
+   * `DynamicModule`s must be passed in the caller's `imports`
+   * array so Nest sees them in the module graph; the factory's
+   * return value is used only for `MODULE_OPTIONS_TOKEN`.
+   */
+  static forRootAsync(
+    options: NestBatchModuleAsyncOptions,
+  ): DynamicModule | Promise<DynamicModule> {
+    const { imports = [], inject = [], useFactory } = options;
+
+    // Try to evaluate the factory synchronously so we can merge
+    // adapter `globalProviders` at module-build time (mirroring
+    // what `forRoot` does). If the factory is async or needs
+    // injected deps we can't resolve, fall back to the pure
+    // sentinel-factory path.
+    const injectValues = NestBatchModule.resolveInjectValues(imports, inject);
+    const factoryResult = useFactory(...injectValues);
+
+    if (factoryResult instanceof Promise) {
+      return factoryResult.then((adapters) =>
+        NestBatchModule.buildAsyncModule(options, adapters),
+      );
+    }
+
+    return NestBatchModule.buildAsyncModule(options, factoryResult);
+  }
+
+  /**
+   * Shared module builder used by both the sync and async branches
+   * of `forRootAsync`. When the factory result is available
+   * synchronously we merge adapter `globalProviders` (plus the
+   * `JobRepository` alias) into core's own provider list, exactly
+   * like `forRoot` does.
+   */
+  private static buildAsyncModule(
+    options: NestBatchModuleAsyncOptions,
+    adapters: BatchAdaptersConfig,
+  ): DynamicModule {
+    const { imports = [], inject = [], useFactory } = options;
+
+    const persistenceProviders = NestBatchModule.buildProviders(
+      adapters.persistence.globalProviders ?? [],
+    );
+    const transportProviders = NestBatchModule.buildProviders(
+      adapters.transport.globalProviders ?? [],
+    );
+
+    // Sentinel factory provider: holds the user's `useFactory` and
+    // any `inject` deps. Other providers can pull the resolved
+    // `BatchAdaptersConfig` via `@Inject(OPTIONS_FACTORY)` if they
+    // need to.
+    const factoryProvider: Provider = {
+      provide: OPTIONS_FACTORY,
+      useFactory: useFactory as (...args: unknown[]) => unknown,
+      inject: [...inject] as Array<string | symbol | Function>,
+    };
+
+    // Options provider: bridges the sentinel factory to the
+    // canonical `MODULE_OPTIONS_TOKEN` so adapters + host code can
+    // read the resolved config by its stable symbol.
+    const optionsProvider: Provider = {
+      provide: MODULE_OPTIONS_TOKEN,
+      useFactory: (
+        fromFactory: BatchAdaptersConfig | undefined,
+      ): BatchAdaptersConfig | undefined => fromFactory,
+      inject: [OPTIONS_FACTORY],
+    };
+
+    return {
+      module: NestBatchModule,
+      global: true,
+      imports: [
+        ...imports,
+        adapters.persistence.module,
+        adapters.transport.module,
+        DiscoveryModule,
+      ],
+      providers: [
+        // Core classes (discovery + compile + register).
+        JobRegistry,
+        DefinitionCompiler,
+        BatchExplorer,
+        FlowEvaluator,
+        BatchScheduleRegistry,
+        BatchBootstrapper,
+        // Executor subgraph (JobExecutor → Chunk/Tasklet/Listener).
+        JobExecutor,
+        ChunkStepExecutor,
+        TaskletStepExecutor,
+        ListenerInvoker,
+        JobLauncher,
+        {
+          provide: BATCH_SCHEDULE_REGISTRY,
+          useExisting: BatchScheduleRegistry,
+        },
+        // Adapter-supplied global providers (e.g. JobRepository
+        // / TransactionManager implementations).
+        ...persistenceProviders,
+        ...transportProviders,
+        // Sentinel factory + options provider (the async path).
+        factoryProvider,
+        optionsProvider,
+      ],
+      exports: [
+        // Core classes.
+        JobRegistry,
+        DefinitionCompiler,
+        BatchExplorer,
+        FlowEvaluator,
+        BatchScheduleRegistry,
+        BatchBootstrapper,
+        // Tokens.
+        BATCH_SCHEDULE_REGISTRY,
+        MODULE_OPTIONS_TOKEN,
+        // Executor subgraph.
+        JobExecutor,
+        ChunkStepExecutor,
+        TaskletStepExecutor,
+        ListenerInvoker,
+        JobLauncher,
+        // Adapter-supplied global providers — re-exported so the
+        // host can resolve the persistence + transport bindings
+        // from the global module chain.
+        ...persistenceProviders,
+        ...transportProviders,
       ],
     };
   }

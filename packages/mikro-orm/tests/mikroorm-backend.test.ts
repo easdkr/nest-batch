@@ -8,14 +8,23 @@
  * `findLatestStepExecution`) that are NOT part of the cross-adapter
  * contract. Those live here.
  *
+ * The MikroORM connection is booted through the new
+ * `MikroOrmAdapter.forRoot(...)` factory via
+ * `@nestjs/testing`'s `Test.createTestingModule({ imports:
+ * [adapter.module] })` — the same wiring path the production
+ * `AppModule` uses, so a regression in the adapter's entity-merging
+ * or DI bindings surfaces here too.
+ *
  * If PostgreSQL is not reachable, every test `ctx.skip()`s with a
  * clear console warning.
  */
 import 'reflect-metadata';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { MikroORM, type Options } from '@mikro-orm/core';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { MikroORM } from '@mikro-orm/core';
 import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import { StepStatus } from '@nest-batch/core';
+import { MikroOrmAdapter } from '../src/adapters/mikro-orm.adapter';
 import { MikroORMJobRepository } from '../src/mikroorm-job-repository';
 import {
   JobInstanceEntity,
@@ -43,22 +52,31 @@ const TRUNCATE_SQL = `
 `;
 
 describe('@nest-batch/mikro-orm — backend-specific behavior (Task 15)', () => {
+  let testingModule: TestingModule | null = null;
   let orm: MikroORM | null = null;
   let pgReachable = false;
   let skipReason = '';
 
   beforeAll(async () => {
-    const ormConfig: Options = {
-      driver: PostgreSqlDriver,
-      ...PG_CONFIG,
-      entities: [
-        JobInstanceEntity,
-        JobExecutionEntity,
-        StepExecutionEntity,
-      ],
-    };
     try {
-      orm = await MikroORM.init(ormConfig);
+      // Boot the MikroORM connection through the new factory
+      // (`MikroOrmAdapter.forRoot(...)`). The adapter's `.module`
+      // field is the `global: true` `DynamicModule` that imports
+      // `MikroOrmModule.forRoot(merged)` and binds the
+      // `JobRepository` / `TransactionManager` tokens, so the same
+      // wiring the production `AppModule` uses runs inside this
+      // test's `TestingModule`. No raw `MikroORM.init(...)` call —
+      // if the adapter's entity-merging or DI bindings regress,
+      // this suite catches it.
+      testingModule = await Test.createTestingModule({
+        imports: [
+          MikroOrmAdapter.forRoot({
+            ...PG_CONFIG,
+            driver: PostgreSqlDriver,
+          }).module,
+        ],
+      }).compile();
+      orm = testingModule.get(MikroORM);
       pgReachable = true;
     } catch (err) {
       skipReason =
@@ -79,7 +97,7 @@ describe('@nest-batch/mikro-orm — backend-specific behavior (Task 15)', () => 
   });
 
   afterAll(async () => {
-    if (orm) await orm.close(true);
+    if (testingModule) await testingModule.close();
   });
 
   test(

@@ -23,6 +23,17 @@ import {
 } from './entities/job-meta.entities';
 import { randomUUID } from 'crypto';
 
+function deepClone<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Date) return new Date(value.getTime()) as unknown as T;
+  if (Array.isArray(value)) return value.map((v) => deepClone(v)) as unknown as T;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(value as Record<string, unknown>)) {
+    out[k] = deepClone((value as Record<string, unknown>)[k]);
+  }
+  return out as T;
+}
+
 function scopeKey(scope: ExecutionScope): string {
   if ('jobExecutionId' in scope) return `job::${scope.jobExecutionId}`;
   return `step::${scope.stepExecutionId}`;
@@ -32,7 +43,17 @@ function mapJobInstance(e: JobInstanceEntity): JobInstance {
   return { id: e.id, jobName: e.jobName, jobKey: e.jobKey, createdAt: e.createdAt };
 }
 
-function mapJobExecution(e: JobExecutionEntity, params: JobParameters = {}): JobExecution {
+function mapJobExecution(e: JobExecutionEntity, overrideParams?: JobParameters): JobExecution {
+  let params: JobParameters = {};
+  if (overrideParams !== undefined) {
+    params = overrideParams;
+  } else if (e.params && e.params.length > 0) {
+    try {
+      params = deserializeContext<JobParameters>(e.params);
+    } catch {
+      params = {};
+    }
+  }
   return {
     id: e.id,
     jobInstanceId: e.jobInstanceId,
@@ -72,15 +93,32 @@ export class MikroORMJobRepository extends JobRepository {
   async getOrCreateJobInstance(name: string, jobKey: string): Promise<JobInstance> {
     return RequestContext.create(this.em, async () => {
       const em = this.em;
-      let existing = await em.findOne(JobInstanceEntity, { jobName: name, jobKey });
+      const existing = await em.findOne(JobInstanceEntity, { jobName: name, jobKey });
       if (existing) return mapJobInstance(existing);
-      const inst = new JobInstanceEntity();
-      inst.id = randomUUID();
-      inst.jobName = name;
-      inst.jobKey = jobKey;
-      inst.createdAt = new Date();
-      await em.persistAndFlush(inst);
-      return mapJobInstance(inst);
+
+      // Use raw SQL INSERT ... ON CONFLICT DO NOTHING RETURNING id
+      // so the transaction is not aborted by a unique-constraint
+      // violation.  If another concurrent caller won the race, the
+      // INSERT returns zero rows and we fall back to SELECT.
+      const rows = await em.execute(
+        `INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
+         VALUES (?, ?, ?, now())
+         ON CONFLICT ("job_name", "job_key") DO NOTHING
+         RETURNING "id", "job_name", "job_key", "created_at"`,
+        [randomUUID(), name, jobKey],
+      );
+      if (rows.length > 0) {
+        const r = rows[0] as { id: string; job_name: string; job_key: string; created_at: string };
+        return { id: r.id, jobName: r.job_name, jobKey: r.job_key, createdAt: new Date(r.created_at) };
+      }
+
+      // Another caller won the race — read the committed row.
+      const winner = await em.findOne(JobInstanceEntity, { jobName: name, jobKey });
+      if (!winner) {
+        // Should never happen, but guard against it anyway.
+        throw new Error(`JobInstance race lost but no row found for (${name}, ${jobKey})`);
+      }
+      return mapJobInstance(winner);
     });
   }
 
@@ -95,8 +133,9 @@ export class MikroORMJobRepository extends JobRepository {
       exec.endTime = null;
       exec.exitCode = '';
       exec.exitMessage = '';
+      exec.params = serializeContext(deepClone(params));
       await em.persistAndFlush(exec);
-      return mapJobExecution(exec, params);
+      return mapJobExecution(exec, deepClone(params));
     });
   }
 
@@ -160,8 +199,9 @@ export class MikroORMJobRepository extends JobRepository {
       exec.endTime = null;
       exec.exitCode = '';
       exec.exitMessage = '';
+      exec.params = serializeContext(deepClone(params));
       await em.persistAndFlush(exec);
-      return mapJobExecution(exec, params);
+      return mapJobExecution(exec, deepClone(params));
     });
   }
 

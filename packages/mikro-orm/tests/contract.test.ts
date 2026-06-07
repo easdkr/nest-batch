@@ -9,6 +9,13 @@
  * (TypeORM, in-memory, etc.) owns a copy; the same suite runs
  * against every backend.
  *
+ * The test boots the MikroORM connection through the new
+ * `MikroOrmAdapter.forRoot(...)` factory via
+ * `@nestjs/testing`'s `Test.createTestingModule({ imports:
+ * [adapter.module] })` — the same wiring path the production
+ * `AppModule` uses, just inside a `TestingModule` so the suite can
+ * skip cleanly when PostgreSQL is unreachable.
+ *
  * Per-test isolation is provided by:
  *   - a fresh `EntityManager` (`orm.em.fork()`) so identity-map
  *     state from prior tests cannot leak into a later test, and
@@ -21,19 +28,13 @@
  */
 import 'reflect-metadata';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { MikroORM, type Options } from '@mikro-orm/core';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { MikroORM } from '@mikro-orm/core';
 import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import { runJobRepositoryContract } from '@nest-batch/core/test-contracts';
+import { MikroOrmAdapter } from '../src/adapters/mikro-orm.adapter';
 import { MikroORMJobRepository } from '../src/mikroorm-job-repository';
 import { MikroORMTransactionManager } from '../src/mikroorm-transaction-manager';
-import {
-  JobInstanceEntity,
-  JobExecutionEntity,
-  JobExecutionParamsEntity,
-  StepExecutionEntity,
-  JobExecutionContextEntity,
-  StepExecutionContextEntity,
-} from '../src/entities/job-meta.entities';
 
 const PG_CONFIG = {
   host: process.env.DATABASE_HOST ?? 'localhost',
@@ -60,25 +61,31 @@ const TRUNCATE_SQL = `
 // ---------------------------------------------------------------------------
 
 describe('@nest-batch/mikro-orm contract — JobRepository + TransactionManager (Task 15)', () => {
+  let testingModule: TestingModule | null = null;
   let orm: MikroORM | null = null;
   let pgReachable = false;
   let skipReason = '';
 
   beforeAll(async () => {
-    const ormConfig: Options = {
-      driver: PostgreSqlDriver,
-      ...PG_CONFIG,
-      entities: [
-        JobInstanceEntity,
-        JobExecutionEntity,
-        JobExecutionParamsEntity,
-        StepExecutionEntity,
-        JobExecutionContextEntity,
-        StepExecutionContextEntity,
-      ],
-    };
     try {
-      orm = await MikroORM.init(ormConfig);
+      // Boot the MikroORM connection through the new factory
+      // (`MikroOrmAdapter.forRoot(...)`). The adapter's `.module`
+      // field is the `global: true` `DynamicModule` that imports
+      // `MikroOrmModule.forRoot(merged)` and binds the
+      // `JobRepository` / `TransactionManager` tokens, so the same
+      // wiring the production `AppModule` uses runs inside this
+      // test's `TestingModule`. No raw `MikroORM.init(...)` call —
+      // if the adapter's entity-merging or DI bindings regress,
+      // this suite catches it.
+      testingModule = await Test.createTestingModule({
+        imports: [
+          MikroOrmAdapter.forRoot({
+            ...PG_CONFIG,
+            driver: PostgreSqlDriver,
+          }).module,
+        ],
+      }).compile();
+      orm = testingModule.get(MikroORM);
       pgReachable = true;
     } catch (err) {
       skipReason =
@@ -99,7 +106,7 @@ describe('@nest-batch/mikro-orm contract — JobRepository + TransactionManager 
   });
 
   afterAll(async () => {
-    if (orm) await orm.close(true);
+    if (testingModule) await testingModule.close();
   });
 
   describe('when PostgreSQL is reachable', () => {

@@ -30,10 +30,9 @@ yarn-error.log*
 *.swp
 *.swo
 
-# OMO evidence (task artifacts)
-.omo/evidence/*
-.omo/run-continuation/*
-.omo/boulder.json
+# OMO (orchestrator state — plans, notepads, evidence, run state, boulder)
+# Entire subtree is per-machine state; never check in.
+.omo/
 
 # Test artifacts
 .jest-cache/

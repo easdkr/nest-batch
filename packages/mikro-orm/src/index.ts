@@ -5,15 +5,29 @@
 // `JobRepository` / `TransactionManager` implementations that satisfy
 // the contract suite exported by `@nest-batch/core`.
 //
-// Apps register the implementation as their `JobRepository` and
-// `TransactionManager` provider — either directly:
-//   providers: [
-//     { provide: JobRepository, useClass: MikroORMJobRepository },
-//     { provide: TransactionManager, useClass: MikroORMTransactionManager },
-//   ]
-// or via `NestBatchModule.forRoot({ repository, transactionManager })`.
+// Apps wire the persistence concern into `NestBatchModule.forRoot()`
+// via the new `BatchAdapter` factory pattern:
+//
+//   import { NestBatchModule, InProcessAdapter } from '@nest-batch/core';
+//   import { MikroOrmAdapter } from '@nest-batch/mikro-orm';
+//
+//   NestBatchModule.forRoot({
+//     adapters: {
+//       persistence: MikroOrmAdapter.forRoot({ /* MikroOrmModuleOptions */ }),
+//       transport: InProcessAdapter.forRoot(),
+//     },
+//   });
+//
+// Apps that need to compose a `MikroOrmModule` manually (e.g. they
+// already configure one with user-domain entities) can still reach
+// for the lower-level building blocks: `BATCH_META_ENTITIES` (the
+// six entity classes to spread into `entities`),
+// `MikroORMJobRepository` / `MikroORMTransactionManager` (the
+// concrete provider classes), and `createBatchMikroOrmConfig` (a
+// helper that builds a MikroORM config with the migrator pointed at
+// the package's `src/migrations/`).
 export * from './entities/job-meta.entities';
 export * from './mikroorm-job-repository';
 export * from './mikroorm-transaction-manager';
-export * from './nest-batch-mikro-orm.module';
+export * from './adapters';
 export * from './mikro-orm.config';

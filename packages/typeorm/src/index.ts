@@ -12,3 +12,4 @@ export { TypeOrmJobRepository, batchMetaEntities } from './repository/typeorm-jo
 export type { TypeOrmTransactionContext } from './transaction/typeorm-transaction-manager';
 export { TypeOrmTransactionManager } from './transaction/typeorm-transaction-manager';
 export { CreateBatchMeta1700000000000 } from './migrations/1700000000000-CreateBatchMeta';
+export * from './adapters';
