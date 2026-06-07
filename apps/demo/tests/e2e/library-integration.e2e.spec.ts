@@ -18,6 +18,7 @@ import 'reflect-metadata';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { MikroORM, type EntityManager } from '@mikro-orm/core';
+import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import {
   BATCH_SCHEDULE_REGISTRY,
@@ -136,13 +137,15 @@ describe('Task 48 — Library × PostgreSQL integration (live DB)', () => {
 
     moduleRef = await Test.createTestingModule({
       imports: [
+        MikroOrmModule.forRoot({
+          ...PG_CONFIG,
+          driver: PostgreSqlDriver,
+          entities: [...BATCH_META_ENTITIES, ProductEntity],
+        }),
+        MikroOrmAdapter.forRoot().module,
         NestBatchModule.forRoot({
           adapters: {
-            persistence: MikroOrmAdapter.forRoot({
-              ...PG_CONFIG,
-              driver: PostgreSqlDriver,
-              entities: [ProductEntity],
-            }),
+            persistence: MikroOrmAdapter.forRoot(),
             transport: buildTestTransportAdapter(),
           },
         }),

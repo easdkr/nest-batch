@@ -90,6 +90,16 @@ as `CreateBatchMeta1700000000000` from the package root. Apps that
 already have a TypeORM migration directory should copy the file in
 and renumber it to fit their own migration sequence.
 
+> **Note:** The six batch meta entities are also exported as a
+> single tuple under `batchMetaEntities` from the package root.
+> Because the adapter no longer bootstraps the `DataSource` (the
+> host owns the `TypeOrmModule.forRoot()` call), spreading
+> `batchMetaEntities` into your own `entities` array is the only
+> way the meta tables are registered with TypeORM's metadata
+> system. Forgetting the spread means `Repository<Entity>` lookups
+> for the meta tables fail silently and the repository throws at
+> first call.
+
 > The migration uses `datetime` (not `timestamptz`) on the SQLite
 > test driver and `timestamptz` on PostgreSQL production. The
 > entities declare `datetime` for portability, and the migration
@@ -101,27 +111,31 @@ and renumber it to fit their own migration sequence.
 
 ## Wiring
 
-The package is configured via a `DataSource` and a list of batch
-meta entities. There are two common shapes.
+Wire the adapter with two imports in `AppModule.imports`: a host-
+owned `TypeOrmModule.forRoot()` call (which builds the
+`DataSource` and registers the meta entities) and a
+`TypeOrmAdapter.forRoot()` carrier passed to
+`NestBatchModule.forRoot({ adapters: { persistence, ... } })`.
 
 ### Bring-your-own `DataSource` (recommended)
 
-If your app already builds a TypeORM `DataSource` (the typical case
-for a Nest app that uses `@nestjs/typeorm`), pass it in:
+If your app already uses `@nestjs/typeorm` (the typical case for a
+Nest app with user-domain entities), call
+`TypeOrmModule.forRoot()` yourself, spread `batchMetaEntities()`
+into its `entities` array, and pass the adapter's no-arg
+`TypeOrmAdapter.forRoot()` to `NestBatchModule.forRoot()` under
+`adapters.persistence`:
 
 ```ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { NestBatchModule } from '@nest-batch/core';
 import {
-  NestBatchModule,
-  JobRepository,
-  TransactionManager,
-} from '@nest-batch/core';
-import {
-  NestBatchTypeOrmModule,
-  TypeOrmJobRepository,
-  TypeOrmTransactionManager,
+  batchMetaEntities,
+  CreateBatchMeta1700000000000,
+  TypeOrmAdapter,
 } from '@nest-batch/typeorm';
+import { ProductEntity } from './entities/product.entity';
 
 @Module({
   imports: [
@@ -132,50 +146,47 @@ import {
       username: 'demo',
       password: 'demo',
       database: 'nest_batch_demo',
-      entities: [/* your user-domain entities */],
-      migrations: [/* your migrations, plus CreateBatchMeta1700000000000 */],
+      entities: [ProductEntity, ...batchMetaEntities()],
+      migrations: [CreateBatchMeta1700000000000 /* your other migrations */],
       migrationsRun: true,
     }),
-    NestBatchTypeOrmModule.forRoot({
-      // The host's DataSource. The module will use it to build
-      // a per-request EntityManager and to run the contract suite.
-      dataSource: /* your DataSource */,
+    NestBatchModule.forRoot({
+      adapters: { persistence: TypeOrmAdapter.forRoot() },
     }),
-    NestBatchModule.forRoot(),
-  ],
-  providers: [
-    { provide: JobRepository, useClass: TypeOrmJobRepository },
-    { provide: TransactionManager, useClass: TypeOrmTransactionManager },
   ],
 })
 export class AppModule {}
 ```
 
-`forRoot({ dataSource })` is the typical shape. The module reads
-the batch meta entities off the registered `DataSource` (you must
-register them on the `DataSource` itself, not just the Nest
-module). The TypeORM `Repository<Entity>` lookups go through that
-same `DataSource`.
+`TypeOrmAdapter.forRoot()` takes no arguments on purpose. The host
+already owns the `TypeOrmModule.forRoot()` call; the adapter only
+declares its own provider and export surface. The
+`JOB_REPOSITORY_TOKEN` and `TRANSACTION_MANAGER_TOKEN` bindings are
+registered globally by the adapter, so you do **not** list
+`TypeOrmJobRepository` / `TypeOrmTransactionManager` in the
+`providers` array — they're already wired.
 
-### Self-contained module
+> **Warning:** The adapter does **not** call `TypeOrmModule.forRoot()`
+> and does **not** create a `DataSource`. If you forget the
+> `TypeOrmModule.forRoot()` import, the app boots cleanly and the
+> batch module compiles, but the repository throws at first call
+> because `Repository<Entity>` resolution has nothing to bind to.
+> The two pieces are decoupled by design — the adapter is a
+> binding-only carrier, and the connection is the host's.
 
-If you don't have a `DataSource` yet, the package can build one for
-you. Pass `entities` and the standard `DataSourceOptions`:
+> **Note:** `@nestjs/typeorm` defaults to `isGlobal: true`, which
+> is what the adapter assumes. Setting `isGlobal: false` breaks
+> `EntityManager` injection inside the adapter's own module: the
+> `DataSource` is registered on the host's `TypeOrmModule.forRoot()`
+> but the adapter module is `global: true`, so the `EntityManager`
+> token it needs is not exported across the boundary. Leave it at
+> the default unless you've wired an alternative.
 
-```ts
-NestBatchTypeOrmModule.forRoot({
-  type: 'better-sqlite3',
-  database: ':memory:',
-  entities: [...batchMetaEntities /* your entities */],
-});
-```
-
-`batchMetaEntities` is exported from the package as the tuple of all
-six batch meta entities. Spread it into your `entities` array.
-
-`forRootAsync` is also available when the connection comes from a
-config service. It mirrors the standard Nest async-module factory
-shape and accepts a `useFactory` plus an `inject` list.
+`forRootAsync` is the right call when the connection comes from a
+config service or a secret manager. Pass the standard `useFactory`
+plus `inject` list to `TypeOrmModule.forRootAsync()` and keep
+`TypeOrmAdapter.forRoot()` unchanged — the adapter doesn't care
+how the `DataSource` is built.
 
 ### DataSource, not Connection
 

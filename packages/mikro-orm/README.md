@@ -91,24 +91,25 @@ package's directory.
 
 ## Wiring
 
-There are two common shapes.
+Wire the adapter with two imports in `AppModule.imports`: a host-
+owned `MikroOrmModule.forRoot()` call (which builds the connection
+and registers the meta entities) and a `MikroOrmAdapter.forRoot()`
+carrier passed to
+`NestBatchModule.forRoot({ adapters: { persistence, ... } })`.
 
 ### Bring-your-own `MikroOrmModule` (recommended)
 
-If your app already configures `MikroOrmModule.forRoot()` (the
-typical case for an app that has user-domain entities), spread the
-batch meta entities into your existing config and register the
-adapter's `JobRepository` and `TransactionManager` as providers:
+If your app already uses `@mikro-orm/nestjs` (the typical case for
+a Nest app with user-domain entities), call `MikroOrmModule.forRoot()`
+yourself, spread `BATCH_META_ENTITIES` into its `entities` array,
+and pass the adapter's no-arg `MikroOrmAdapter.forRoot()` to
+`NestBatchModule.forRoot()` under `adapters.persistence`:
 
 ```ts
 import { Module } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
-import { NestBatchModule, JobRepository, TransactionManager } from '@nest-batch/core';
-import {
-  BATCH_META_ENTITIES,
-  MikroORMJobRepository,
-  MikroORMTransactionManager,
-} from '@nest-batch/mikro-orm';
+import { NestBatchModule } from '@nest-batch/core';
+import { MikroOrmAdapter, BATCH_META_ENTITIES } from '@nest-batch/mikro-orm';
 import { ProductEntity } from './entities/product.entity';
 
 @Module({
@@ -118,59 +119,72 @@ import { ProductEntity } from './entities/product.entity';
       dbName: 'nest_batch_demo',
       // ... your existing config
     }),
-    NestBatchModule.forRoot(),
-  ],
-  providers: [
-    { provide: JobRepository, useClass: MikroORMJobRepository },
-    { provide: TransactionManager, useClass: MikroORMTransactionManager },
+    NestBatchModule.forRoot({
+      adapters: { persistence: MikroOrmAdapter.forRoot() },
+    }),
   ],
 })
 export class AppModule {}
 ```
+
+`MikroOrmAdapter.forRoot()` takes no arguments on purpose. The host
+already owns the `MikroOrmModule.forRoot()` call; the adapter only
+declares its own provider and export surface. The
+`JOB_REPOSITORY_TOKEN` and `TRANSACTION_MANAGER_TOKEN` bindings are
+registered globally by the adapter, so you do **not** list
+`MikroORMJobRepository` / `MikroORMTransactionManager` in the
+`providers` array — they're already wired.
 
 `BATCH_META_ENTITIES` is the typed tuple of all six batch meta
 entities. Spread it into your `entities` array once and forget about
 it.
 
-### Self-contained module
+> **Warning:** The adapter does **not** call `MikroOrmModule.forRoot()`
+> and does **not** create a `MikroORM` connection. If you forget the
+> `MikroOrmModule.forRoot()` import, the app boots cleanly and the
+> batch module compiles, but the repository throws at first call
+> because `EntityManager` injection has nothing to bind to. The two
+> pieces are decoupled by design — the adapter is a binding-only
+> carrier, and the connection is the host's.
 
-If you want a one-import setup (MikroORM + batch meta + repository
-binding all in one), use `NestBatchMikroOrmModule.forRoot()`:
-
-```ts
-import { Module } from '@nestjs/common';
-import { NestBatchModule, JobRepository, TransactionManager } from '@nest-batch/core';
-import {
-  NestBatchMikroOrmModule,
-  MikroORMJobRepository,
-  MikroORMTransactionManager,
-} from '@nest-batch/mikro-orm';
-
-@Module({
-  imports: [
-    NestBatchMikroOrmModule.forRoot({
-      dbName: 'nest_batch_demo',
-      user: 'demo',
-      password: 'demo',
-      // host, port, entities, ...
-    }),
-    NestBatchModule.forRoot(),
-  ],
-  providers: [
-    { provide: JobRepository, useClass: MikroORMJobRepository },
-    { provide: TransactionManager, useClass: MikroORMTransactionManager },
-  ],
-})
-export class AppModule {}
-```
-
-`NestBatchMikroOrmModule.forRoot()` accepts the same
-`MikroOrmModuleOptions` you'd pass to `MikroOrmModule.forRoot()`. The
-batch meta entities are merged in automatically.
+> **Note:** `@mikro-orm/nestjs` defaults to `isGlobal: true`, which
+> is what the adapter assumes. Setting `isGlobal: false` breaks
+> `EntityManager` injection inside the adapter's own module: the
+> `MikroORM` is registered on the host's `MikroOrmModule.forRoot()`
+> but the adapter module is `global: true`, so the `EntityManager`
+> token it needs is not exported across the boundary. Leave it at
+> the default unless you've wired an alternative.
 
 `forRootAsync` is the right call when the connection comes from a
-config service or a secret manager. It mirrors the standard Nest
-async-module factory shape.
+config service or a secret manager. Pass the standard `useFactory`
+plus `inject` list to `MikroOrmModule.forRootAsync()` and keep
+`MikroOrmAdapter.forRoot()` unchanged — the adapter doesn't care
+how the connection is built.
+
+> **Recommended:** If your app runs the MikroORM CLI directly
+> (`pnpm mikro-orm migration:create`, `migration:up`, etc.) and
+> you don't want to repeat the entity / migrations wiring, reach
+> for `createBatchMikroOrmConfig` (exported from
+> `@nest-batch/mikro-orm`). It takes the same options you would
+> pass to `MikroOrmModule.forRoot()` and auto-merges
+> `BATCH_META_ENTITIES` into the `entities` array, plus points
+> the migrator at this package's `src/migrations/` directory:
+>
+> ```ts
+> // mikro-orm.config.ts (the file the MikroORM CLI loads)
+> import { createBatchMikroOrmConfig } from '@nest-batch/mikro-orm';
+> import { ProductEntity } from './entities/product.entity';
+>
+> export default createBatchMikroOrmConfig({
+>   entities: [ProductEntity],
+>   dbName: 'nest_batch_demo',
+>   // ...other MikroORM options
+> });
+> ```
+>
+> The `forRoot()` call on the adapter still takes no args — the
+> helper is for CLI / migration use only, not for the Nest module
+> wiring above.
 
 ---
 

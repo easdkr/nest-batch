@@ -22,11 +22,13 @@ import 'reflect-metadata';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { MikroORM } from '@mikro-orm/core';
+import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import { StepStatus } from '@nest-batch/core';
 import { MikroOrmAdapter } from '../src/adapters/mikro-orm.adapter';
 import { MikroORMJobRepository } from '../src/mikroorm-job-repository';
 import {
+  BATCH_META_ENTITIES,
   JobInstanceEntity,
   JobExecutionEntity,
   StepExecutionEntity,
@@ -59,21 +61,21 @@ describe('@nest-batch/mikro-orm — backend-specific behavior (Task 15)', () => 
 
   beforeAll(async () => {
     try {
-      // Boot the MikroORM connection through the new factory
-      // (`MikroOrmAdapter.forRoot(...)`). The adapter's `.module`
-      // field is the `global: true` `DynamicModule` that imports
-      // `MikroOrmModule.forRoot(merged)` and binds the
-      // `JobRepository` / `TransactionManager` tokens, so the same
-      // wiring the production `AppModule` uses runs inside this
-      // test's `TestingModule`. No raw `MikroORM.init(...)` call —
-      // if the adapter's entity-merging or DI bindings regress,
-      // this suite catches it.
+      // Boot the MikroORM connection directly via `MikroOrmModule.forRoot(...)`
+      // (the host-owned pattern the slimmed-down adapter expects) and
+      // then add the adapter's binding-only `DynamicModule` so the
+      // `JOB_REPOSITORY_TOKEN` / `TRANSACTION_MANAGER_TOKEN` providers
+      // resolve inside this `TestingModule`. No raw `MikroORM.init(...)`
+      // call — if the adapter's DI bindings regress, this suite
+      // catches it.
       testingModule = await Test.createTestingModule({
         imports: [
-          MikroOrmAdapter.forRoot({
+          MikroOrmModule.forRoot({
             ...PG_CONFIG,
             driver: PostgreSqlDriver,
-          }).module,
+            entities: [...BATCH_META_ENTITIES],
+          }),
+          MikroOrmAdapter.forRoot().module,
         ],
       }).compile();
       orm = testingModule.get(MikroORM);

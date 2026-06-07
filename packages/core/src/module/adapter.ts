@@ -54,11 +54,23 @@
  * @example
  * ```ts
  * // packages/mikro-orm — typical persistence adapter
- * export const MikroOrmAdapter = {
- *   name: 'mikro-orm' as const,
- *   module: MikroOrmModule.forRoot({ entities: [Product, ...BATCH_META_ENTITIES] }),
- *   globalProviders: [MikroORMJobRepository, MikroORMTransactionManager],
- * } as const satisfies BatchAdapter;
+ * export class MikroOrmAdapter {
+ *   static forRoot(): BatchAdapter {
+ *     return {
+ *       name: 'mikro-orm' as const,
+ *       module: {
+ *         module: MikroOrmBatchModule,
+ *         global: true,
+ *         providers: [MikroORMJobRepository, MikroORMTransactionManager],
+ *         exports: [JOB_REPOSITORY_TOKEN, TRANSACTION_MANAGER_TOKEN],
+ *       },
+ *       globalProviders: [
+ *         { provide: JOB_REPOSITORY_TOKEN, useClass: MikroORMJobRepository },
+ *         { provide: TRANSACTION_MANAGER_TOKEN, useClass: MikroORMTransactionManager },
+ *       ],
+ *     };
+ *   }
+ * }
  * ```
  */
 import type { DynamicModule, Provider } from '@nestjs/common';
@@ -124,10 +136,15 @@ export interface BatchAdapter {
  * ```ts
  * @Module({
  *   imports: [
+ *     MikroOrmModule.forRoot({
+ *       entities: [ProductEntity, ...BATCH_META_ENTITIES],
+ *       dbName: process.env.DB_NAME,
+ *       // ...host-owned MikroORM options
+ *     }),
  *     NestBatchModule.forRoot({
  *       adapters: {
- *         persistence: MikroOrmAdapter,
- *         transport: InProcessAdapter,
+ *         persistence: MikroOrmAdapter.forRoot(),
+ *         transport: InProcessAdapter.forRoot(),
  *       },
  *     }),
  *   ],

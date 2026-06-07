@@ -1,6 +1,7 @@
+import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { PostgreSqlDriver } from '@mikro-orm/postgresql';
 import { InProcessAdapter, NestBatchModule } from '@nest-batch/core';
-import { MikroOrmAdapter } from '@nest-batch/mikro-orm';
+import { BATCH_META_ENTITIES, MikroOrmAdapter } from '@nest-batch/mikro-orm';
 import { BullmqAdapter } from '@nest-batch/bullmq';
 import { Module } from '@nestjs/common';
 
@@ -17,17 +18,18 @@ import { ProductWriter } from './jobs/import-products/writer/product.writer';
 @Module({
   imports: [
     AppConfigModule,
+    MikroOrmModule.forRoot({
+      entities: [ProductEntity, ...BATCH_META_ENTITIES],
+      dbName: process.env.DATABASE_NAME ?? 'nest_batch_demo',
+      host: process.env.DATABASE_HOST ?? 'localhost',
+      port: Number(process.env.DATABASE_PORT ?? 5434),
+      user: process.env.DATABASE_USER ?? 'demo',
+      password: process.env.DATABASE_PASSWORD ?? 'demo',
+      driver: PostgreSqlDriver,
+    }),
     NestBatchModule.forRoot({
       adapters: {
-        persistence: MikroOrmAdapter.forRoot({
-          entities: [ProductEntity],
-          dbName: process.env.DATABASE_NAME ?? 'nest_batch_demo',
-          host: process.env.DATABASE_HOST ?? 'localhost',
-          port: Number(process.env.DATABASE_PORT ?? 5434),
-          user: process.env.DATABASE_USER ?? 'demo',
-          password: process.env.DATABASE_PASSWORD ?? 'demo',
-          driver: PostgreSqlDriver,
-        }),
+        persistence: MikroOrmAdapter.forRoot(),
         transport:
           process.env.BATCH_TRANSPORT === 'in-process'
             ? InProcessAdapter.forRoot()

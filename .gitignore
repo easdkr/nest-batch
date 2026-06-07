@@ -37,3 +37,10 @@ yarn-error.log*
 # Test artifacts
 .jest-cache/
 .vitest-cache/
+
+# MikroORM migrator auto-generated schema snapshots. The migrator
+# writes one of these per database it touches, into the package's
+# `migrations/` directory. The project uses raw-SQL migrations
+# (`this.addSql(...)`), not entity-diff-based ones, so the snapshot
+# is incidental and per-machine.
+**/migrations/.snapshot-*.json

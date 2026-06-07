@@ -47,6 +47,7 @@ import { join } from 'path';
 import { readFileSync, writeFileSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { MikroORM, EntityManager, type Options } from '@mikro-orm/core';
+import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { PostgreSqlDriver, type SqlEntityManager } from '@mikro-orm/postgresql';
 import {
   BATCH_SCHEDULE_REGISTRY,
@@ -250,13 +251,15 @@ async function buildLauncher(orm: MikroORM): Promise<{
 
   const moduleRef = await Test.createTestingModule({
     imports: [
+      MikroOrmModule.forRoot({
+        ...PG_CONFIG,
+        driver: PostgreSqlDriver,
+        entities: [...BATCH_META_ENTITIES, ProductEntity],
+      }),
+      MikroOrmAdapter.forRoot().module,
       NestBatchModule.forRoot({
         adapters: {
-          persistence: MikroOrmAdapter.forRoot({
-            ...PG_CONFIG,
-            driver: PostgreSqlDriver,
-            entities: [ProductEntity],
-          }),
+          persistence: MikroOrmAdapter.forRoot(),
           transport: buildTestTransportAdapter(),
         },
       }),
