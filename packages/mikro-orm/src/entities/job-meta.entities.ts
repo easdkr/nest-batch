@@ -53,6 +53,9 @@ export class JobExecutionEntity {
 
   @Property({ default: '' })
   exitMessage!: string;
+
+  @Property({ type: 'text', default: '{}' })
+  params!: string;
 }
 
 /**
