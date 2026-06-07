@@ -214,19 +214,9 @@ pnpm add @nest-batch/core @nest-batch/mikro-orm @nest-batch/bullmq \
 // src/app.module.ts
 import { Module } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
-import {
-  NestBatchModule,
-  JobRepository,
-  TransactionManager,
-  InProcessExecutionStrategy,
-  IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
-} from '@nest-batch/core';
-import {
-  BATCH_META_ENTITIES,
-  MikroORMJobRepository,
-  MikroORMTransactionManager,
-} from '@nest-batch/mikro-orm';
-import { BullmqBatchModule } from '@nest-batch/bullmq';
+import { NestBatchModule } from '@nest-batch/core';
+import { BATCH_META_ENTITIES, MikroOrmAdapter } from '@nest-batch/mikro-orm';
+import { BullmqAdapter } from '@nest-batch/bullmq';
 import { ProductEntity } from './entities/product.entity';
 import { ImportProductsJob } from './jobs/import-products.job';
 
@@ -240,32 +230,34 @@ import { ImportProductsJob } from './jobs/import-products.job';
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
     }),
-    NestBatchModule.forRoot(),
-    BullmqBatchModule.forRoot({
-      connection: {
-        host: process.env.REDIS_HOST,
-        port: Number(process.env.REDIS_PORT),
-        keyPrefix: process.env.REDIS_KEY_PREFIX,
+    NestBatchModule.forRoot({
+      adapters: {
+        persistence: MikroOrmAdapter.forRoot(),
+        transport: BullmqAdapter.forRoot({
+          connection: {
+            host: process.env.REDIS_HOST,
+            port: Number(process.env.REDIS_PORT),
+            keyPrefix: process.env.REDIS_KEY_PREFIX,
+          },
+          autoStartWorker: true,
+        }),
       },
-      autoStartWorker: true,
     }),
   ],
-  providers: [
-    { provide: JobRepository, useClass: MikroORMJobRepository },
-    { provide: TransactionManager, useClass: MikroORMTransactionManager },
-    InProcessExecutionStrategy,
-    IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
-    ImportProductsJob,
-  ],
+  providers: [ImportProductsJob],
 })
 export class AppModule {}
 ```
 
-`BullmqBatchModule` overrides the `EXECUTION_STRATEGY` token at the
-DI boundary, so `JobLauncher.launch()` now enqueues into BullMQ
-without any change to the controller code. Drop
-`BullmqBatchModule` from the `imports` and you're back to in-process
-execution.
+`MikroOrmAdapter.forRoot()` takes no arguments on purpose. The host
+owns the `MikroOrmModule.forRoot()` call above, and the adapter
+only registers the `JOB_REPOSITORY_TOKEN` and
+`TRANSACTION_MANAGER_TOKEN` bindings globally. The `transport` slot
+picks the execution strategy: swap `BullmqAdapter.forRoot({...})`
+for `InProcessAdapter.forRoot()` (imported from `@nest-batch/core`)
+to drop BullMQ and run the job in-process for tests or local
+development. `JobLauncher.launch()` doesn't care which transport is
+wired, so the controller code is unchanged.
 
 ### 3. Job
 

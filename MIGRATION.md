@@ -297,6 +297,148 @@ worker pools, no tenant isolation. BullMQ uses a single queue
 
 ---
 
+## Adapter slimming: DB adapters no longer bootstrap the third-party module
+
+> **Breaking change in 0.2.0** (pre-1.0 semver, minor bump). The
+> `0.1.0` → `0.2.0` step is the documented boundary for this
+> shape change. Adapters are no longer "module bundles" that
+> register the third-party connection module themselves. They
+> are binding-only carriers, exactly like `InProcessAdapter`
+> always was.
+
+### What changed
+
+`MikroOrmAdapter.forRoot()` and `TypeOrmAdapter.forRoot()` are
+now **no-arg factories**. The adapter no longer accepts the
+`MikroOrmModuleOptions` / `TypeOrmModuleOptions` payload, no
+longer calls `MikroOrmModule.forRoot()` /
+`TypeOrmModule.forRoot()` internally, and no longer merges
+`BATCH_META_ENTITIES` / `batchMetaEntities` into the entities
+list for you. The host owns the connection. The host also owns
+the spread of the meta entities into the host's own `entities`
+array.
+
+`InProcessAdapter.forRoot()` has always been a no-arg factory.
+The two DB adapters now match that shape, so every adapter in
+the family follows the same `BatchAdapter` contract: a name, a
+module carrier, and a list of global providers. There is no
+longer a "DB adapters bootstrap the connection, everything
+else is binding-only" special case.
+
+### Why
+
+Aligns both DB adapters with the `InProcessAdapter` shape
+(already true-adapter-shaped). Removes the "module bundle"
+responsibility from the adapter contract. The third-party
+connection module is the host's concern, not the adapter's.
+The adapter's job is to bind the `JOB_REPOSITORY_TOKEN` and
+`TRANSACTION_MANAGER_TOKEN` symbols to the concrete
+`JobRepository` and `TransactionManager` classes. It does not
+own the connection that backs them.
+
+### Before / after `AppModule`
+
+**Before (0.1.0):** the adapter accepted the connection
+options as its first argument and bootstrapped the third-party
+connection module internally:
+
+- `adapters.persistence` was a single `forRoot()` call that
+  took the full `MikroOrmModuleOptions` /
+  `TypeOrmModuleOptions` payload.
+- The adapter merged `BATCH_META_ENTITIES` /
+  `batchMetaEntities` into the `entities` array for you.
+- The adapter registered `MikroOrmModule.forRoot()` /
+  `TypeOrmModule.forRoot()` as a sub-import.
+- The host did NOT import the third-party module class
+  directly.
+
+**After (0.2.0):** the host calls
+`MikroOrmModule.forRoot()` (or `TypeOrmModule.forRoot()`)
+directly, spreads the meta-entities tuple into the `entities`
+array, and passes the no-arg adapter factory to
+`NestBatchModule.forRoot()`:
+
+```ts
+import { Module } from '@nestjs/common';
+import { MikroOrmModule } from '@mikro-orm/nestjs';
+import { NestBatchModule, InProcessAdapter } from '@nest-batch/core';
+import { BATCH_META_ENTITIES, MikroOrmAdapter } from '@nest-batch/mikro-orm';
+import { BullmqAdapter } from '@nest-batch/bullmq';
+import { ProductEntity } from './entities/product.entity';
+
+@Module({
+  imports: [
+    MikroOrmModule.forRoot({
+      entities: [ProductEntity, ...BATCH_META_ENTITIES],
+      dbName: process.env.DATABASE_NAME,
+      host: process.env.DATABASE_HOST,
+      // ...rest of MikroORM config
+    }),
+    NestBatchModule.forRoot({
+      adapters: {
+        persistence: MikroOrmAdapter.forRoot(),
+        transport: InProcessAdapter.forRoot(),
+      },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+The TypeORM version is the same shape with
+`@nestjs/typeorm` / `TypeOrmModule.forRoot()` and
+`batchMetaEntities` instead of `BATCH_META_ENTITIES`.
+
+### Critical reminders
+
+- **`BATCH_META_ENTITIES` spread is now load-bearing.**
+  Forgetting the `...BATCH_META_ENTITIES` (or
+  `...batchMetaEntities()` for TypeORM) spread in the host's
+  `entities` array means the batch meta tables are not
+  registered with the ORM's metadata system. The app boots
+  cleanly, the batch module compiles, and the repository
+  throws at first call with
+  `relation "batch_job_instance" does not exist` (PostgreSQL)
+  or the TypeORM equivalent. There is no warning at boot
+  time. The failure is deferred until the first job
+  execution.
+
+- **`MikroOrmModule.forRoot()` must be `isGlobal: true` (the
+  default).** `@mikro-orm/nestjs` registers the `EntityManager`
+  on the host's module. The adapter is registered as
+  `global: true`. When the host's `MikroOrmModule.forRoot()`
+  is also `global: true` (the default), the `EntityManager`
+  token crosses the module boundary cleanly. Setting
+  `isGlobal: false` on the host's call silently breaks
+  `EntityManager` injection inside the adapter's own module
+  because the `EntityManager` is no longer exported across
+  the boundary. There is no warning. Leave it at the default
+  unless you have wired an alternative.
+
+- **`TypeOrmModule.forRoot()` has the same `isGlobal`
+  requirement.** Same mechanism, same default, same
+  silent-break pattern. The adapter assumes the default
+  `isGlobal: true`.
+
+### Async config
+
+Use `XxxModule.forRootAsync({...})` directly for async config
+(e.g. when the connection comes from a `ConfigModule` or a
+secret manager). The standard Nest async-module API is the
+entry point. `MikroOrmAdapter.forRoot()` and
+`TypeOrmAdapter.forRoot()` stay no-arg in async mode too. The
+adapter does not care how the connection is built.
+
+### See also
+
+The full wiring walkthrough with the warning callouts lives in
+each adapter's README:
+
+- [`packages/mikro-orm/README.md`](./packages/mikro-orm/README.md#wiring)
+- [`packages/typeorm/README.md`](./packages/typeorm/README.md#wiring)
+
+---
+
 ## Validated package boundaries (0.1.0)
 
 Each package in the family was packed with `pnpm pack --pack-destination /tmp/task23-pack --json` and the resulting tarball was inspected. Every package exits 0 and the file list is restricted to runtime + source + README. The full per-package log lives in
