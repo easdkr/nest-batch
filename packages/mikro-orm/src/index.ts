@@ -11,9 +11,14 @@
 //   import { NestBatchModule, InProcessAdapter } from '@nest-batch/core';
 //   import { MikroOrmAdapter } from '@nest-batch/mikro-orm';
 //
+//   // The host must also call
+//   // `MikroOrmModule.forRoot({ entities: [..., ...BATCH_META_ENTITIES], ... })`
+//   // in their `AppModule.imports` (BATCH_META_ENTITIES is the six-table
+//   // batch meta-schema spread into the MikroORM entities array).
+//
 //   NestBatchModule.forRoot({
 //     adapters: {
-//       persistence: MikroOrmAdapter.forRoot({ /* MikroOrmModuleOptions */ }),
+//       persistence: MikroOrmAdapter.forRoot(),
 //       transport: InProcessAdapter.forRoot(),
 //     },
 //   });
