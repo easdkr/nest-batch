@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { JobRepository } from '../../core/repository/job-repository';
+import { JobRepository } from '@nest-batch/core';
 import type {
   JobInstance,
   JobExecution,
@@ -9,10 +9,10 @@ import type {
   StepExecutionPatch,
   ExecutionContext,
   ExecutionScope,
-} from '../../core/repository/types';
-import { JobStatus, StepStatus } from '../../core/status';
-import { JobExecutionAlreadyRunningError } from '../../core/errors';
-import { assertJsonSerializable } from '../../core/execution-context/validator';
+} from '@nest-batch/core';
+import { JobStatus, StepStatus } from '@nest-batch/core';
+import { JobExecutionAlreadyRunningError } from '@nest-batch/core';
+import { assertJsonSerializable } from '@nest-batch/core';
 import type { IdGenerator } from '../id-generator';
 import { UuidIdGenerator } from '../id-generator';
 
