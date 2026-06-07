@@ -217,10 +217,25 @@ export class TypeOrmJobRepository extends JobRepository {
       // 2. Lock the instance row. SKIP LOCKED means: if another
       // concurrent launch already holds the lock, this returns 0
       // rows and we treat that as "another launch in progress".
-      const locked = await em.findOne(JobInstanceEntity, {
-        where: { jobName: name, jobKey },
-        lock: { mode: 'pessimistic_write', onLocked: 'skip_locked' },
-      });
+      // SQLite (better-sqlite3) does not support pessimistic_write
+      // locking via TypeORM, so we fall back to raw SQL for SQLite
+      // and use the ORM abstraction for everything else.
+      let locked: JobInstanceEntity | null = null;
+      if (this.dataSource.options.type === 'better-sqlite3') {
+        const raw = await em.query(
+          `SELECT id, job_name AS jobName, job_key AS jobKey, created_at AS createdAt
+           FROM batch_job_instance
+           WHERE job_name = ? AND job_key = ?
+           LIMIT 1`,
+          [name, jobKey],
+        );
+        locked = raw[0] ? (em.create(JobInstanceEntity, raw[0]) as JobInstanceEntity) : null;
+      } else {
+        locked = await em.findOne(JobInstanceEntity, {
+          where: { jobName: name, jobKey },
+          lock: { mode: 'pessimistic_write', onLocked: 'skip_locked' },
+        });
+      }
       if (!locked) {
         throw new JobExecutionAlreadyRunningError(name);
       }
