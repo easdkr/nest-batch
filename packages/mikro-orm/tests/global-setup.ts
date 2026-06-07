@@ -33,7 +33,7 @@ export default async function setup() {
   const orm = await MikroORM.init({
     ...PG_CONFIG,
     driver: PostgreSqlDriver,
-    entities: BATCH_META_ENTITIES,
+    entities: [...BATCH_META_ENTITIES],
     extensions: [Migrator],
     migrations: {
       path: 'src/migrations',
