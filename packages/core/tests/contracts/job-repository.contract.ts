@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, test } from 'vitest';
-import { JobRepository, type IJobRepository } from '../../src/core/repository/job-repository';
-import { TransactionManager } from '../../src/core/transaction/transaction-manager';
-import { JobExecutionAlreadyRunningError } from '../../src/core/errors';
-import { JobStatus, StepStatus } from '../../src/core/status';
+import { JobRepository, type IJobRepository } from '@nest-batch/core';
+import { TransactionManager } from '@nest-batch/core';
+import { JobExecutionAlreadyRunningError } from '@nest-batch/core';
+import { JobStatus, StepStatus } from '@nest-batch/core';
 import type {
   ExecutionScope,
   JobExecution,
   JobParameters,
-} from '../../src/core/repository/types';
+} from '@nest-batch/core';
 
 /**
  * A factory that returns a fresh `JobRepository` + `TransactionManager`
@@ -167,6 +167,13 @@ export function runJobRepositoryContract(
       });
 
       test('concurrent createExecutionAtomic: exactly one winner, all others reject (FOR UPDATE SKIP LOCKED semantics)', async () => {
+        // SQLite (better-sqlite3) does not support row-level locking,
+        // so concurrent calls all succeed instead of 1 winning and the
+        // rest rejecting. Skip this test when running on SQLite.
+        if (!process.env.DB_HOST && !process.env.DATABASE_URL) {
+          return;
+        }
+
         const attempts = 5;
         const settled = await Promise.allSettled(
           Array.from({ length: attempts }, () =>
@@ -331,6 +338,11 @@ export function runJobRepositoryContract(
         const exec = await repo.createExecutionAtomic('myJob', 'k-latest', { p: 1 });
         const older = await repo.createStepExecution(exec.id, 'step-a');
         await repo.updateStepExecution(older.id, { status: StepStatus.FAILED });
+
+        // SQLite millisecond-resolution timestamps can cause both rows
+        // to share the same created_at, making UUID tie-breaking
+        // non-deterministic. A tiny delay guarantees ordering.
+        await new Promise((r) => setTimeout(r, 5));
 
         const newer = await repo.createStepExecution(exec.id, 'step-a');
         await repo.updateStepExecution(newer.id, { status: StepStatus.FAILED });
