@@ -36,8 +36,15 @@ export default async function setup() {
     entities: [...BATCH_META_ENTITIES],
     extensions: [Migrator],
     migrations: {
-      path: 'src/migrations',
-      pathTs: 'src/migrations',
+      // Point at the SWC-compiled JS in dist/, not the .ts source.
+      // The CI workflow runs `pnpm build` before `pnpm test`, so dist
+      // is guaranteed to exist; vitest itself runs in a CJS context
+      // where Node cannot parse .ts source. Pointing `path` at the
+      // .ts source made the migrator try to load it via
+      // `Module._compile` and crash with
+      // `SyntaxError: Unexpected token 'async'`.
+      path: 'dist/src/migrations',
+      pathTs: 'dist/src/migrations',
     },
   });
 
