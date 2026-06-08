@@ -1,0 +1,73 @@
+{
+  "name": "@nest-batch/drizzle",
+  "version": "0.1.0",
+  "description": "Drizzle ORM adapter for @nest-batch/core. Provides DrizzleJobRepository and DrizzleTransactionManager backed by Drizzle ORM, owns the six Spring Batch-compatible batch meta tables.",
+  "license": "MIT",
+  "author": "easdkr",
+  "homepage": "https://github.com/easdkr/nest-batch/tree/main/packages/drizzle#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/easdkr/nest-batch.git",
+    "directory": "packages/drizzle"
+  },
+  "bugs": {
+    "url": "https://github.com/easdkr/nest-batch/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "batch",
+    "spring-batch",
+    "drizzle",
+    "drizzle-orm",
+    "job-repository",
+    "persistence"
+  ],
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist/src",
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@nest-batch/core": "workspace:^",
+    "@nestjs/common": "^10 || ^11",
+    "drizzle-orm": "^0.40.0"
+  },
+  "peerDependenciesMeta": {
+    "@nest-batch/core": {
+      "optional": false
+    },
+    "@nestjs/common": {
+      "optional": false
+    },
+    "drizzle-orm": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@nest-batch/core": "workspace:*",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/testing": "^11.0.0",
+    "@swc/cli": "^0.7.0",
+    "@swc/core": "^1.10.7",
+    "@testcontainers/postgresql": "^12.0.1",
+    "@types/node": "^22.0.0",
+    "drizzle-orm": "^0.40.0",
+    "pg": "^8.11.0",
+    "reflect-metadata": "^0.2.2",
+    "testcontainers": "^12.0.1",
+    "typescript": "^5.5.0",
+    "unplugin-swc": "^1.5.0",
+    "vitest": "^2.0.0"
+  }
+}
