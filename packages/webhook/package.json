@@ -1,0 +1,70 @@
+{
+  "name": "@nest-batch/webhook",
+  "version": "0.2.0",
+  "description": "Webhook delivery observer for @nest-batch/core. Subscribes to BATCH_EVENT.* and POSTs HMAC-SHA256-signed JSON envelopes to one or more URLs with exponential-backoff retry and dead-letter logging. Uses native fetch (Node 20+); no HTTP client peer dep.",
+  "license": "MIT",
+  "author": "easdkr",
+  "homepage": "https://github.com/easdkr/nest-batch/tree/main/packages/webhook#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/easdkr/nest-batch.git",
+    "directory": "packages/webhook"
+  },
+  "bugs": {
+    "url": "https://github.com/easdkr/nest-batch/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "batch",
+    "spring-batch",
+    "webhook",
+    "hmac",
+    "hmac-sha256",
+    "observer",
+    "dead-letter"
+  ],
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist/src",
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@nest-batch/core": "workspace:^",
+    "@nestjs/common": "^10 || ^11",
+    "@nestjs/core": "^10 || ^11"
+  },
+  "peerDependenciesMeta": {
+    "@nest-batch/core": {
+      "optional": false
+    },
+    "@nestjs/common": {
+      "optional": false
+    },
+    "@nestjs/core": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@nest-batch/core": "workspace:*",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@swc/cli": "^0.7.0",
+    "@swc/core": "^1.10.7",
+    "@types/node": "^22.0.0",
+    "reflect-metadata": "^0.2.2",
+    "typescript": "^5.5.0",
+    "unplugin-swc": "^1.5.0",
+    "vitest": "^2.0.0"
+  }
+}
