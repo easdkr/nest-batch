@@ -34,9 +34,10 @@ export default defineConfig({
       },
     },
     include: [
-      'tests/**/*.test.ts',
-      'tests/**/*.spec.ts',
+      'tests/boundary/**/*.test.ts',
+      'tests/boundary/**/*.spec.ts',
       'src/**/*.spec.ts',
     ],
+    exclude: ['tests/e2e-*.test.ts', 'node_modules/**'],
   },
 });

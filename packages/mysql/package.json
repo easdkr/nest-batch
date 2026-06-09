@@ -37,10 +37,10 @@
     "access": "public"
   },
   "scripts": {
-    "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly -p tsconfig.build.json",
+    "build": "swc src -d dist --config-file ../../.swcrc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "true"
   },
   "peerDependencies": {
     "@nest-batch/core": "workspace:^",

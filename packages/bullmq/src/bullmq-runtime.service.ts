@@ -258,7 +258,7 @@ export class BullmqRuntimeService
     const partitions = startStep?.kind === 'chunk' ? startStep.partitions : undefined;
     validatePartitions(partitions);
     const partitionCount = partitions?.count ?? 1;
-    const partitionOrdinals: number[] =
+    const partitionOrdinals: Array<number | undefined> =
       partitionCount >= 2 ? Array.from({ length: partitionCount }, (_, i) => i) : [undefined];
 
     const jobOpts: JobsOptions = {
