@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/bullmq",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BullMQ runtime adapter for @nest-batch/core — runs batch jobs and partitioned steps as BullMQ queues and workers.",
   "license": "MIT",
   "author": "easdkr",
