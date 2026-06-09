@@ -4,6 +4,8 @@ import {
   type BatchObserver,
   type JobRepository,
   JOB_REPOSITORY_TOKEN,
+  enforcePartitionIndex,
+  validatePartitions,
 } from '@nest-batch/core';
 import { JobExecutor, JobRegistry, NoopBatchObserver } from '@nest-batch/core';
 import {
@@ -25,10 +27,15 @@ import {
 /**
  * Payload shape stored in a Kafka message's `value` field.
  *
- * The strategy enqueues one Kafka message per step (or per partition,
- * in a future enhancement). The consumer reconstructs the
- * `JobExecution` from the repository via `executionId` and the
- * `JobDefinition` from the registry via `jobId`.
+ * The strategy enqueues one Kafka message per step, OR — when the
+ * start step declares `partitions.count >= 2` (T9, T-AC-3 second
+ * half) — one Kafka message per partition. The consumer
+ * reconstructs the `JobExecution` from the repository via
+ * `executionId` and the `JobDefinition` from the registry via
+ * `jobId`. The `partitionIndex` field (when present) is the
+ * application-level partition discriminator — distinct from the
+ * broker's topic-partition, which is a transport-level concept
+ * (see `docs/RELEASE-0.2.0.md §6`).
  *
  * Why not store the full `JobDefinition` in the payload?
  *   - IR is mutable across the host process (decorators / builders
@@ -48,13 +55,19 @@ export interface KafkaJobPayload {
   /** Step id (the message key). */
   readonly stepId: string;
   /**
-   * Partition index. Reserved for a future enhancement where a
-   * chunk step is split into N partitions and enqueued as N
-   * Kafka messages. Today the strategy always enqueues one message
-   * per step (regardless of chunk size), so the field is
-   * `undefined`. Kept in the payload shape so the consumer
-   * can distinguish "this is a step" from "this is a partition"
-   * without a separate discriminator.
+   * Partition index (T9 — T-AC-3 second half). When the start step
+   * declares `partitions.count >= 2`, the strategy produces N Kafka
+   * messages (one per partition) and stamps each with a distinct
+   * `partitionIndex` in `[0, N)`. The consumer reads this field back
+   * from the payload (NOT the broker's topic-partition — that is a
+   * transport-level concept that must not be conflated with the
+   * application-level partition discriminator; see
+   * `docs/RELEASE-0.2.0.md §6`).
+   *
+   * `undefined` means "non-partitioned" (the 0.1.0 path, preserved
+   * when `partitions` is absent or `count === 1`). Kept in the
+   * payload shape so the consumer can distinguish "this is a step"
+   * from "this is a partition" without a separate discriminator.
    */
   readonly partitionIndex?: number;
 }
@@ -74,7 +87,10 @@ export const KAFKA_STRATEGY_NAME = 'kafka';
  *   1. Own the producer / consumer connection clients with the
  *      role-specific tuning.
  *   2. Implement the `IExecutionStrategy` contract: `launch()`
- *      produces a single Kafka message per step, returns
+ *      produces a single Kafka message per step (or, for chunk
+ *      steps with `partitions.count >= 2` — T9 / T-AC-3 second
+ *      half — one message per partition, each carrying a
+ *      distinct `partitionIndex`). Returns
  *      `{ kind: 'enqueued', queueJobId }`. The launch is
  *      fire-and-forget — the strategy does NOT block on the
  *      consumer.
@@ -82,9 +98,12 @@ export const KAFKA_STRATEGY_NAME = 'kafka';
  *      `OnApplicationShutdown`).
  *   4. Bridge consumer events into the `BatchObserver` (defaulting
  *      to `NoopBatchObserver`).
- *   5. Hand off to `JobExecutor.execute(execution, jobDef)` from
- *      inside the consumer — Batch Core remains the source of truth
- *      for state transitions, skip/retry, checkpoint, restart.
+ *   5. Hand off to `JobExecutor.execute(execution, jobDef, partition?)`
+ *      from inside the consumer — Batch Core remains the source of
+ *      truth for state transitions, skip/retry, checkpoint, restart.
+ *      When the message payload carries a `partitionIndex`, the
+ *      consumer validates it and forwards the pair to the executor
+ *      so the chunk loop is bounded to the partition's range.
  */
 @Injectable()
 export class KafkaRuntimeService
@@ -210,12 +229,29 @@ export class KafkaRuntimeService
   // -----------------------------------------------------------------------
 
   /**
-   * Produce a single Kafka message per step. Returns
+   * Produce the work to Kafka and return the message offset. Returns
    * `{ kind: 'enqueued', queueJobId }` after the producer has
    * acknowledged the send. The execution is fire-and-forget:
    * the launcher resolves the latest persisted `JobExecution`
    * (which is still in `STARTING`/`STARTED` because the executor
    * has not run yet).
+   *
+   * **Partition orchestration (T9 — T-AC-3 second half)**: when the
+   * start step declares `partitions.count >= 2`, the strategy
+   * produces N Kafka messages (one per partition) to the configured
+   * topic, each carrying a distinct `partitionIndex` in `[0, N)`.
+   * The default behaviour (`partitions` absent or `count === 1`)
+   * produces a single message per step, matching the 0.1.0
+   * contract. The `validatePartitions` call surfaces a
+   * misconfiguration (e.g. `count <= 0`) at the launcher's boundary
+   * so the host's caller sees the failure before the consumer is
+   * ever asked to process the message.
+   *
+   * The `queueJobId` returned is the offset of the LAST produced
+   * message (in the partitioned case) or the single message's
+   * offset (in the non-partitioned case). The launcher does not
+   * surface the queue job id; the field is for the strategy's
+   * own bookkeeping.
    *
    * The canonical `JobExecution` row is created by the launcher
    * via `repository.createExecutionAtomic` BEFORE this method is
@@ -242,44 +278,82 @@ export class KafkaRuntimeService
     }
 
     const stepId = job.startStepId;
-    const payload: KafkaJobPayload = {
-      executionId: ctx.executionId,
-      jobExecutionId: ctx.jobExecutionId,
-      jobId: job.id,
-      stepId,
-    };
+    const startStep = job.steps[stepId];
+    // T9 (partition orchestration): when the start step declares
+    // `partitions.count >= 2`, the strategy produces N Kafka messages
+    // (one per partition, each carrying a distinct `partitionIndex`).
+    // Otherwise (default, `count === 1`, or absent) it preserves the
+    // 0.1.0 "one message per step" behaviour. The `partitions` slot
+    // only exists on chunk steps, so non-chunk start steps
+    // short-circuit to the non-partitioned path.
+    const partitions = startStep?.kind === 'chunk' ? startStep.partitions : undefined;
+    validatePartitions(partitions);
+    const partitionCount = partitions?.count ?? 1;
+    const partitionOrdinals: number[] =
+      partitionCount >= 2 ? Array.from({ length: partitionCount }, (_, i) => i) : [-1];
 
-    const message: Message = {
-      key: stepId,
-      value: JSON.stringify(payload),
-    };
+    let lastQueueJobId: string | null = null;
+    for (const partitionIndex of partitionOrdinals) {
+      const isPartition = partitionIndex >= 0;
+      const payload: KafkaJobPayload = {
+        executionId: ctx.executionId,
+        jobExecutionId: ctx.jobExecutionId,
+        jobId: job.id,
+        stepId,
+        ...(isPartition ? { partitionIndex } : {}),
+      };
+      // The Kafka message key mirrors the step id for the
+      // non-partitioned case (so all messages for the same step
+      // land on the same broker partition, preserving any
+      // future per-step ordering). For the partitioned case
+      // the key is `${stepId}::${partitionIndex}` so the
+      // broker's default partitioner still gives each
+      // partition's message a stable key while letting the
+      // application-level `partitionIndex` (in the payload)
+      // remain the source of truth for fan-out.
+      const message: Message = {
+        key: isPartition ? `${stepId}::${partitionIndex}` : stepId,
+        value: JSON.stringify(payload),
+      };
 
-    const result = await this.producer.send({
-      topic: this.options.topic,
-      messages: [message],
-    });
+      const result = await this.producer.send({
+        topic: this.options.topic,
+        messages: [message],
+      });
 
-    const first = result[0];
-    if (result.length === 0 || first === undefined) {
-      throw new Error(
-        `[KafkaRuntimeService] send returned empty result (broker down?)`,
+      const first = result[0];
+      if (result.length === 0 || first === undefined) {
+        throw new Error(
+          `[KafkaRuntimeService] send returned empty result (broker down?)`,
+        );
+      }
+
+      // KafkaJS v2 returns `baseOffset` instead of `offset` when the
+      // broker acks the produce request.  Fall back to `baseOffset`
+      // so the queueJobId is always populated.
+      const offset = first.offset ?? (first as unknown as { baseOffset?: string }).baseOffset;
+      if (offset === undefined) {
+        throw new Error(
+          `[KafkaRuntimeService] send returned undefined offset (broker down?)`,
+        );
+      }
+      lastQueueJobId = offset;
+      this.logger.debug(
+        `Produced step "${stepId}" for execution ${ctx.executionId}` +
+          (isPartition ? ` (partition ${partitionIndex}/${partitionCount})` : '') +
+          ` to Kafka offset ${offset}`,
       );
     }
-
-    // KafkaJS v2 returns `baseOffset` instead of `offset` when the
-    // broker acks the produce request.  Fall back to `baseOffset`
-    // so the queueJobId is always populated.
-    const offset = first.offset ?? (first as unknown as { baseOffset?: string }).baseOffset;
-    if (offset === undefined) {
+    if (lastQueueJobId === null) {
+      // Defensive: the loop above always runs at least once
+      // (partitionOrdinals has length >= 1), so this branch is
+      // unreachable in practice. Keep the explicit throw so a
+      // future refactor cannot quietly produce zero messages.
       throw new Error(
-        `[KafkaRuntimeService] send returned undefined offset (broker down?)`,
+        `[KafkaRuntimeService] produced zero messages for execution ${ctx.executionId}`,
       );
     }
-    this.logger.debug(
-      `Produced step "${stepId}" for execution ${ctx.executionId} to Kafka offset ${offset}`,
-    );
-
-    return { kind: 'enqueued', queueJobId: offset };
+    return { kind: 'enqueued', queueJobId: lastQueueJobId };
   }
 
   // -----------------------------------------------------------------------
@@ -326,6 +400,17 @@ export class KafkaRuntimeService
    * hands the work to `JobExecutor.execute`. All batch semantics
    * (step dispatch, chunk loop, skip/retry, checkpoint) live in
    * the executor — this method is a thin bridge.
+   *
+   * **Partition routing (T9)**: when the payload carries a
+   * `partitionIndex` (i.e. the message was produced for a
+   * partitioned step), the consumer validates the index against the
+   * step's `partitions.count` via `enforcePartitionIndex` and
+   * forwards the `partitionIndex` / `partitionCount` pair to
+   * `JobExecutor.execute`. The chunk executor uses this pair
+   * (together with the step's `partitions.range` resolver) to
+   * bound the read loop to the partition's slice. Absent
+   * `partitionIndex` (the 0.1.0 path), the executor runs the
+   * non-partitioned chunk pipeline.
    */
   private async processMessage(payload: KafkaJobPayload): Promise<void> {
     // Ignore probe messages used by the e2e helper to confirm
@@ -346,7 +431,27 @@ export class KafkaRuntimeService
     // records the failure and the dead-letter path catches
     // it (a missing job definition is a misconfiguration that
     // should be loud, not silent).
-    await this.jobExecutor.execute(execution, jobDef);
+    //
+    // T9: build the partition routing args. When the payload
+    // carries a `partitionIndex`, validate it against the start
+    // step's `partitions.count` (defensive — the producer side
+    // already validated via `validatePartitions`, but the
+    // consumer is a public surface and a corrupted / replayed
+    // message could arrive with a bad index). The validation
+    // throws `InvalidPartitionsError` which the consumer's
+    // `eachMessage` re-throws so KafkaJS records the failure
+    // and the dead-letter path catches it.
+    const startStepId = jobDef.startStepId;
+    const startStep = jobDef.steps[startStepId];
+    const partitions = startStep?.kind === 'chunk' ? startStep.partitions : undefined;
+    const partitionArgs: { partitionIndex?: number; partitionCount?: number } = {};
+    if (payload.partitionIndex !== undefined) {
+      const count = partitions?.count ?? 1;
+      enforcePartitionIndex(payload.partitionIndex, count);
+      partitionArgs.partitionIndex = payload.partitionIndex;
+      partitionArgs.partitionCount = count;
+    }
+    await this.jobExecutor.execute(execution, jobDef, partitionArgs);
   }
 
   // -----------------------------------------------------------------------
