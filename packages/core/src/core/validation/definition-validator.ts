@@ -4,6 +4,7 @@ import {
   StepDefinition,
 } from '../ir';
 import { InvalidFlowGraphError } from '../errors';
+import { validatePartitions } from '../../partition-helpers';
 
 /**
  * Pure validation for a fully-built `JobDefinition` IR.
@@ -66,6 +67,23 @@ export class DefinitionValidator {
           `Step "${stepId}" has invalid chunkSize ${step.chunkSize}`,
           { jobId: job.id, stepId, chunkSize: step.chunkSize },
         );
+      }
+      if (step.kind === 'chunk' && step.partitions !== undefined) {
+        // Delegate the partition-config validation to the pure helper
+        // so the rule lives in exactly one place (the
+        // `partition-helpers` module). The validator's job is to
+        // surface the failure with the IR-shaped context; the
+        // helper's job is to decide whether the config is valid.
+        try {
+          validatePartitions(step.partitions);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new InvalidFlowGraphError(
+            'INVALID_PARTITIONS',
+            `Step "${stepId}" has invalid partitions: ${message}`,
+            { jobId: job.id, stepId, partitions: step.partitions },
+          );
+        }
       }
     }
 

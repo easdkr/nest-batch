@@ -93,8 +93,17 @@ export class JobExecutor {
    *     `ChunkStepExecutor` as `resumeFromChunkIndex`, which then skips
    *     chunks ≤ that index. Tasklet steps always re-run from scratch
    *     (they have no chunk-level resume granularity in this MVP).
+   *
+   * Partition routing (T8): the optional third argument carries the
+   * `partitionIndex` / `partitionCount` pair the transport attached
+   * to the job. When set, the chunk executor bounds the read loop
+   * to the partition's range (see `packages/core/src/partition-helpers.ts`).
    */
-  async execute(execution: JobExecution, jobDef: JobDefinition): Promise<JobExecution> {
+  async execute(
+    execution: JobExecution,
+    jobDef: JobDefinition,
+    partition?: { partitionIndex?: number; partitionCount?: number },
+  ): Promise<JobExecution> {
     // Capture the pre-execute status. For a fresh launch, the launcher
     // created the execution with status STARTING; for a restart, the
     // caller (JobLauncher.run) is handing us a previously-FAILED
@@ -193,6 +202,18 @@ export class JobExecutor {
               listenerResolvers: stepResolvers,
             });
           } else {
+            // Forward the partition routing (T8) when the transport
+            // supplied one. The chunk executor uses the partition
+            // index + count + the step's `partitions.range` to bound
+            // its read loop. Absent partition args fall through to
+            // the 0.1.0 non-partitioned chunk pipeline.
+            const partitionArgs =
+              partition?.partitionIndex !== undefined && partition?.partitionCount !== undefined
+                ? {
+                    partitionIndex: partition.partitionIndex,
+                    partitionCount: partition.partitionCount,
+                  }
+                : {};
             result = await this.chunkExecutor.execute(step, {
               jobExecutionId: execution.id,
               stepExecutionId: stepExecution.id,
@@ -202,6 +223,7 @@ export class JobExecutor {
               jobExecutionId2: execution.id,
               resolvers: new Map(),
               ...(resumeFromChunkIndex !== undefined ? { resumeFromChunkIndex } : {}),
+              ...partitionArgs,
             });
           }
         } catch (stepErr) {

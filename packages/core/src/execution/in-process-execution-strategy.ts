@@ -1,4 +1,4 @@
-import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 
 import { JobRepository, type JobExecution, type JobParameters } from '../core/repository';
 
@@ -12,6 +12,38 @@ import {
 import { JobExecutor } from './job-executor';
 
 import type { JobDefinition } from '../core/ir';
+import { BatchError } from '../core/errors';
+
+/**
+ * How `InProcessExecutionStrategy` reacts when a chunk step is
+ * configured with `partitions.count > 1` — a state the in-process
+ * transport cannot honour (it is single-threaded by design).
+ *
+ *   - `'throw'` (default): fail the launch with
+ *     `InProcessPartitionsNotSupportedError`. The host sees a loud
+ *     failure and is forced to either drop the partitions config
+ *     or wire up a real transport.
+ *   - `'warn'`: log a warning and continue with a single-partition
+ *     execution. The host gets a clear signal in the logs but the
+ *     step still runs. Useful for local dev / smoke tests where a
+ *     full transport wiring is overkill.
+ *
+ * Pinned by `docs/RELEASE-0.2.0.md §6.3`.
+ */
+export type InProcessPartitionViolationMode = 'throw' | 'warn';
+
+/**
+ * DI token for the `InProcessPartitionViolationMode` option. The
+ * host wires it via `NestBatchModule.forRoot({ inProcess: {
+ * onPartitionViolation: 'warn' } })` (the module reads it from
+ * the options bag and binds the value under this token).
+ *
+ * The default is `'throw'`, so a host that does not opt in gets
+ * the loud failure behaviour. The token is exported so tests can
+ * wire a custom mode without going through the module.
+ */
+export const IN_PROCESS_PARTITION_VIOLATION_MODE =
+  Symbol.for('@nest-batch/core/IN_PROCESS_PARTITION_VIOLATION_MODE');
 
 /**
  * Default in-process execution strategy.
@@ -47,17 +79,51 @@ import type { JobDefinition } from '../core/ir';
 export class InProcessExecutionStrategy implements IExecutionStrategy {
   readonly name = 'in-process';
 
+  private readonly logger = new Logger(InProcessExecutionStrategy.name);
+
+  /**
+   * The configured partition-violation mode. Tests construct the
+   * strategy with a non-default mode; production uses the default
+   * ('throw') wired by `IN_PROCESS_EXECUTION_STRATEGY_PROVIDER`.
+   */
+  private readonly onPartitionViolation: InProcessPartitionViolationMode;
+
   constructor(
     private readonly repository: JobRepository,
     @Inject(forwardRef(() => JobExecutor))
     private readonly jobExecutor: JobExecutor,
-  ) {}
+    /**
+     * Optional injection token for the partition-violation mode.
+     * Wired by the host via `NestBatchModule.forRoot({ inProcess: {
+     * onPartitionViolation: 'warn' } })`; defaults to `'throw'`
+     * when the host does not opt in. The `@Optional()` decorator
+     * keeps the constructor backward-compatible with hosts that
+     * have not opted in (the test suite for T1-T7 does not bind
+     * this token, and the runtime must still work for them).
+     */
+    @Optional()
+    @Inject(IN_PROCESS_PARTITION_VIOLATION_MODE)
+    onPartitionViolation: InProcessPartitionViolationMode = 'throw',
+  ) {
+    this.onPartitionViolation = onPartitionViolation;
+  }
 
   async launch(
     job: JobDefinition,
     _params: JobParameters,
     ctx: ExecutionStrategyContext,
   ): Promise<LaunchResult> {
+    // The in-process strategy is intentionally single-threaded; it
+    // cannot fan out across multiple processes or workers. Per
+    // `docs/RELEASE-0.2.0.md §6.3`, partition orchestration is the
+    // transport's job — when a host configures a chunk step with
+    // `partitions.count > 1` against the in-process strategy, we
+    // surface the misconfiguration rather than silently single-
+    // partitioning. The exact behaviour is controlled by the
+    // `onPartitionViolation` constructor option (throw by default,
+    // or `warn` to log and proceed with a single partition).
+    this.assertPartitionsSupported(job);
+
     // The launcher pre-created the execution; load the full object
     // the executor needs. If the lookup fails here, the launcher's
     // own state is broken — surface that loudly rather than silently
@@ -70,6 +136,52 @@ export class InProcessExecutionStrategy implements IExecutionStrategy {
     }
     const finished = await this.jobExecutor.execute(execution, job);
     return { kind: 'completed', status: finished.status };
+  }
+
+  /**
+   * Guard against partitioned chunk steps. Throws by default; logs a
+   * warning and continues with a single-partition execution when the
+   * host wires up `onPartitionViolation: 'warn'`. The default
+   * (throw) is the safer choice because it surfaces the
+   * misconfiguration at launch time rather than letting the step
+   * run with a silent single-partition semantics.
+   */
+  private assertPartitionsSupported(job: JobDefinition): void {
+    for (const stepId of Object.keys(job.steps)) {
+      const step = job.steps[stepId];
+      if (step === undefined) continue;
+      if (step.kind !== 'chunk') continue;
+      const count = step.partitions?.count;
+      if (count === undefined || count <= 1) continue;
+      if (this.onPartitionViolation === 'warn') {
+        this.logger.warn(
+          `InProcessExecutionStrategy: step "${stepId}" declares partitions.count=${count} ` +
+            'but the in-process strategy cannot fan out. Running as a single partition; ' +
+            'configure a transport (BullMQ / Kafka) for true parallel partitioning.',
+        );
+        continue;
+      }
+      throw new InProcessPartitionsNotSupportedError(stepId, count);
+    }
+  }
+}
+
+/**
+ * Thrown by `InProcessExecutionStrategy` when a chunk step is
+ * configured with `partitions.count > 1`. The error is stable —
+ * callers that want to switch on it can match `code`. Distinct
+ * from `InvalidPartitionsError` (which fires on a structurally
+ * invalid config at compile time) because the in-process guard
+ * fires on a *valid* config that the chosen transport cannot honour.
+ */
+export class InProcessPartitionsNotSupportedError extends BatchError {
+  readonly code = 'IN_PROCESS_PARTITIONS_NOT_SUPPORTED';
+  constructor(stepId: string, count: number) {
+    super(
+      `InProcessExecutionStrategy does not support partitions.count > 1 (step "${stepId}" declares count=${count}). ` +
+        'Use a transport strategy (BullMQ / Kafka) for parallel partitioning.',
+      { stepId, count },
+    );
   }
 }
 
