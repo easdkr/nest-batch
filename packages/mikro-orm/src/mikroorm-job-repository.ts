@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { EntityManager, RequestContext } from '@mikro-orm/core';
-import type { Connection } from '@mikro-orm/core';
 import { JobRepository, JobExecutionAlreadyRunningError } from '@nest-batch/core';
 import type {
   JobInstance,
@@ -15,6 +14,13 @@ import type {
 import { JobStatus, StepStatus } from '@nest-batch/core';
 import { assertJsonSerializable, serializeContext, deserializeContext } from '@nest-batch/core';
 import { MikroOrmDriverProvider } from './mikro-orm.driver-provider';
+import {
+  JobInstanceEntity,
+  JobExecutionEntity,
+  StepExecutionEntity,
+  JobExecutionContextEntity,
+  StepExecutionContextEntity,
+} from './entities/job-meta.entities';
 import { randomUUID } from 'crypto';
 
 function deepClone<T>(value: T): T {
@@ -33,103 +39,49 @@ function scopeKey(scope: ExecutionScope): string {
   return `step::${scope.stepExecutionId}`;
 }
 
-function mapJobInstance(r: {
-  id: string;
-  job_name: string;
-  job_key: string;
-  created_at: string | Date;
-}): JobInstance {
-  return {
-    id: r.id,
-    jobName: r.job_name,
-    jobKey: r.job_key,
-    createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
-  };
+function mapJobInstance(e: JobInstanceEntity): JobInstance {
+  return { id: e.id, jobName: e.jobName, jobKey: e.jobKey, createdAt: e.createdAt };
 }
 
-function mapJobExecution(r: {
-  id: string;
-  job_instance_id: string;
-  status: string;
-  start_time: string | Date | null;
-  end_time: string | Date | null;
-  exit_code: string;
-  exit_message: string;
-  params: string;
-}): JobExecution {
+function mapJobExecution(e: JobExecutionEntity, overrideParams?: JobParameters): JobExecution {
   let params: JobParameters = {};
-  if (r.params && r.params.length > 0) {
+  if (overrideParams !== undefined) {
+    params = overrideParams;
+  } else if (e.params && e.params.length > 0) {
     try {
-      params = deserializeContext<JobParameters>(r.params);
+      params = deserializeContext<JobParameters>(e.params);
     } catch {
       params = {};
     }
   }
   return {
-    id: r.id,
-    jobInstanceId: r.job_instance_id,
-    status: r.status as JobStatus,
-    startTime: r.start_time ? (r.start_time instanceof Date ? r.start_time : new Date(r.start_time)) : null,
-    endTime: r.end_time ? (r.end_time instanceof Date ? r.end_time : new Date(r.end_time)) : null,
-    exitCode: r.exit_code,
-    exitMessage: r.exit_message,
+    id: e.id,
+    jobInstanceId: e.jobInstanceId,
+    status: e.status as JobStatus,
+    startTime: e.startTime ?? null,
+    endTime: e.endTime ?? null,
+    exitCode: e.exitCode,
+    exitMessage: e.exitMessage,
     params,
   };
 }
 
-function mapStepExecution(r: {
-  id: string;
-  job_execution_id: string;
-  step_name: string;
-  status: string;
-  read_count: number;
-  write_count: number;
-  skip_count: number;
-  rollback_count: number;
-  commit_count: number;
-  exit_code: string;
-  exit_message: string;
-}): StepExecution {
+function mapStepExecution(e: StepExecutionEntity): StepExecution {
   return {
-    id: r.id,
-    jobExecutionId: r.job_execution_id,
-    stepName: r.step_name,
-    status: r.status as StepStatus,
-    readCount: r.read_count,
-    writeCount: r.write_count,
-    skipCount: r.skip_count,
-    rollbackCount: r.rollback_count,
-    commitCount: r.commit_count,
+    id: e.id,
+    jobExecutionId: e.jobExecutionId,
+    stepName: e.stepName,
+    status: e.status as StepStatus,
+    readCount: e.readCount,
+    writeCount: e.writeCount,
+    skipCount: e.skipCount,
+    rollbackCount: e.rollbackCount,
+    commitCount: e.commitCount,
     startTime: null,
     endTime: null,
-    exitCode: r.exit_code,
-    exitMessage: r.exit_message,
+    exitCode: e.exitCode,
+    exitMessage: e.exitMessage,
   };
-}
-
-/**
- * Cast the EntityManager to a connection that has an `execute(sql,
- * params)` method. The base `EntityManager` exposes `getConnection()`,
- * which returns the driver-specific connection (a `Connection` from
- * `@mikro-orm/core` with an abstract `execute` method). The runtime
- * connection is always SQL-capable; the cast is just to satisfy the
- * TypeScript base-class type.
- */
-function conn(em: EntityManager): Connection {
-  return em.getConnection() as unknown as Connection;
-}
-
-async function execQuery<T = Record<string, unknown>>(
-  em: EntityManager,
-  sql: string,
-  params: unknown[] = [],
-): Promise<T[]> {
-  const result = (await conn(em).execute(sql, params, 'all')) as T[] | { rows?: T[] } | unknown;
-  if (Array.isArray(result)) return result as T[];
-  if (result && typeof result === 'object' && 'rows' in result) {
-    return (result as { rows: T[] }).rows;
-  }
-  return [];
 }
 
 @Injectable()
@@ -142,88 +94,48 @@ export class MikroORMJobRepository extends JobRepository {
 
   async getOrCreateJobInstance(name: string, jobKey: string): Promise<JobInstance> {
     return RequestContext.create(this.em, async () => {
-      const existing = await execQuery<{
-        id: string;
-        job_name: string;
-        job_key: string;
-        created_at: string;
-      }>(
-        this.em,
-        `SELECT "id", "job_name", "job_key", "created_at" FROM "batch_job_instance" WHERE "job_name" = ? AND "job_key" = ? LIMIT 1`,
-        [name, jobKey],
-      );
-      if (existing.length > 0) return mapJobInstance(existing[0]!);
+      const em = this.em;
+      const existing = await em.findOne(JobInstanceEntity, { jobName: name, jobKey });
+      if (existing) return mapJobInstance(existing);
 
-      // Try to INSERT; on unique-constraint violation, another caller
-      // won the race — read the committed row.
-      const id = randomUUID();
-      try {
-        const inserted = await execQuery<{ id: string; created_at: string }>(
-          this.em,
-          `INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
-           VALUES (?, ?, ?, NOW())
-           ON CONFLICT ("job_name", "job_key") DO NOTHING
-           RETURNING "id", "created_at"`,
-          [id, name, jobKey],
-        );
-        if (inserted.length > 0) {
-          return {
-            id,
-            jobName: name,
-            jobKey,
-            createdAt: new Date(inserted[0]!.created_at),
-          };
-        }
-      } catch {
-        // Fall through to read-back.
+      // Use raw SQL INSERT ... ON CONFLICT DO NOTHING RETURNING id
+      // so the transaction is not aborted by a unique-constraint
+      // violation. If another concurrent caller won the race, the
+      // INSERT returns zero rows and we fall back to SELECT.
+      const rows = await (em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> }).execute(
+        `INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
+         VALUES (?, ?, ?, now())
+         ON CONFLICT ("job_name", "job_key") DO NOTHING
+         RETURNING "id", "job_name", "job_key", "created_at"`,
+        [randomUUID(), name, jobKey],
+      );
+      if ((rows as unknown[]).length > 0) {
+        const r = (rows as Array<{ id: string; job_name: string; job_key: string; created_at: string }>)[0]!;
+        return { id: r.id, jobName: r.job_name, jobKey: r.job_key, createdAt: new Date(r.created_at) };
       }
 
-      const winner = await execQuery<{
-        id: string;
-        job_name: string;
-        job_key: string;
-        created_at: string;
-      }>(
-        this.em,
-        `SELECT "id", "job_name", "job_key", "created_at" FROM "batch_job_instance" WHERE "job_name" = ? AND "job_key" = ? LIMIT 1`,
-        [name, jobKey],
-      );
-      if (winner.length === 0) {
+      const winner = await em.findOne(JobInstanceEntity, { jobName: name, jobKey });
+      if (!winner) {
         throw new Error(`JobInstance race lost but no row found for (${name}, ${jobKey})`);
       }
-      return mapJobInstance(winner[0]!);
+      return mapJobInstance(winner);
     });
   }
 
   async createJobExecution(jobInstanceId: string, params: JobParameters): Promise<JobExecution> {
     return RequestContext.create(this.em, async () => {
-      const exec = {
-        id: randomUUID(),
-        job_instance_id: jobInstanceId,
-        status: JobStatus.STARTING,
-        start_time: null,
-        end_time: null,
-        exit_code: '',
-        exit_message: '',
-        params: serializeContext(deepClone(params)),
-      };
-      const rows = await execQuery<{
-        id: string;
-        job_instance_id: string;
-        status: string;
-        start_time: string | null;
-        end_time: string | null;
-        exit_code: string;
-        exit_message: string;
-        params: string;
-      }>(
-        this.em,
-        `INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
-         VALUES (?, ?, ?, NULL, NULL, ?, ?, ?)
-         RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
-        [exec.id, exec.job_instance_id, exec.status, exec.exit_code, exec.exit_message, exec.params],
-      );
-      return mapJobExecution(rows[0]!);
+      const em = this.em;
+      const exec = new JobExecutionEntity();
+      exec.id = randomUUID();
+      exec.jobInstanceId = jobInstanceId;
+      exec.status = JobStatus.STARTING;
+      exec.startTime = null;
+      exec.endTime = null;
+      exec.exitCode = '';
+      exec.exitMessage = '';
+      exec.params = serializeContext(deepClone(params));
+      await em.persistAndFlush(exec);
+      return mapJobExecution(exec, deepClone(params));
     });
   }
 
@@ -233,195 +145,120 @@ export class MikroORMJobRepository extends JobRepository {
     params: JobParameters,
   ): Promise<JobExecution> {
     return this.em.transactional(async (em) => {
-      // 1. Ensure the JobInstance row exists (idempotent INSERT).
-      const instId = randomUUID();
-      await execQuery(
-        em,
+      await (em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> }).execute(
         `INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
-         VALUES (?, ?, ?, NOW())
+         VALUES (?, ?, ?, now())
          ON CONFLICT ("job_name", "job_key") DO NOTHING`,
-        [instId, name, jobKey],
+        [randomUUID(), name, jobKey],
       );
-
-      // 2. Lock the instance row with FOR UPDATE SKIP LOCKED.
-      const locked = await execQuery<{ id: string }>(
-        em,
+      const rows = await (em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> }).execute(
         `SELECT "id" FROM "batch_job_instance"
          WHERE "job_name" = ? AND "job_key" = ?
          FOR UPDATE SKIP LOCKED`,
         [name, jobKey],
-      );
-      if (locked.length === 0) {
+      ) as Array<{ id: string }>;
+      if (rows.length === 0) {
         throw new JobExecutionAlreadyRunningError(name);
       }
-      const instanceId = locked[0]!.id;
+      const instanceId = rows[0]!.id;
 
-      // 3. Under the lock, verify no running execution.
-      const running = await execQuery<{ id: string }>(
-        em,
+      const running = await (em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> }).execute(
         `SELECT "id" FROM "batch_job_execution"
          WHERE "job_instance_id" = ? AND "status" IN (?, ?)
          LIMIT 1`,
         [instanceId, JobStatus.STARTING, JobStatus.STARTED],
-      );
+      ) as Array<{ id: string }>;
       if (running.length > 0) {
         throw new JobExecutionAlreadyRunningError(running[0]!.id);
       }
 
-      // 4. Create the new execution row.
-      const execId = randomUUID();
-      const rows = await execQuery<{
-        id: string;
-        job_instance_id: string;
-        status: string;
-        start_time: string | null;
-        end_time: string | null;
-        exit_code: string;
-        exit_message: string;
-        params: string;
-      }>(
-        em,
-        `INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
-         VALUES (?, ?, ?, NULL, NULL, '', '', ?)
-         RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
-        [execId, instanceId, JobStatus.STARTING, serializeContext(deepClone(params))],
-      );
-      return mapJobExecution(rows[0]!);
+      const exec = new JobExecutionEntity();
+      exec.id = randomUUID();
+      exec.jobInstanceId = instanceId;
+      exec.status = JobStatus.STARTING;
+      exec.startTime = null;
+      exec.endTime = null;
+      exec.exitCode = '';
+      exec.exitMessage = '';
+      exec.params = serializeContext(deepClone(params));
+      await em.persistAndFlush(exec);
+      return mapJobExecution(exec, deepClone(params));
     });
   }
 
   async updateJobExecution(executionId: string, patch: JobExecutionPatch): Promise<void> {
     return RequestContext.create(this.em, async () => {
-      const sets: string[] = [];
-      const values: unknown[] = [];
-      if (patch.status !== undefined) { sets.push(`"status" = ?`); values.push(patch.status); }
-      if (patch.startTime !== undefined) { sets.push(`"start_time" = ?`); values.push(patch.startTime); }
-      if (patch.endTime !== undefined) { sets.push(`"end_time" = ?`); values.push(patch.endTime); }
-      if (patch.exitCode !== undefined) { sets.push(`"exit_code" = ?`); values.push(patch.exitCode); }
-      if (patch.exitMessage !== undefined) { sets.push(`"exit_message" = ?`); values.push(patch.exitMessage); }
-      if (sets.length === 0) return;
-      values.push(executionId);
-      await execQuery(
-        this.em,
-        `UPDATE "batch_job_execution" SET ${sets.join(', ')} WHERE "id" = ?`,
-        values,
-      );
+      const em = this.em;
+      const e = await em.findOne(JobExecutionEntity, { id: executionId });
+      if (!e) throw new Error(`JobExecution not found: ${executionId}`);
+      if (patch.status !== undefined) e.status = patch.status;
+      if (patch.startTime !== undefined) e.startTime = patch.startTime;
+      if (patch.endTime !== undefined) e.endTime = patch.endTime;
+      if (patch.exitCode !== undefined) e.exitCode = patch.exitCode;
+      if (patch.exitMessage !== undefined) e.exitMessage = patch.exitMessage;
+      await em.flush();
     });
   }
 
   async getJobExecution(executionId: string): Promise<JobExecution | null> {
     return RequestContext.create(this.em, async () => {
-      const rows = await execQuery<{
-        id: string;
-        job_instance_id: string;
-        status: string;
-        start_time: string | null;
-        end_time: string | null;
-        exit_code: string;
-        exit_message: string;
-        params: string;
-      }>(
-        this.em,
-        `SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
-         FROM "batch_job_execution" WHERE "id" = ? LIMIT 1`,
-        [executionId],
-      );
-      return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
+      const em = this.em;
+      const e = await em.findOne(JobExecutionEntity, { id: executionId });
+      return e ? mapJobExecution(e) : null;
     });
   }
 
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     return RequestContext.create(this.em, async () => {
-      const rows = await execQuery<{
-        id: string;
-        job_instance_id: string;
-        status: string;
-        start_time: string | null;
-        end_time: string | null;
-        exit_code: string;
-        exit_message: string;
-        params: string;
-      }>(
-        this.em,
-        `SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
-         FROM "batch_job_execution"
-         WHERE "job_instance_id" = ? AND "status" IN (?, ?)
-         ORDER BY "start_time" DESC NULLS LAST LIMIT 1`,
-        [jobInstanceId, JobStatus.STARTING, JobStatus.STARTED],
-      );
-      return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
+      const em = this.em;
+      const e = await em.findOne(JobExecutionEntity, {
+        jobInstanceId,
+        status: { $in: [JobStatus.STARTING, JobStatus.STARTED] },
+      });
+      return e ? mapJobExecution(e) : null;
     });
   }
 
   async createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution> {
     return RequestContext.create(this.em, async () => {
-      const stepId = randomUUID();
-      const rows = await execQuery<{
-        id: string;
-        job_execution_id: string;
-        step_name: string;
-        status: string;
-        read_count: number;
-        write_count: number;
-        skip_count: number;
-        rollback_count: number;
-        commit_count: number;
-        exit_code: string;
-        exit_message: string;
-      }>(
-        this.em,
-        `INSERT INTO "batch_step_execution" ("id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message")
-         VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, '', '')
-         RETURNING "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message"`,
-        [stepId, jobExecutionId, stepName, StepStatus.STARTING],
-      );
-      return mapStepExecution(rows[0]!);
+      const em = this.em;
+      const step = new StepExecutionEntity();
+      step.id = randomUUID();
+      step.jobExecutionId = jobExecutionId;
+      step.stepName = stepName;
+      step.status = StepStatus.STARTING;
+      step.readCount = 0;
+      step.writeCount = 0;
+      step.skipCount = 0;
+      step.rollbackCount = 0;
+      step.commitCount = 0;
+      await em.persistAndFlush(step);
+      return mapStepExecution(step);
     });
   }
 
   async updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void> {
     return RequestContext.create(this.em, async () => {
-      const sets: string[] = [];
-      const values: unknown[] = [];
-      if (patch.status !== undefined) { sets.push(`"status" = ?`); values.push(patch.status); }
-      if (patch.readCount !== undefined) { sets.push(`"read_count" = ?`); values.push(patch.readCount); }
-      if (patch.writeCount !== undefined) { sets.push(`"write_count" = ?`); values.push(patch.writeCount); }
-      if (patch.skipCount !== undefined) { sets.push(`"skip_count" = ?`); values.push(patch.skipCount); }
-      if (patch.rollbackCount !== undefined) { sets.push(`"rollback_count" = ?`); values.push(patch.rollbackCount); }
-      if (patch.commitCount !== undefined) { sets.push(`"commit_count" = ?`); values.push(patch.commitCount); }
-      if (patch.exitCode !== undefined) { sets.push(`"exit_code" = ?`); values.push(patch.exitCode); }
-      if (patch.exitMessage !== undefined) { sets.push(`"exit_message" = ?`); values.push(patch.exitMessage); }
-      if (sets.length === 0) return;
-      values.push(stepExecutionId);
-      await execQuery(
-        this.em,
-        `UPDATE "batch_step_execution" SET ${sets.join(', ')} WHERE "id" = ?`,
-        values,
-      );
+      const em = this.em;
+      const s = await em.findOne(StepExecutionEntity, { id: stepExecutionId });
+      if (!s) throw new Error(`StepExecution not found: ${stepExecutionId}`);
+      if (patch.status !== undefined) s.status = patch.status;
+      if (patch.readCount !== undefined) s.readCount = patch.readCount;
+      if (patch.writeCount !== undefined) s.writeCount = patch.writeCount;
+      if (patch.skipCount !== undefined) s.skipCount = patch.skipCount;
+      if (patch.rollbackCount !== undefined) s.rollbackCount = patch.rollbackCount;
+      if (patch.commitCount !== undefined) s.commitCount = patch.commitCount;
+      if (patch.exitCode !== undefined) s.exitCode = patch.exitCode;
+      if (patch.exitMessage !== undefined) s.exitMessage = patch.exitMessage;
+      await em.flush();
     });
   }
 
   async getStepExecution(stepExecutionId: string): Promise<StepExecution | null> {
     return RequestContext.create(this.em, async () => {
-      const rows = await execQuery<{
-        id: string;
-        job_execution_id: string;
-        step_name: string;
-        status: string;
-        read_count: number;
-        write_count: number;
-        skip_count: number;
-        rollback_count: number;
-        commit_count: number;
-        exit_code: string;
-        exit_message: string;
-      }>(
-        this.em,
-        `SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message"
-         FROM "batch_step_execution" WHERE "id" = ? LIMIT 1`,
-        [stepExecutionId],
-      );
-      return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
+      const em = this.em;
+      const s = await em.findOne(StepExecutionEntity, { id: stepExecutionId });
+      return s ? mapStepExecution(s) : null;
     });
   }
 
@@ -429,63 +266,35 @@ export class MikroORMJobRepository extends JobRepository {
     jobExecutionId: string,
     stepName: string,
   ): Promise<StepExecution | null> {
+    // Order by `ctid` (physical row id, monotonic per insert) for
+    // PostgreSQL; the primary key is a v4 UUID (random bytes), so
+    // `id DESC` does not correspond to insertion order. The
+    // existing `batch_step_execution_job_execution_id_index` covers
+    // the filter, so this is one index range scan + 1-row read.
     return RequestContext.create(this.em, async () => {
-      // Order by `ctid` (physical row id, monotonic per insert) — the
-      // primary key is a v4 UUID (random bytes), so `id DESC` does not
-      // correspond to insertion order. The existing
-      // `batch_step_execution_job_execution_id_index` covers the
-      // filter, so this is one index range scan + 1-row read.
-      const rows = await execQuery<{
-        id: string;
-        job_execution_id: string;
-        step_name: string;
-        status: string;
-        read_count: number;
-        write_count: number;
-        skip_count: number;
-        rollback_count: number;
-        commit_count: number;
-        exit_code: string;
-        exit_message: string;
-      }>(
-        this.em,
-        `SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message"
-         FROM "batch_step_execution"
+      const em = this.em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> };
+      const rows = await em.execute(
+        `SELECT * FROM "batch_step_execution"
          WHERE "job_execution_id" = ? AND "step_name" = ?
          ORDER BY ctid DESC LIMIT 1`,
         [jobExecutionId, stepName],
-      );
+      ) as StepExecutionEntity[];
       return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
     });
   }
 
   async getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext> {
     return RequestContext.create(this.em, async () => {
+      const em = this.em;
       const key = scopeKey(scope);
       if (key.startsWith('job::')) {
-        const rows = await execQuery<{ data: string; version: number }>(
-          this.em,
-          `SELECT "data", "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ? LIMIT 1`,
-          [key.slice(5)],
-        );
-        if (rows.length > 0) {
-          return {
-            data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
-            version: rows[0]!.version,
-          };
-        }
+        const e = await em.findOne(JobExecutionContextEntity, { jobExecutionId: key.slice(5) });
+        if (e) return { data: deserializeContext(e.data), version: e.version };
       } else {
-        const rows = await execQuery<{ data: string; version: number }>(
-          this.em,
-          `SELECT "data", "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ? LIMIT 1`,
-          [key.slice(6)],
-        );
-        if (rows.length > 0) {
-          return {
-            data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
-            version: rows[0]!.version,
-          };
-        }
+        const e = await em.findOne(StepExecutionContextEntity, {
+          stepExecutionId: key.slice(6),
+        });
+        if (e) return { data: deserializeContext(e.data), version: e.version };
       }
       return { data: null, version: 0 };
     });
@@ -500,50 +309,38 @@ export class MikroORMJobRepository extends JobRepository {
     return RequestContext.create(this.em, async () => {
       const em = this.em;
       const key = scopeKey(scope);
-      const serialized = serializeContext(ctx.data);
       if (key.startsWith('job::')) {
         const jobExecutionId = key.slice(5);
-        const rows = await execQuery<{ version: number }>(
-          em,
-          `SELECT "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ? LIMIT 1`,
-          [jobExecutionId],
-        );
-        const nextVersion = version !== undefined ? version : (rows.length > 0 ? rows[0]!.version + 1 : 0);
-        if (rows.length > 0) {
-          await execQuery(
-            em,
-            `UPDATE "batch_job_execution_context" SET "data" = ?, "version" = ? WHERE "job_execution_id" = ?`,
-            [serialized, nextVersion, jobExecutionId],
-          );
+        const existing = await em.findOne(JobExecutionContextEntity, { jobExecutionId });
+        const nextVersion = version !== undefined ? version : (existing?.version ?? 0) + 1;
+        if (existing) {
+          existing.data = serializeContext(ctx.data);
+          existing.version = nextVersion;
         } else {
-          await execQuery(
-            em,
-            `INSERT INTO "batch_job_execution_context" ("job_execution_id", "data", "version") VALUES (?, ?, ?)`,
-            [jobExecutionId, serialized, nextVersion],
-          );
+          const e = new JobExecutionContextEntity();
+          e.jobExecutionId = jobExecutionId;
+          e.data = serializeContext(ctx.data);
+          e.version = nextVersion;
+          await em.persistAndFlush(e);
+          return;
         }
       } else {
         const stepExecutionId = key.slice(6);
-        const rows = await execQuery<{ version: number }>(
-          em,
-          `SELECT "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ? LIMIT 1`,
-          [stepExecutionId],
-        );
-        const nextVersion = version !== undefined ? version : (rows.length > 0 ? rows[0]!.version + 1 : 0);
-        if (rows.length > 0) {
-          await execQuery(
-            em,
-            `UPDATE "batch_step_execution_context" SET "data" = ?, "version" = ? WHERE "step_execution_id" = ?`,
-            [serialized, nextVersion, stepExecutionId],
-          );
+        const existing = await em.findOne(StepExecutionContextEntity, { stepExecutionId });
+        const nextVersion = version !== undefined ? version : (existing?.version ?? 0) + 1;
+        if (existing) {
+          existing.data = serializeContext(ctx.data);
+          existing.version = nextVersion;
         } else {
-          await execQuery(
-            em,
-            `INSERT INTO "batch_step_execution_context" ("step_execution_id", "data", "version") VALUES (?, ?, ?)`,
-            [stepExecutionId, serialized, nextVersion],
-          );
+          const e = new StepExecutionContextEntity();
+          e.stepExecutionId = stepExecutionId;
+          e.data = serializeContext(ctx.data);
+          e.version = nextVersion;
+          await em.persistAndFlush(e);
+          return;
         }
       }
+      await em.flush();
     });
   }
 }
