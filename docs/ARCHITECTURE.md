@@ -172,13 +172,15 @@ for step in job.steps:
   retries the step; a transient database error retries the step; a
   business validation failure does **not** consume a BullMQ attempt.
 
-### Future enhancement (not in this release)
+### Partition contract (ships in 0.2.0)
 
-Chunked steps with explicit partition configuration will enqueue
-one job per partition (e.g. one job per range of 1000 input rows).
-The worker payload already carries a `partitionIndex` field for
-that case. The release is silent on the exact API; the contract
-that holds today is "one BullMQ job per step".
+Partitioned steps ship in 0.2.0.
+`ChunkStepDefinition.partitions: { count, range? }` lets a chunked
+step declare parallel partitions; the BullMQ and Kafka strategies
+enqueue one job per partition. `partitionIndex` is enforced as
+`0 <= partitionIndex < count` at runtime. See
+[`docs/RELEASE-0.2.0.md`](./RELEASE-0.2.0.md) §6 for the full
+contract.
 
 ### Anti-patterns the principle rules out
 
@@ -186,8 +188,11 @@ that holds today is "one BullMQ job per step".
 - Letting a consumer's `@ItemWriter` call `bullQueue.add(...)` to
   fan out. The writer writes its chunk and returns; the next step
   (or the next partition) is the transport's job.
-- Treating `partitionIndex` as a user-facing field. Today it is a
-  forward-compatibility stub reserved by the worker payload shape.
+- Using `InProcessAdapter` with `partitions.count > 1`. The
+  in-process strategy is intentionally single-threaded; partition
+  fan-out is a transport feature. The strategy either throws or
+  logs a warning, never silently single-partitions. Pinned in
+  `packages/core/tests/core/contracts/in-process-rejects-partitions.test.ts`.
 
 ---
 

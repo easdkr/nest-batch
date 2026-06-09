@@ -195,19 +195,62 @@ own retry policy; a crash counts as one attempt.
 
 ### Does `@BatchScheduled` actually run a cron loop?
 
-No. The decorator is **metadata-only**. It stamps a
-`BatchScheduledMetadata` shape (cron expression, IANA timezone,
-overlap policy, optional `startAt` / `endAt`, and an `inert` flag
-captured from `process.env.BATCH_SCHEDULED_DISABLE`) onto the
-decorated method. A future runtime scheduler (likely a follow-up
-to the BullMQ adapter) will read that metadata and install the
-real timers.
+Yes — `BullmqScheduleService` installs a BullMQ
+`upsertJobScheduler` for every non-inert `@BatchScheduled` entry
+(see
+[`packages/bullmq/src/bullmq-schedule.service.ts:184-188`](../../packages/bullmq/src/bullmq-schedule.service.ts)).
+Set `BATCH_SCHEDULED_DISABLE=1` to put cron-scheduled jobs into
+inert mode for tests.
 
-Today the decorator is useful for declaring intent and for the
-`BatchScheduleRegistry` to expose a queryable list of
-"what cron jobs does this app have". To exercise cron semantics
-in tests, use `BATCH_SCHEDULED_DISABLE=1` so the decorator stamps
-`inert: true` and the runtime skips installation.
+### Is there a Drizzle adapter?
+
+Yes, [`@nest-batch/drizzle`](../../packages/drizzle/README.md)
+`0.2.0`. It is a driver-agnostic adapter slot; pair it with
+[`@nest-batch/postgresql`](../../packages/postgresql/README.md) for
+Postgres support or with
+[`@nest-batch/mysql`](../../packages/mysql/README.md) for MySQL
+support. The package's `DrizzleJobRepository` and
+`DrizzleTransactionManager` satisfy the
+[`@nest-batch/core/test-contracts`](../core/README.md#contract-suite).
+
+### Is there a Kafka transport?
+
+Yes, [`@nest-batch/kafka`](../../packages/kafka/README.md) `0.2.0`.
+It is partition-aware (see
+[`docs/RELEASE-0.2.0.md`](../RELEASE-0.2.0.md) §6). Its
+`KafkaScheduleService` ships a hand-rolled `*/N * * * *` parser;
+richer Quartz / Spring Batch cron syntax is on the 0.3.0 roadmap.
+
+### Is there a Prisma adapter?
+
+Yes, [`@nest-batch/prisma`](../../packages/prisma/README.md)
+`0.2.0`. It is a driver-agnostic adapter slot; pair it with
+[`@nest-batch/postgresql`](../../packages/postgresql/README.md) for
+Postgres support or with
+[`@nest-batch/mysql`](../../packages/mysql/README.md) for MySQL
+support. The package's `PrismaJobRepository` and
+`PrismaTransactionManager` satisfy the
+[`@nest-batch/core/test-contracts`](../core/README.md#contract-suite).
+
+### Is there a MySQL adapter?
+
+Yes, [`@nest-batch/mysql`](../../packages/mysql/README.md) `0.2.0`
+(sibling package; no MySQL provider in the 8 other packages).
+It owns the 4 MySQL adapter shells (`MikroOrmMySql`, `TypeOrmMySql`,
+`DrizzleMySql`, `PrismaMySql`) and a 6-table MySQL migration. The
+MySQL boundary test (T-AC-2 in
+[`packages/core/tests/core/boundary/no-mysql-in-existing-packages.test.ts`](../../packages/core/tests/core/boundary/no-mysql-in-existing-packages.test.ts))
+confirms no MySQL provider leaks into the 8 non-MySQL packages.
+
+### Is there a webhook delivery?
+
+Yes, [`@nest-batch/webhook`](../../packages/webhook/README.md)
+`0.2.0` with HMAC-SHA256 signing
+(`X-Nest-Batch-Signature: t=<unix>,v1=<hex>`), exponential backoff
+at fixed 1s / 5s / 25s / 125s delays, 4xx-no-retry / 5xx-retry,
+and a `logger.warn` dead-letter after the final failed attempt. See
+[`docs/RELEASE-0.2.0.md`](../RELEASE-0.2.0.md) §7 for the full
+contract.
 
 ### Can I run `@BatchScheduled` against a non-UTC timezone?
 
