@@ -39,9 +39,12 @@ import {
  *     boundary reports can tell the real implementation from
  *     the skeleton.
  *   - `launch()` produces exactly one Kafka message per step
- *     (one message per step, NEVER one message per row/chunk)
- *     and returns `{ kind: 'enqueued', queueJobId }`. The launch
- *     is fire-and-forget; the launcher re-resolves the
+ *     (or, for chunk steps with `partitions.count >= 2` —
+ *     T9 / T-AC-3 second half — one message per partition,
+ *     each carrying a distinct `partitionIndex`). It NEVER
+ *     produces one message per row/chunk. Returns
+ *     `{ kind: 'enqueued', queueJobId }`. The launch is
+ *     fire-and-forget; the launcher re-resolves the
  *     canonical `JobExecution` from the repository.
  */
 @Injectable()

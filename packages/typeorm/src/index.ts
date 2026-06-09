@@ -1,15 +1,42 @@
 // Public API barrel for @nest-batch/typeorm.
 //
-// The package owns the six Spring Batch-compatible batch meta
-// tables, exposes TypeOrmJobRepository and TypeOrmTransactionManager,
-// and ships the schema as a TypeORM migration so consumers can run
-// `DataSource.runMigrations()` to bring up a clean database.
+// The package is a **driver-agnostic adapter SLOT**. It owns the
+// `TypeOrmAdapter` factory, the `TypeOrmJobRepository` /
+// `TypeOrmTransactionManager` interface shape, and the
+// `TypeOrmDriverProvider` injection token. It does NOT import
+// `@nestjs/typeorm` (which carries the Postgres driver) — the
+// driver implementation lives in the `@nest-batch/postgresql` (or
+// `@nest-batch/mysql`) sibling package, which binds the
+// `TypeOrmDriverProvider` token to the concrete `DataSource`
+// in its own `forRoot()` factory.
 //
-// This package targets TypeORM 1.0.0 only. The peer range is
-// `^1.0.0` and intentionally excludes 0.3.x.
-export * from './entities';
-export { TypeOrmJobRepository, batchMetaEntities } from './repository/typeorm-job-repository';
+// Apps wire the persistence concern into `NestBatchModule.forRoot()`
+// via the new `BatchAdapter` factory pattern:
+//
+//   import { NestBatchModule, InProcessAdapter } from '@nest-batch/core';
+//   import { TypeOrmAdapter } from '@nest-batch/typeorm';
+//   import { PostgresAdapter } from '@nest-batch/postgresql';
+//
+//   // The host must also call
+//   // `TypeOrmModule.forRoot({ ... })` in their `AppModule.imports`.
+//   // The PostgresAdapter.forRoot() factory binds the
+//   // TypeOrmDriverProvider token to the host's DataSource.
+//
+//   NestBatchModule.forRoot({
+//     adapters: {
+//       persistence: PostgresAdapter.forRoot(),
+//       transport: InProcessAdapter.forRoot(),
+//     },
+//   });
+//
+// The original `batchMetaEntities()` factory and the bundled
+// `CreateBatchMeta1700000000000` migration moved to
+// `@nest-batch/postgresql/src/migrations/`. The driver sibling owns
+// the TypeORM-specific entity classes and the migration scripts;
+// this package owns only the repository / transaction manager
+// shape and the driver-provider token.
+export { TypeOrmJobRepository } from './repository/typeorm-job-repository';
 export type { TypeOrmTransactionContext } from './transaction/typeorm-transaction-manager';
 export { TypeOrmTransactionManager } from './transaction/typeorm-transaction-manager';
-export { CreateBatchMeta1700000000000 } from './migrations/1700000000000-CreateBatchMeta';
 export * from './adapters';
+export * from './typeorm.driver-provider';

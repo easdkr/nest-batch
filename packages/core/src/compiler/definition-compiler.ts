@@ -15,8 +15,9 @@ import {
   type TransitionDefinition,
 } from '../core/ir';
 import { FlowExecutionStatus } from '../core/status';
-import { BatchError } from '../core/errors';
+import { BatchError, InvalidFlowGraphError } from '../core/errors';
 import { DefinitionValidator } from '../core/validation/definition-validator';
+import { validatePartitions, InvalidPartitionsError } from '../partition-helpers';
 import type { DiscoveredJob } from '../explorer/batch-explorer';
 import {
   BATCH_ITEM_READER_METADATA,
@@ -235,6 +236,26 @@ export class DefinitionCompiler {
     const readerRef: ReaderRef = this.buildItemMethodRef(discovered, classToken, reader);
     const writerRef: WriterRef = this.buildItemMethodRef(discovered, classToken, writer);
 
+    // Validate the partition config at compile time so a typo
+    // (e.g. `count: 0`) fails at module load rather than at
+    // runtime when the launcher pre-creates the execution.
+    // `DefinitionValidator.validate` does the same check later
+    // (the IR is the source of truth), but the compiler is the
+    // first place we have the value in hand and we want the
+    // earliest possible failure for a decorator-discovered job.
+    try {
+      validatePartitions(step.options.partitions);
+    } catch (err) {
+      if (err instanceof InvalidPartitionsError) {
+        throw new InvalidFlowGraphError(
+          'INVALID_PARTITIONS',
+          `Step "${step.options.id}" has invalid partitions: ${err.message}`,
+          { jobId: discovered.jobOptions.id, stepId: step.options.id, partitions: step.options.partitions },
+        );
+      }
+      throw err;
+    }
+
     return {
       kind: 'chunk',
       id: step.options.id,
@@ -244,6 +265,9 @@ export class DefinitionCompiler {
       skipPolicy: step.options.skipPolicy,
       retryPolicy: step.options.retryPolicy,
       listeners: [],
+      ...(step.options.partitions !== undefined
+        ? { partitions: step.options.partitions }
+        : {}),
       ...(processor
         ? {
             processor: this.buildItemMethodRef(discovered, classToken, processor) satisfies ProcessorRef,

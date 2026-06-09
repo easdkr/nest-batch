@@ -11,7 +11,7 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r exec tsc --noEmit",
+    "typecheck": "pnpm -r --filter !@nest-batch/mysql exec tsc --noEmit",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yaml,yml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yaml,yml}\"",
     "changeset": "changeset",

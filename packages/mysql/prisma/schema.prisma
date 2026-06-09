@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model BatchJobInstance {
+  id        String   @id @db.VarChar(255)
+  jobName   String   @map("job_name") @db.VarChar(255)
+  jobKey    String   @map("job_key") @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(6)
+
+  executions BatchJobExecution[]
+
+  @@unique([jobName, jobKey], map: "batch_job_instance_job_name_job_key_unique")
+  @@map("batch_job_instance")
+}
+
+model BatchJobExecution {
+  id            String    @id @db.VarChar(255)
+  jobInstanceId String    @map("job_instance_id") @db.VarChar(255)
+  status        String    @db.VarChar(20)
+  startTime     DateTime? @map("start_time") @db.DateTime(6)
+  endTime       DateTime? @map("end_time") @db.DateTime(6)
+  exitCode      String    @default("") @map("exit_code") @db.VarChar(255)
+  exitMessage   String    @default("") @map("exit_message") @db.Text
+  params        String    @default("{}") @db.Text
+
+  instance BatchJobInstance @relation(fields: [jobInstanceId], references: [id], onDelete: Cascade)
+  steps    BatchStepExecution[]
+
+  @@index([jobInstanceId], map: "batch_job_execution_job_instance_id_index")
+  @@map("batch_job_execution")
+}
+
+model BatchStepExecution {
+  id             String   @id @db.VarChar(255)
+  jobExecutionId String   @map("job_execution_id") @db.VarChar(255)
+  stepName       String   @map("step_name") @db.VarChar(255)
+  status         String   @db.VarChar(20)
+  readCount      Int      @default(0) @map("read_count")
+  writeCount     Int      @default(0) @map("write_count")
+  skipCount      Int      @default(0) @map("skip_count")
+  rollbackCount  Int      @default(0) @map("rollback_count")
+  commitCount    Int      @default(0) @map("commit_count")
+  exitCode       String   @default("") @map("exit_code") @db.VarChar(255)
+  exitMessage    String   @default("") @map("exit_message") @db.Text
+  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime(6)
+
+  jobExecution BatchJobExecution @relation(fields: [jobExecutionId], references: [id], onDelete: Cascade)
+
+  @@index([jobExecutionId], map: "batch_step_execution_job_execution_id_index")
+  @@map("batch_step_execution")
+}
+
+model BatchJobExecutionContext {
+  jobExecutionId String @id @map("job_execution_id") @db.VarChar(255)
+  data           String @db.Text
+  version        Int    @default(0)
+
+  @@map("batch_job_execution_context")
+}
+
+model BatchStepExecutionContext {
+  stepExecutionId String @id @map("step_execution_id") @db.VarChar(255)
+  data            String @db.Text
+  version         Int    @default(0)
+
+  @@map("batch_step_execution_context")
+}

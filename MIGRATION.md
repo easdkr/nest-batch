@@ -208,85 +208,24 @@ MikroORM 5 is not supported either. The
 
 ---
 
-## What is NOT in this release
+## What is NOT in this release (forward-pointer)
 
-These are out of scope. They are not "coming soon" features; they
-are explicitly excluded from this release, and a future release
-that adds them will do so as a separate package (or a
-clearly-flagged extension), not by retrofitting core.
-
-### `@nest-batch/drizzle`
-
-There is no Drizzle adapter in this release. The package
-`@nest-batch/drizzle` does not exist in the workspace and is not
-shipped. If you want a Drizzle adapter, you have three options:
-
-1. Wait for a follow-up release. (We have not committed to one.)
-2. Implement a `JobRepository` and `TransactionManager` against
-   Drizzle yourself, then run the
-   [`@nest-batch/core/test-contracts`](./packages/core/README.md#contract-suite)
-   against it.
-3. Use `@nest-batch/mikro-orm` or `@nest-batch/typeorm` instead.
-
-Drizzle is **deferred**, not refused. If you have a strong use
-case, file an issue.
-
-### Admin UI
-
-There is no admin UI, no job management dashboard, and no REST
-endpoint for inspecting / re-launching / cancelling jobs beyond
-what you build yourself. The `JobRepository` interface gives you
-the primitives (status, last execution, latest step execution) —
-build your own UI on top.
-
-### Metrics
-
-There is no Prometheus exporter, no OpenTelemetry metrics, no
-StatsD integration. The `BatchObserver` contract lets you ship
-events to your own backend; that is the documented extension point.
-Anything more is out of scope.
-
-### Tracing
-
-There is no OpenTelemetry tracing, no Jaeger / Zipkin integration,
-no automatic span creation around steps or chunks. Same as metrics:
-`BatchObserver` is the extension point.
-
-### Webhook
-
-There is no webhook delivery, no HTTP callback on job completion,
-no notification fan-out. Build it on top of `BatchObserver` if you
-need it.
-
-### Job visualization
-
-There is no built-in Gantt chart, no step timing visualization, no
-in-browser job inspector. Hook a `BatchObserver` to ship
-`BATCH_EVENT.*` events to your own visualization backend.
-
-### Alternate transports
-
-There is no Sidekiq, no RabbitMQ, no SQS, no Celery, no Kafka
-transport in this release. The `IExecutionStrategy` polymorphism
-in core makes these possible, but they are not in scope. The only
-transport shipped is BullMQ. If you need another transport, write
-your own `IExecutionStrategy` and bind it to `EXECUTION_STRATEGY`
-the same way `@nest-batch/bullmq` does.
-
-### Multi-tenant routing
-
-There is no built-in tenant-aware queue routing, no per-tenant
-worker pools, no tenant isolation. BullMQ uses a single queue
-(`nest-batch:work`); partitioning is by step, not by tenant.
+The 0.1.0 "What is NOT in this release" section has been
+superseded by [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md),
+which lists the actual 0.2.0 status of Drizzle, Kafka, Prisma,
+MySQL, webhooks, partitioning, and the 0.3.0 roadmap.
 
 ---
 
 ## Closing notes
 
-- Versions across the initial `@nest-batch/*` release are
-  **lockstep** (`0.1.0` for all four). Bumping one will bump the
-  rest. This avoids the "core 0.1.0 with bullmq 0.3.0 is broken"
-  trap and keeps the contract suite meaningful.
+- Versions across the `@nest-batch/*` family are **lockstep**
+  (`0.1.0` for the four shipped in 0.1.0; `0.2.0` for all ten in
+  0.2.0). Bumping one will bump the rest. This avoids the
+  "core 0.1.0 with bullmq 0.3.0 is broken" trap and keeps the
+  contract suite meaningful. See
+  [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md) §2 for the
+  full 10-package list.
 - The boundary test in core
   (`packages/core/tests/core/boundary/no-forbidden-imports.test.ts`)
   is the canary for accidental cross-contamination between

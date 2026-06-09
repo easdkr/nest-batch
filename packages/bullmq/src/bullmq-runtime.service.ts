@@ -15,6 +15,8 @@ import {
   type JsonValue,
   type JobRepository,
   JOB_REPOSITORY_TOKEN,
+  enforcePartitionIndex,
+  validatePartitions,
 } from '@nest-batch/core';
 import { JobExecutor, JobRegistry, NoopBatchObserver, BATCH_EVENT } from '@nest-batch/core';
 
@@ -243,19 +245,21 @@ export class BullmqRuntimeService
           'module is not initialized. Did you forget to import BullmqBatchModule?',
       );
     }
-    // One BullMQ job per step. The step's `id` is the BullMQ `name`
-    // (so the queue's `KEYS bull:*:<queueName>:<name>` layout
-    // groups jobs by step for inspection). T18 explicitly forbids
-    // one-job-per-row/per-chunk, so we never iterate steps or
-    // partitions here — the executor's chunk loop runs INSIDE the
-    // single BullMQ job.
+    // T8 (partition orchestration): when the start step declares
+    // `partitions.count >= 2`, the strategy enqueues one BullMQ job
+    // per partition (each carrying a distinct `partitionIndex`).
+    // Otherwise (default, `count === 1`, or absent) it preserves
+    // the 0.1.0 "one job per step" behaviour. The validate call
+    // surfaces a misconfiguration (e.g. `count <= 0`) at the
+    // launcher's boundary so the host's caller sees the failure
+    // before the worker is ever asked to process the job.
     const stepId = job.startStepId;
-    const payload: BullmqJobPayload = {
-      executionId: ctx.executionId,
-      jobExecutionId: ctx.jobExecutionId,
-      jobId: job.id,
-      stepId,
-    };
+    const startStep = job.steps[stepId];
+    const partitions = startStep?.kind === 'chunk' ? startStep.partitions : undefined;
+    validatePartitions(partitions);
+    const partitionCount = partitions?.count ?? 1;
+    const partitionOrdinals: Array<number | undefined> =
+      partitionCount >= 2 ? Array.from({ length: partitionCount }, (_, i) => i) : [undefined];
 
     const jobOpts: JobsOptions = {
       attempts: 3,
@@ -264,21 +268,42 @@ export class BullmqRuntimeService
       removeOnFail: { count: 1000 },
     };
 
-    const enqueued = await this.queue.add(stepId, payload, jobOpts);
-    if (enqueued.id === undefined) {
-      // BullMQ returns a job with `id` undefined only when the
-      // producer cannot reach Redis and the in-memory buffer
-      // (which is disabled by `enableOfflineQueue: false`) is
-      // not available. Surface this as a hard error so the
-      // launcher propagates the failure.
-      throw new Error(
-        `[BullmqRuntimeService] enqueue returned undefined job id (Redis down?)`,
+    let lastQueueJobId: string | null = null;
+    for (const partitionIndex of partitionOrdinals) {
+      const payload: BullmqJobPayload = {
+        executionId: ctx.executionId,
+        jobExecutionId: ctx.jobExecutionId,
+        jobId: job.id,
+        stepId,
+        ...(partitionIndex !== undefined ? { partitionIndex } : {}),
+      };
+      const enqueued = await this.queue.add(stepId, payload, jobOpts);
+      if (enqueued.id === undefined) {
+        // BullMQ returns a job with `id` undefined only when the
+        // producer cannot reach Redis and the in-memory buffer
+        // (which is disabled by `enableOfflineQueue: false`) is
+        // not available. Surface this as a hard error so the
+        // launcher propagates the failure.
+        throw new Error(
+          `[BullmqRuntimeService] enqueue returned undefined job id (Redis down?)`,
+        );
+      }
+      const qid = String(enqueued.id);
+      lastQueueJobId = qid;
+      this.logger.debug(
+        `Enqueued step "${stepId}" for execution ${ctx.executionId}` +
+          (partitionIndex !== undefined ? ` (partition ${partitionIndex}/${partitionCount})` : '') +
+          ` as BullMQ job ${qid}`,
       );
     }
-    this.logger.debug(
-      `Enqueued step "${stepId}" for execution ${ctx.executionId} as BullMQ job ${enqueued.id}`,
-    );
-    return { kind: 'enqueued', queueJobId: String(enqueued.id) };
+    if (lastQueueJobId === null) {
+      // Defensive: the loop above always runs at least once
+      // (partitionOrdinals has length >= 1), so this branch is
+      // unreachable in practice. Keep the explicit throw so a
+      // future refactor cannot quietly enqueue zero jobs.
+      throw new Error(`[BullmqRuntimeService] enqueued zero jobs for execution ${ctx.executionId}`);
+    }
+    return { kind: 'enqueued', queueJobId: lastQueueJobId };
   }
 
   // -----------------------------------------------------------------------

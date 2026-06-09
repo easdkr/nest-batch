@@ -1,12 +1,19 @@
 import 'reflect-metadata';
 import { BATCH_STEP_METADATA } from './constants';
-import type { RetryPolicyConfig, SkipPolicyConfig } from '../core/ir';
+import type { ChunkPartitionConfig, RetryPolicyConfig, SkipPolicyConfig } from '../core/ir';
 
 export interface StepableOptions {
   id: string;
   chunkSize?: number; // 0 or undefined = tasklet step
   skipPolicy?: SkipPolicyConfig;
   retryPolicy?: RetryPolicyConfig;
+  /**
+   * Optional partition configuration forwarded to the compiled
+   * `ChunkStepDefinition.partitions`. See `docs/RELEASE-0.2.0.md §6`
+   * and `packages/core/src/partition-helpers.ts` for the contract.
+   * Tasklet steps ignore this field.
+   */
+  partitions?: ChunkPartitionConfig;
 }
 
 /**

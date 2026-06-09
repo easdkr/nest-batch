@@ -28,43 +28,57 @@ breakdown.
   scheduling).
 - [`MIGRATION.md`](./MIGRATION.md) — breaking changes and the
   explicit "what is NOT in this release" list.
+- [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md) — the single
+  integrated release note for 0.2.0 (covers 10 packages, partition
+  orchestration, MySQL, webhook).
 
 ---
 
 ## The `@nest-batch/*` package family
 
 ```
-@nest-batch/core        ← the batch engine (Job/Step/Chunk/Tasklet, checkpoint, restart, skip, retry)
+@nest-batch/core           ← the batch engine (Job/Step/Chunk/Tasklet, checkpoint, restart, skip, retry)
         ▲
         │
-@nest-batch/mikro-orm   ← MikroORM 6.x adapter + 6 batch meta tables + migrations
-@nest-batch/typeorm     ← TypeORM 1.0.0 adapter + the same 6 tables + migration
-@nest-batch/bullmq      ← BullMQ transport strategy (Queue/Worker/QueueEvents lifecycle)
+@nest-batch/mikro-orm      ← MikroORM 6.x adapter slot (driver-agnostic in 0.2.0)
+@nest-batch/typeorm        ← TypeORM 1.0.0 adapter slot (driver-agnostic in 0.2.0)
+@nest-batch/drizzle        ← Drizzle ORM adapter slot (driver-agnostic in 0.2.0)
+@nest-batch/prisma         ← Prisma adapter slot (driver-agnostic in 0.2.0)
+@nest-batch/bullmq         ← BullMQ transport strategy (Queue/Worker/QueueEvents, partition-aware)
+@nest-batch/kafka          ← Kafka transport strategy (partition-aware)
+@nest-batch/postgresql     ← NEW. 4 Postgres adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma) + 6-table migration
+@nest-batch/mysql          ← NEW. 4 MySQL adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma) + 6-table migration
+@nest-batch/webhook        ← NEW. WebhookBatchObserver with HMAC-SHA256 + exponential backoff + dead-letter
 ```
 
 Each adapter is a sibling. They depend on `@nest-batch/core`; they
-do not depend on each other. There is no admin UI package, no
-metrics package, no Drizzle package. The list above is the full
-list in this release.
+do not depend on each other. The list above is the full list in
+this release. See [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md)
+§2 for the full 10-package table (versions, roles, peer deps).
 
 ### Where things live
 
-| Concern                          | Package                 |
-| -------------------------------- | ----------------------- |
-| Job/Step/Chunk/Tasklet IR        | `@nest-batch/core`      |
-| `@Jobable`, `@ItemReader`, ...   | `@nest-batch/core`      |
-| `@BatchScheduled` cron decorator | `@nest-batch/core`      |
-| Listener system                  | `@nest-batch/core`      |
-| Skip / retry policies            | `@nest-batch/core`      |
-| Shared contract suite            | `@nest-batch/core`      |
-| `JobLauncher`, `JobExecutor`     | `@nest-batch/core`      |
-| `IExecutionStrategy` (in-proc)   | `@nest-batch/core`      |
-| PostgreSQL via MikroORM 6        | `@nest-batch/mikro-orm` |
-| PostgreSQL via TypeORM 1.0.0     | `@nest-batch/typeorm`   |
-| BullMQ transport                 | `@nest-batch/bullmq`    |
-| **Drizzle**                      | **not in this release** |
-| Admin UI                         | **not in this release** |
-| Metrics / tracing / webhook      | **not in this release** |
+| Concern                          | Package                          |
+| -------------------------------- | -------------------------------- |
+| Batch engine, decorators, IR     | `@nest-batch/core`               |
+| PostgreSQL + MySQL via MikroORM  | `@nest-batch/mikro-orm`          |
+| PostgreSQL + MySQL via TypeORM   | `@nest-batch/typeorm`            |
+| PostgreSQL + MySQL via Drizzle   | `@nest-batch/drizzle`            |
+| PostgreSQL + MySQL via Prisma    | `@nest-batch/prisma`             |
+| BullMQ transport strategy        | `@nest-batch/bullmq`             |
+| Kafka transport strategy         | `@nest-batch/kafka`              |
+| PostgreSQL driver sibling        | `@nest-batch/postgresql`         |
+| MySQL driver sibling             | `@nest-batch/mysql`              |
+| Webhook delivery observer        | `@nest-batch/webhook`            |
+
+The 0.2.0 release splits the previous 4 packages into 10. The 4 DB
+adapter packages (`mikro-orm`, `typeorm`, `drizzle`, `prisma`) become
+**driver-agnostic adapter slots**; the 4 Postgres shells and the 4
+MySQL shells move into the new `@nest-batch/postgresql` and
+`@nest-batch/mysql` sibling packages. The 10-package list, the
+peer-dep table, and the user-facing guardrail (no DB provider in
+any of the 8 non-target-DB packages) are documented in
+[`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md) §2.
 
 Read the per-package README for the contract, the peer
 dependencies, and the wiring snippet:
@@ -84,7 +98,13 @@ nest-batch/
 │   ├── core/                # @nest-batch/core
 │   ├── mikro-orm/           # @nest-batch/mikro-orm
 │   ├── typeorm/             # @nest-batch/typeorm
-│   └── bullmq/              # @nest-batch/bullmq
+│   ├── drizzle/             # @nest-batch/drizzle
+│   ├── prisma/              # @nest-batch/prisma
+│   ├── bullmq/              # @nest-batch/bullmq
+│   ├── kafka/               # @nest-batch/kafka
+│   ├── postgresql/          # @nest-batch/postgresql
+│   ├── mysql/               # @nest-batch/mysql
+│   └── webhook/             # @nest-batch/webhook
 └── apps/
     └── demo/                # @nest-batch/demo (consumer Nest app)
 ```
@@ -361,9 +381,19 @@ visualization).
 
 ## Status
 
-This is the **breaking new major-structure release** of the
-package family. The engine, the adapters, and the BullMQ transport
-are all wired up. What's still on the roadmap is the optional
-scheduler (cron-style jobs that actually fire, not just register
-metadata), partitioning for chunked steps, and (eventually) the
-Drizzle adapter that this release explicitly defers.
+This is the **0.2.0 release** of the package family. The
+engine, the 4 driver-agnostic adapter slots (`mikro-orm`,
+`typeorm`, `drizzle`, `prisma`), the 2 driver siblings
+(`postgresql`, `mysql`), the 2 transport strategies (`bullmq`,
+`kafka`), and the webhook observer (`webhook`) are all wired
+up. Partition orchestration ships for chunked steps in both
+transports. 0.2.0 also flips the 3 previously-deferred
+packages (`drizzle`, `kafka`, `prisma`) to stable members of
+the family.
+
+The **0.3.0 roadmap** includes: SQLite (own sibling package),
+OpenTelemetry tracing (own exporter), admin UI (own package),
+MariaDB / CockroachDB driver siblings.
+
+See [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md) for the
+single integrated release note covering all 10 packages.

@@ -7,6 +7,7 @@
 // ./core/item (or via core/index).
 export * from './core';
 export * from './compiler';
+export * from './partition-helpers';
 export * from './registry';
 export * from './execution';
 export * from './transaction';

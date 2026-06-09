@@ -158,7 +158,8 @@ export class JobExecutionContextEntity {
  * Mirrors the job-level context table but scoped to a single step
  * execution. The Metis/ORACLE decision was to drop
  * BATCH_STEP_EXECUTION_PARAMS — step parameters are derivable from
- * job params + step context — so this table has no params sibling.
+ * the parent job execution params plus the step execution context —
+ * so this table has no params sibling.
  */
 @Entity({ tableName: 'batch_step_execution_context' })
 export class StepExecutionContextEntity {
@@ -189,9 +190,12 @@ export class StepExecutionContextEntity {
  *     // ...
  *   })
  *
- * The `MikroOrmAdapter.forRoot()` factory does this merge for you
- * automatically — apps that wire the batch engine via the factory
- * never need to touch this constant directly.
+ * The driver sibling packages (`@nest-batch/postgresql` /
+ * `@nest-batch/mysql`) re-use these entity classes — the decorators
+ * on the entity classes are from `@mikro-orm/core` and are
+ * driver-agnostic, so the same class can be registered against a
+ * `PostgreSqlDriver` or a `MySqlDriver`. Only the underlying
+ * `EntityManager` differs; that's the slot pattern's job.
  */
 export const BATCH_META_ENTITIES = [
   JobInstanceEntity,

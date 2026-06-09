@@ -10,6 +10,7 @@ import type { RetryPolicy, RetryContext } from '../policies/retry-policy';
 import { compileSkipPolicy } from '../policies/skip-policy';
 import { compileRetryPolicy } from '../policies/retry-policy';
 import { SkipLimitExceededError, RetryLimitExceededError } from '../core/errors';
+import { enforcePartitionIndex } from '../partition-helpers';
 import type { ResolverMap } from './listener-invoker';
 import { ListenerInvoker } from './listener-invoker';
 import { resolveProviderToken, type ProviderResolvers } from './ref-resolver';
@@ -43,6 +44,23 @@ export interface ChunkExecutionContext {
    * FAILED step execution's ExecutionContext by `JobExecutor`.
    */
   resumeFromChunkIndex?: number;
+  /**
+   * Partition ordinal for this chunk execution. Set by the transport
+   * (BullMQ / Kafka) when the step declares `partitions.count >= 2`;
+   * `undefined` means "non-partitioned" (the 0.1.0 path). The executor
+   * uses this together with `partitionCount` and the step's
+   * `partitions.range` to bound the read loop to the partition's
+   * `[from, to)` range — see `packages/core/src/partition-helpers.ts`
+   * and `docs/RELEASE-0.2.0.md §6`.
+   */
+  partitionIndex?: number;
+  /**
+   * Mirror of the step's `partitions.count`. Carried on the context
+   * (rather than read from the step) so the executor does not have to
+   * reason about which step is being executed when it consults the
+   * partition range.
+   */
+  partitionCount?: number;
 }
 
 export interface ChunkExecutionResult {
@@ -99,6 +117,45 @@ export class ChunkStepExecutor {
     const skipLimit = step.skipPolicy?.limit ?? 0;
     const retryLimit = step.retryPolicy?.limit ?? 0;
 
+    // Partition routing (T8): when the transport attached a
+    // `partitionIndex` / `partitionCount` pair to this execution, the
+    // step's `partitions.range` (or, when absent, the runtime
+    // "read until EOF" default) bounds the chunk loop. We resolve the
+    // range once up-front so the hot loop does not re-invoke the
+    // user's resolver.
+    //
+    // The resolve helper throws when the index is out of range; we
+    // surface the violation as a FAILED step (caught by the outer
+    // try/catch) rather than a propagated throw, matching the
+    // chunk executor's "errors become FAILED step" contract.
+    let partition: { from: number; to: number } | null = null;
+    if (context.partitionIndex !== undefined && context.partitionCount !== undefined) {
+      // Defensive: enforce the index range here too. The runtime
+      // service validates at enqueue time, but the chunk executor is
+      // also a public surface (tests drive it directly), so a
+      // double-check costs almost nothing and pins the contract.
+      enforcePartitionIndex(context.partitionIndex, context.partitionCount);
+      if (step.partitions?.range === undefined) {
+        // No `range` resolver: each partition reads from the start of
+        // the input. This is the documented "default" behaviour in
+        // `docs/RELEASE-0.2.0.md §6.1` — the host's reader is
+        // responsible for not over-processing. We still cap the read
+        // loop to the partition's "share" via a sentinel that the
+        // hot loop checks.
+        partition = null;
+      } else {
+        const range = step.partitions.range(context.partitionIndex, context.partitionCount);
+        const [from, to] = range;
+        if (from < 0 || to < from) {
+          throw new Error(
+            `[ChunkStepExecutor] partitions.range(${context.partitionIndex}, ` +
+              `${context.partitionCount}) returned invalid [${from}, ${to})`,
+          );
+        }
+        partition = { from, to };
+      }
+    }
+
     let readCount = 0;
     let writeCount = 0;
     let skipCount = 0;
@@ -128,7 +185,18 @@ export class ChunkStepExecutor {
           chunkIndex <= context.resumeFromChunkIndex
         ) {
           let drained = 0;
-          for (let i = 0; i < step.chunkSize; i++) {
+          // Cap the restart skip-drain by the partition's remaining
+          // budget too (T8). A restart on a partitioned step is rare
+          // but possible — without the cap, the skip-drain could
+          // pull items the partition's range is not allowed to
+          // touch, leaving the chunk pipeline reading the wrong
+          // slice on the next iteration.
+          const skipCap =
+            partition !== null
+              ? Math.max(0, partition.to - partition.from - readCount)
+              : step.chunkSize;
+          if (skipCap === 0) break;
+          for (let i = 0; i < skipCap; i++) {
             const item = await reader.read();
             if (item == null) break;
             drained += 1;
@@ -141,8 +209,25 @@ export class ChunkStepExecutor {
         const items: unknown[] = [];
         let eof = false;
 
+        // ---- PARTITION CAP (T8) ----
+        // When the transport attached a partition's [from, to) range,
+        // bound this chunk's read loop so the partition never
+        // overshoots. `readCount` is the running count of items the
+        // partition has read so far; `partition.to - partition.from`
+        // is the partition's total budget. The cap is `min(chunkSize,
+        // remaining)` and `0` is a valid "no more items" cap (we
+        // exit the outer loop on the next iteration).
+        const remaining =
+          partition !== null ? Math.max(0, partition.to - partition.from - readCount) : step.chunkSize;
+        if (remaining === 0) {
+          // Partition is fully drained. Exit the outer loop so the
+          // chunk executor returns COMPLETED with the partition's
+          // commitCount + readCount + writeCount.
+          break;
+        }
+
         // ---- READ PHASE: per-item retry+skip ----
-        for (let i = 0; i < step.chunkSize && !eof; i++) {
+        for (let i = 0; i < remaining && !eof; i++) {
           const r = await this.runPhase<unknown>(() => reader.read(), {
             phase: 'read',
             item: null,

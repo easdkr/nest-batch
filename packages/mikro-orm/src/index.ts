@@ -1,38 +1,40 @@
 // Public API barrel for @nest-batch/mikro-orm.
 //
-// This package owns the Spring Batch-compatible batch meta-schema
-// (entities, migrations) and the MikroORM-backed
-// `JobRepository` / `TransactionManager` implementations that satisfy
-// the contract suite exported by `@nest-batch/core`.
+// This package is a **driver-agnostic adapter SLOT**. It owns the
+// `MikroOrmAdapter` factory, the `MikroORMJobRepository` /
+// `MikroORMTransactionManager` interface shape, and the
+// `MikroOrmDriverProvider` injection token. It does NOT import
+// `@mikro-orm/postgresql` (or any other driver) — the driver
+// implementation lives in the `@nest-batch/postgresql` (or
+// `@nest-batch/mysql`) sibling package, which binds the
+// `MikroOrmDriverProvider` token to the concrete `EntityManager`
+// in its own `forRoot()` factory.
 //
 // Apps wire the persistence concern into `NestBatchModule.forRoot()`
 // via the new `BatchAdapter` factory pattern:
 //
 //   import { NestBatchModule, InProcessAdapter } from '@nest-batch/core';
 //   import { MikroOrmAdapter } from '@nest-batch/mikro-orm';
+//   import { PostgresAdapter } from '@nest-batch/postgresql';
 //
 //   // The host must also call
-//   // `MikroOrmModule.forRoot({ entities: [..., ...BATCH_META_ENTITIES], ... })`
-//   // in their `AppModule.imports` (BATCH_META_ENTITIES is the six-table
-//   // batch meta-schema spread into the MikroORM entities array).
+//   // `MikroOrmModule.forRoot({ ... })` in their `AppModule.imports`.
+//   // The PostgresAdapter.forRoot() factory binds the
+//   // MikroOrmDriverProvider token to the host's EntityManager.
 //
 //   NestBatchModule.forRoot({
 //     adapters: {
-//       persistence: MikroOrmAdapter.forRoot(),
+//       persistence: PostgresAdapter.forRoot(),
 //       transport: InProcessAdapter.forRoot(),
 //     },
 //   });
 //
-// Apps that need to compose a `MikroOrmModule` manually (e.g. they
-// already configure one with user-domain entities) can still reach
-// for the lower-level building blocks: `BATCH_META_ENTITIES` (the
-// six entity classes to spread into `entities`),
-// `MikroORMJobRepository` / `MikroORMTransactionManager` (the
-// concrete provider classes), and `createBatchMikroOrmConfig` (a
-// helper that builds a MikroORM config with the migrator pointed at
-// the package's `src/migrations/`).
-export * from './entities/job-meta.entities';
+// The original `BATCH_META_ENTITIES` constant and the bundled
+// migrations moved to `@nest-batch/postgresql/src/entities/`. The
+// driver sibling owns the Postgres-specific entity classes and the
+// migration scripts; this package owns only the repository /
+// transaction manager shape and the driver-provider token.
 export * from './mikroorm-job-repository';
 export * from './mikroorm-transaction-manager';
 export * from './adapters';
-export * from './mikro-orm.config';
+export * from './mikro-orm.driver-provider';

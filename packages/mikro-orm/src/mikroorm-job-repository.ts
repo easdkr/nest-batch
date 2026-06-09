@@ -1,6 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { EntityManager, RequestContext } from '@mikro-orm/core';
-import { SqlEntityManager } from '@mikro-orm/postgresql';
 import { JobRepository, JobExecutionAlreadyRunningError } from '@nest-batch/core';
 import type {
   JobInstance,
@@ -14,6 +13,7 @@ import type {
 } from '@nest-batch/core';
 import { JobStatus, StepStatus } from '@nest-batch/core';
 import { assertJsonSerializable, serializeContext, deserializeContext } from '@nest-batch/core';
+import { MikroOrmDriverProvider } from './mikro-orm.driver-provider';
 import {
   JobInstanceEntity,
   JobExecutionEntity,
@@ -86,7 +86,9 @@ function mapStepExecution(e: StepExecutionEntity): StepExecution {
 
 @Injectable()
 export class MikroORMJobRepository extends JobRepository {
-  constructor(private readonly em: SqlEntityManager) {
+  constructor(
+    @Inject(MikroOrmDriverProvider) private readonly em: EntityManager,
+  ) {
     super();
   }
 
@@ -98,24 +100,22 @@ export class MikroORMJobRepository extends JobRepository {
 
       // Use raw SQL INSERT ... ON CONFLICT DO NOTHING RETURNING id
       // so the transaction is not aborted by a unique-constraint
-      // violation.  If another concurrent caller won the race, the
+      // violation. If another concurrent caller won the race, the
       // INSERT returns zero rows and we fall back to SELECT.
-      const rows = await em.execute(
+      const rows = await (em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> }).execute(
         `INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
          VALUES (?, ?, ?, now())
          ON CONFLICT ("job_name", "job_key") DO NOTHING
          RETURNING "id", "job_name", "job_key", "created_at"`,
         [randomUUID(), name, jobKey],
       );
-      if (rows.length > 0) {
-        const r = rows[0] as { id: string; job_name: string; job_key: string; created_at: string };
+      if ((rows as unknown[]).length > 0) {
+        const r = (rows as Array<{ id: string; job_name: string; job_key: string; created_at: string }>)[0]!;
         return { id: r.id, jobName: r.job_name, jobKey: r.job_key, createdAt: new Date(r.created_at) };
       }
 
-      // Another caller won the race — read the committed row.
       const winner = await em.findOne(JobInstanceEntity, { jobName: name, jobKey });
       if (!winner) {
-        // Should never happen, but guard against it anyway.
         throw new Error(`JobInstance race lost but no row found for (${name}, ${jobKey})`);
       }
       return mapJobInstance(winner);
@@ -144,53 +144,34 @@ export class MikroORMJobRepository extends JobRepository {
     jobKey: string,
     params: JobParameters,
   ): Promise<JobExecution> {
-    // Run the entire check-then-create sequence inside a single
-    // transaction. The instance row is locked with FOR UPDATE SKIP
-    // LOCKED, so a concurrent launch for the same (name, jobKey) sees
-    // 0 rows and aborts cleanly. The lock is held until the
-    // transaction commits, which is when control returns to the
-    // caller; the executor itself runs OUTSIDE this lock.
     return this.em.transactional(async (em) => {
-      // 1. Ensure the JobInstance row exists. INSERT ... ON CONFLICT
-      // DO NOTHING is idempotent: if another transaction created the
-      // row first, this is a no-op and we proceed to lock the
-      // existing row.
-      await em.execute(
+      await (em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> }).execute(
         `INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
          VALUES (?, ?, ?, now())
          ON CONFLICT ("job_name", "job_key") DO NOTHING`,
         [randomUUID(), name, jobKey],
       );
-
-      // 2. Lock the instance row. SKIP LOCKED means: if another
-      // concurrent launch already holds the lock, this returns 0
-      // rows and we treat that as "another launch in progress".
-      const rows = await em.execute(
+      const rows = await (em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> }).execute(
         `SELECT "id" FROM "batch_job_instance"
          WHERE "job_name" = ? AND "job_key" = ?
          FOR UPDATE SKIP LOCKED`,
         [name, jobKey],
-      );
+      ) as Array<{ id: string }>;
       if (rows.length === 0) {
         throw new JobExecutionAlreadyRunningError(name);
       }
-      const instanceId = (rows[0] as { id: string }).id;
+      const instanceId = rows[0]!.id;
 
-      // 3. Under the lock, verify no running execution.
-      const running = await em.findOne(
-        JobExecutionEntity,
-        {
-          jobInstanceId: instanceId,
-          status: { $in: [JobStatus.STARTING, JobStatus.STARTED] },
-        },
-      );
-      if (running) {
-        throw new JobExecutionAlreadyRunningError(running.id);
+      const running = await (em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> }).execute(
+        `SELECT "id" FROM "batch_job_execution"
+         WHERE "job_instance_id" = ? AND "status" IN (?, ?)
+         LIMIT 1`,
+        [instanceId, JobStatus.STARTING, JobStatus.STARTED],
+      ) as Array<{ id: string }>;
+      if (running.length > 0) {
+        throw new JobExecutionAlreadyRunningError(running[0]!.id);
       }
 
-      // 4. Create the new execution row. Because we hold the row
-      // lock on JobInstance, no other launch can create a competing
-      // execution for the same instance until this TX commits.
       const exec = new JobExecutionEntity();
       exec.id = randomUUID();
       exec.jobInstanceId = instanceId;
@@ -230,14 +211,10 @@ export class MikroORMJobRepository extends JobRepository {
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     return RequestContext.create(this.em, async () => {
       const em = this.em;
-      const e = await em.findOne(
-        JobExecutionEntity,
-        {
-          jobInstanceId,
-          status: { $in: [JobStatus.STARTING, JobStatus.STARTED] },
-        },
-        { orderBy: { startTime: 'DESC' } },
-      );
+      const e = await em.findOne(JobExecutionEntity, {
+        jobInstanceId,
+        status: { $in: [JobStatus.STARTING, JobStatus.STARTED] },
+      });
       return e ? mapJobExecution(e) : null;
     });
   }
@@ -289,22 +266,20 @@ export class MikroORMJobRepository extends JobRepository {
     jobExecutionId: string,
     stepName: string,
   ): Promise<StepExecution | null> {
-    // Order by PostgreSQL `ctid` (physical row id, monotonic per
-    // insert) rather than `id DESC`: the primary key is a v4 UUID
-    // — random bytes — so `id DESC` does not correspond to
-    // insertion order. The existing
-    // `batch_step_execution_job_execution_id_index` covers the
-    // filter, so this is one index range scan + 1-row read.
+    // Order by `ctid` (physical row id, monotonic per insert) for
+    // PostgreSQL; the primary key is a v4 UUID (random bytes), so
+    // `id DESC` does not correspond to insertion order. The
+    // existing `batch_step_execution_job_execution_id_index` covers
+    // the filter, so this is one index range scan + 1-row read.
     return RequestContext.create(this.em, async () => {
-      const em = this.em;
-      const qb = (em as SqlEntityManager)
-        .createQueryBuilder(StepExecutionEntity, 's')
-        .select('s.*')
-        .where({ jobExecutionId, stepName })
-        .limit(1);
-      qb.getKnexQuery().orderBy('ctid', 'desc');
-      const e = await qb.getSingleResult();
-      return e ? mapStepExecution(e) : null;
+      const em = this.em as unknown as { execute: (sql: string, params: unknown[]) => Promise<unknown[]> };
+      const rows = await em.execute(
+        `SELECT * FROM "batch_step_execution"
+         WHERE "job_execution_id" = ? AND "step_name" = ?
+         ORDER BY ctid DESC LIMIT 1`,
+        [jobExecutionId, stepName],
+      ) as StepExecutionEntity[];
+      return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
     });
   }
 

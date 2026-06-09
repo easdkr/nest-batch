@@ -25,7 +25,6 @@ export class CreateBatchMeta1700000000000 implements MigrationInterface {
   name = 'CreateBatchMeta1700000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // batch_job_instance — root of the meta-graph; (job_name, job_key) is unique.
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "batch_job_instance" (
         "id" varchar(255) PRIMARY KEY,
@@ -36,7 +35,6 @@ export class CreateBatchMeta1700000000000 implements MigrationInterface {
       )
     `);
 
-    // batch_job_execution — one row per job run; indexed by job_instance_id for lookup.
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "batch_job_execution" (
         "id" varchar(255) PRIMARY KEY,
@@ -54,7 +52,6 @@ export class CreateBatchMeta1700000000000 implements MigrationInterface {
       ON "batch_job_execution" ("job_instance_id")
     `);
 
-    // batch_step_execution — counters default to 0; created_at powers findLatestStepExecution.
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "batch_step_execution" (
         "id" varchar(255) PRIMARY KEY,
@@ -76,7 +73,6 @@ export class CreateBatchMeta1700000000000 implements MigrationInterface {
       ON "batch_step_execution" ("job_execution_id")
     `);
 
-    // batch_job_execution_context — JSON payload + version for optimistic concurrency.
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "batch_job_execution_context" (
         "job_execution_id" varchar(255) PRIMARY KEY,
@@ -85,7 +81,6 @@ export class CreateBatchMeta1700000000000 implements MigrationInterface {
       )
     `);
 
-    // batch_step_execution_context — same shape, scoped to a step.
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "batch_step_execution_context" (
         "step_execution_id" varchar(255) PRIMARY KEY,
@@ -96,7 +91,6 @@ export class CreateBatchMeta1700000000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    // Reverse-dependency order: children first.
     await queryRunner.query(`DROP TABLE IF EXISTS "batch_step_execution_context"`);
     await queryRunner.query(`DROP TABLE IF EXISTS "batch_job_execution_context"`);
     await queryRunner.query(`DROP TABLE IF EXISTS "batch_step_execution"`);

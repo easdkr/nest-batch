@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { PrismaClient } from '@prisma/client';
 import {
   JobRepository,
   JobExecutionAlreadyRunningError,
@@ -19,7 +20,7 @@ import type {
   ExecutionContext,
   ExecutionScope,
 } from '@nest-batch/core';
-import type { PrismaClient } from '@prisma/client';
+import { PrismaDriverProvider } from '../prisma.driver-provider';
 
 function scopeKey(scope: ExecutionScope): string {
   if ('jobExecutionId' in scope) return `job::${scope.jobExecutionId}`;
@@ -37,142 +38,156 @@ function deepClone<T>(value: T): T {
   return out as T;
 }
 
-function mapJobInstance(e: {
+interface JobInstanceRow {
   id: string;
-  jobName: string;
-  jobKey: string;
-  createdAt: Date;
-}): JobInstance {
+  job_name: string;
+  job_key: string;
+  created_at: string | Date;
+}
+
+interface JobExecutionRow {
+  id: string;
+  job_instance_id: string;
+  status: string;
+  start_time: string | Date | null;
+  end_time: string | Date | null;
+  exit_code: string;
+  exit_message: string;
+  params: string;
+}
+
+interface StepExecutionRow {
+  id: string;
+  job_execution_id: string;
+  step_name: string;
+  status: string;
+  read_count: number;
+  write_count: number;
+  skip_count: number;
+  rollback_count: number;
+  commit_count: number;
+  exit_code: string;
+  exit_message: string;
+  created_at: string | Date;
+}
+
+interface ContextRow {
+  data: string;
+  version: number;
+}
+
+function mapJobInstance(r: JobInstanceRow): JobInstance {
   return {
-    id: e.id,
-    jobName: e.jobName,
-    jobKey: e.jobKey,
-    createdAt: e.createdAt,
+    id: r.id,
+    jobName: r.job_name,
+    jobKey: r.job_key,
+    createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
   };
 }
 
-function mapJobExecution(e: {
-  id: string;
-  jobInstanceId: string;
-  status: string;
-  startTime: Date | null;
-  endTime: Date | null;
-  exitCode: string;
-  exitMessage: string;
-  params: string;
-}): JobExecution {
+function mapJobExecution(r: JobExecutionRow): JobExecution {
   let params: JobParameters = {};
-  if (e.params && e.params.length > 0) {
+  if (r.params && r.params.length > 0) {
     try {
-      params = deserializeContext<JobParameters>(e.params);
+      params = deserializeContext<JobParameters>(r.params);
     } catch {
       params = {};
     }
   }
   return {
-    id: e.id,
-    jobInstanceId: e.jobInstanceId,
-    status: e.status as JobStatus,
-    startTime: e.startTime ?? null,
-    endTime: e.endTime ?? null,
-    exitCode: e.exitCode,
-    exitMessage: e.exitMessage,
+    id: r.id,
+    jobInstanceId: r.job_instance_id,
+    status: r.status as JobStatus,
+    startTime: r.start_time ? (r.start_time instanceof Date ? r.start_time : new Date(r.start_time)) : null,
+    endTime: r.end_time ? (r.end_time instanceof Date ? r.end_time : new Date(r.end_time)) : null,
+    exitCode: r.exit_code,
+    exitMessage: r.exit_message,
     params,
-    version: 0,
   };
 }
-function mapStepExecution(e: {
-  id: string;
-  jobExecutionId: string;
-  stepName: string;
-  status: string;
-  readCount: number;
-  writeCount: number;
-  skipCount: number;
-  rollbackCount: number;
-  commitCount: number;
-  exitCode: string;
-  exitMessage: string;
-}): StepExecution {
+
+function mapStepExecution(r: StepExecutionRow): StepExecution {
   return {
-    id: e.id,
-    jobExecutionId: e.jobExecutionId,
-    stepName: e.stepName,
-    status: e.status as StepStatus,
-    readCount: e.readCount,
-    writeCount: e.writeCount,
-    skipCount: e.skipCount,
-    rollbackCount: e.rollbackCount,
-    commitCount: e.commitCount,
+    id: r.id,
+    jobExecutionId: r.job_execution_id,
+    stepName: r.step_name,
+    status: r.status as StepStatus,
+    readCount: r.read_count,
+    writeCount: r.write_count,
+    skipCount: r.skip_count,
+    rollbackCount: r.rollback_count,
+    commitCount: r.commit_count,
     startTime: null,
     endTime: null,
-    exitCode: e.exitCode,
-    exitMessage: e.exitMessage,
+    exitCode: r.exit_code,
+    exitMessage: r.exit_message,
   };
 }
 
 /**
  * Prisma-backed `JobRepository`.
  *
- * All state lives in the five batch meta tables. The contract
- * guarantees:
- *   - `getOrCreateJobInstance` is race-safe via the (jobName, jobKey)
- *     unique index.
- *   - `createExecutionAtomic` runs inside a single transaction that
- *     (a) idempotently upserts the instance row, (b) acquires a row
- *     lock with `SELECT ... FOR UPDATE SKIP LOCKED`, and (c) rejects
- *     with `JobExecutionAlreadyRunningError` if a STARTING/STARTED
- *     execution already exists.
- *   - `saveExecutionContext` deep-clones the data and auto-increments
- *     the version counter when `version` is omitted.
- *   - `findLatestStepExecution` orders by `created_at` descending.
+ * The package is driver-agnostic: the actual `PrismaClient` is
+ * provided by the `@nest-batch/postgresql` (or future
+ * `@nest-batch/mysql`) driver sibling via the `PrismaDriverProvider`
+ * token. The repository uses raw SQL via `prisma.$queryRaw` /
+ * `prisma.$executeRaw` so it does NOT depend on Prisma's generated
+ * client model names (those are owned by the driver sibling's
+ * bundled `prisma/schema.prisma`).
  */
 @Injectable()
 export class PrismaJobRepository extends JobRepository {
-  constructor(private readonly prisma: PrismaClient) {
+  constructor(
+    @Inject(PrismaDriverProvider) private readonly prisma: PrismaClient,
+  ) {
     super();
   }
 
   async getOrCreateJobInstance(name: string, jobKey: string): Promise<JobInstance> {
-    const existing = await this.prisma.batchJobInstance.findUnique({
-      where: { jobName_jobKey: { jobName: name, jobKey } },
-    });
-    if (existing) return mapJobInstance(existing as unknown as { id: string; job_name: string; job_key: string; created_at: Date });
+    const existing = (await this.prisma.$queryRaw`
+      SELECT "id", "job_name", "job_key", "created_at"
+      FROM "batch_job_instance"
+      WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
+      LIMIT 1
+    `) as JobInstanceRow[];
+    if (existing.length > 0) return mapJobInstance(existing[0]!);
 
     const id = randomUUID();
     try {
-      const created = await this.prisma.batchJobInstance.create({
-        data: { id, jobName: name, jobKey, createdAt: new Date() },
-      });
-      return mapJobInstance(created as unknown as { id: string; job_name: string; job_key: string; created_at: Date });
+      const inserted = (await this.prisma.$queryRaw`
+        INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
+        VALUES (${id}, ${name}, ${jobKey}, NOW())
+        ON CONFLICT ("job_name", "job_key") DO NOTHING
+        RETURNING "id", "job_name", "job_key", "created_at"
+      `) as JobInstanceRow[];
+      if (inserted.length > 0) return mapJobInstance(inserted[0]!);
     } catch {
-      const winner = await this.prisma.batchJobInstance.findUnique({
-        where: { jobName_jobKey: { jobName: name, jobKey } },
-      });
-      if (winner) return mapJobInstance(winner as unknown as { id: string; job_name: string; job_key: string; created_at: Date });
-      throw new Error(
-        `Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`,
-      );
+      // Fall through to read-back.
     }
+    const winner = (await this.prisma.$queryRaw`
+      SELECT "id", "job_name", "job_key", "created_at"
+      FROM "batch_job_instance"
+      WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
+      LIMIT 1
+    `) as JobInstanceRow[];
+    if (winner.length === 0) {
+      throw new Error(`Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`);
+    }
+    return mapJobInstance(winner[0]!);
   }
 
   async createJobExecution(
     jobInstanceId: string,
     params: JobParameters,
   ): Promise<JobExecution> {
-    const exec = await this.prisma.batchJobExecution.create({
-      data: {
-        id: randomUUID(),
-        jobInstanceId,
-        status: JobStatus.STARTING,
-        startTime: null,
-        endTime: null,
-        exitCode: '',
-        exitMessage: '',
-        params: serializeContext(deepClone(params)),
-      },
-    });
-    return mapJobExecution(exec as unknown as { id: string; job_instance_id: string; status: string; start_time: Date | null; end_time: Date | null; exit_code: string; exit_message: string; params: string });
+    const execId = randomUUID();
+    const execParams = serializeContext(deepClone(params));
+    const rows = (await this.prisma.$queryRaw`
+      INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
+      VALUES (${execId}, ${jobInstanceId}, ${JobStatus.STARTING}, NULL, NULL, '', '', ${execParams})
+      RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+    `) as JobExecutionRow[];
+    return mapJobExecution(rows[0]!);
   }
 
   async createExecutionAtomic(
@@ -181,177 +196,174 @@ export class PrismaJobRepository extends JobRepository {
     params: JobParameters,
   ): Promise<JobExecution> {
     return this.prisma.$transaction(async (tx) => {
-      // 1. Ensure the JobInstance row exists (upsert via raw SQL for ON CONFLICT)
+      // 1. Idempotent INSERT.
       const instId = randomUUID();
-      await tx.$executeRawUnsafe(
-        `INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT ("job_name", "job_key") DO NOTHING`,
-        instId,
-        name,
-        jobKey,
-      );
+      await tx.$executeRaw`
+        INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
+        VALUES (${instId}, ${name}, ${jobKey}, NOW())
+        ON CONFLICT ("job_name", "job_key") DO NOTHING
+      `;
 
-      // 2. Lock the instance row with SKIP LOCKED
-      const locked = await tx.$queryRawUnsafe<
-        Array<{ id: string; job_name: string; job_key: string; created_at: Date }>
-      >(
-        `SELECT "id", "job_name", "job_key", "created_at"
-         FROM "batch_job_instance"
-         WHERE "job_name" = $1 AND "job_key" = $2
-         FOR UPDATE SKIP LOCKED
-         LIMIT 1`,
-        name,
-        jobKey,
-      );
+      // 2. Lock the instance row with FOR UPDATE SKIP LOCKED.
+      const locked = (await tx.$queryRaw`
+        SELECT "id", "job_name", "job_key", "created_at"
+        FROM "batch_job_instance"
+        WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      `) as Array<{ id: string }>;
       if (!locked || locked.length === 0) {
         throw new JobExecutionAlreadyRunningError(name);
       }
       const instanceId = locked[0]!.id;
 
-      // 3. Under the lock, verify no running execution
-      const running = await tx.batchJobExecution.findFirst({
-        where: {
-          jobInstanceId: instanceId,
-          status: { in: [JobStatus.STARTING, JobStatus.STARTED] },
-        },
-      });
-      if (running) {
-        throw new JobExecutionAlreadyRunningError(running.id);
+      // 3. Under the lock, verify no running execution.
+      const running = (await tx.$queryRaw`
+        SELECT "id" FROM "batch_job_execution"
+        WHERE "job_instance_id" = ${instanceId}
+          AND "status" IN (${JobStatus.STARTING}, ${JobStatus.STARTED})
+        LIMIT 1
+      `) as Array<{ id: string }>;
+      if (running.length > 0) {
+        throw new JobExecutionAlreadyRunningError(running[0]!.id);
       }
 
-      // 4. Create the new execution row
-      const exec = await tx.batchJobExecution.create({
-        data: {
-          id: randomUUID(),
-          jobInstanceId: instanceId,
-          status: JobStatus.STARTING,
-          startTime: null,
-          endTime: null,
-          exitCode: '',
-          exitMessage: '',
-          params: serializeContext(deepClone(params)),
-        },
-      });
-      return mapJobExecution(exec as unknown as { id: string; job_instance_id: string; status: string; start_time: Date | null; end_time: Date | null; exit_code: string; exit_message: string; params: string });
+      // 4. Create the new execution row.
+      const execId = randomUUID();
+      const execParams = serializeContext(deepClone(params));
+      const inserted = (await tx.$queryRaw`
+        INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
+        VALUES (${execId}, ${instanceId}, ${JobStatus.STARTING}, NULL, NULL, '', '', ${execParams})
+        RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+      `) as JobExecutionRow[];
+      return mapJobExecution(inserted[0]!);
     });
   }
 
   async updateJobExecution(executionId: string, patch: JobExecutionPatch): Promise<void> {
-    const data: Record<string, unknown> = {};
-    if (patch.status !== undefined) data.status = patch.status;
-    if (patch.startTime !== undefined) data.startTime = patch.startTime;
-    if (patch.endTime !== undefined) data.endTime = patch.endTime;
-    if (patch.exitCode !== undefined) data.exitCode = patch.exitCode;
-    if (patch.exitMessage !== undefined) data.exitMessage = patch.exitMessage;
-    await this.prisma.batchJobExecution.update({
-      where: { id: executionId },
-      data,
-    });
+    if (patch.status !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "status" = ${patch.status} WHERE "id" = ${executionId}`;
+    }
+    if (patch.startTime !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "start_time" = ${patch.startTime} WHERE "id" = ${executionId}`;
+    }
+    if (patch.endTime !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "end_time" = ${patch.endTime} WHERE "id" = ${executionId}`;
+    }
+    if (patch.exitCode !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "exit_code" = ${patch.exitCode} WHERE "id" = ${executionId}`;
+    }
+    if (patch.exitMessage !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "exit_message" = ${patch.exitMessage} WHERE "id" = ${executionId}`;
+    }
   }
 
   async getJobExecution(executionId: string): Promise<JobExecution | null> {
-    const e = await this.prisma.batchJobExecution.findUnique({
-      where: { id: executionId },
-    });
-    return e ? mapJobExecution(e as unknown as { id: string; job_instance_id: string; status: string; start_time: Date | null; end_time: Date | null; exit_code: string; exit_message: string; params: string }) : null;
+    const rows = (await this.prisma.$queryRaw`
+      SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+      FROM "batch_job_execution" WHERE "id" = ${executionId} LIMIT 1
+    `) as JobExecutionRow[];
+    return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     if (!jobInstanceId) return null;
-    const e = await this.prisma.batchJobExecution.findFirst({
-      where: {
-        jobInstanceId,
-        status: { in: [JobStatus.STARTING, JobStatus.STARTED] },
-      },
-      orderBy: { startTime: 'desc' },
-    });
-    return e ? mapJobExecution(e as unknown as { id: string; job_instance_id: string; status: string; start_time: Date | null; end_time: Date | null; exit_code: string; exit_message: string; params: string }) : null;
+    const rows = (await this.prisma.$queryRaw`
+      SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+      FROM "batch_job_execution"
+      WHERE "job_instance_id" = ${jobInstanceId}
+        AND "status" IN (${JobStatus.STARTING}, ${JobStatus.STARTED})
+      ORDER BY "start_time" DESC NULLS LAST
+      LIMIT 1
+    `) as JobExecutionRow[];
+    return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
   async createStepExecution(
     jobExecutionId: string,
     stepName: string,
   ): Promise<StepExecution> {
-    const step = await this.prisma.batchStepExecution.create({
-      data: {
-        id: randomUUID(),
-        jobExecutionId,
-        stepName,
-        status: StepStatus.STARTING,
-        readCount: 0,
-        writeCount: 0,
-        skipCount: 0,
-        rollbackCount: 0,
-        commitCount: 0,
-        exitCode: '',
-        exitMessage: '',
-        createdAt: new Date(),
-      },
-    });
-    return mapStepExecution(step as unknown as { id: string; jobExecutionId: string; stepName: string; status: string; readCount: number; writeCount: number; skipCount: number; rollbackCount: number; commitCount: number; exitCode: string; exitMessage: string });
+    const stepId = randomUUID();
+    const rows = (await this.prisma.$queryRaw`
+      INSERT INTO "batch_step_execution" ("id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at")
+      VALUES (${stepId}, ${jobExecutionId}, ${stepName}, ${StepStatus.STARTING}, 0, 0, 0, 0, 0, '', '', NOW())
+      RETURNING "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+    `) as StepExecutionRow[];
+    return mapStepExecution(rows[0]!);
   }
 
   async updateStepExecution(
     stepExecutionId: string,
     patch: StepExecutionPatch,
   ): Promise<void> {
-    const data: Record<string, unknown> = {};
-    if (patch.status !== undefined) data.status = patch.status;
-    if (patch.readCount !== undefined) data.readCount = patch.readCount;
-    if (patch.writeCount !== undefined) data.writeCount = patch.writeCount;
-    if (patch.skipCount !== undefined) data.skipCount = patch.skipCount;
-    if (patch.rollbackCount !== undefined) data.rollbackCount = patch.rollbackCount;
-    if (patch.commitCount !== undefined) data.commitCount = patch.commitCount;
-    if (patch.exitCode !== undefined) data.exitCode = patch.exitCode;
-    if (patch.exitMessage !== undefined) data.exitMessage = patch.exitMessage;
-    await this.prisma.batchStepExecution.update({
-      where: { id: stepExecutionId },
-      data,
-    });
+    if (patch.status !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "status" = ${patch.status} WHERE "id" = ${stepExecutionId}`;
+    }
+    if (patch.readCount !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "read_count" = ${patch.readCount} WHERE "id" = ${stepExecutionId}`;
+    }
+    if (patch.writeCount !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "write_count" = ${patch.writeCount} WHERE "id" = ${stepExecutionId}`;
+    }
+    if (patch.skipCount !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "skip_count" = ${patch.skipCount} WHERE "id" = ${stepExecutionId}`;
+    }
+    if (patch.rollbackCount !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "rollback_count" = ${patch.rollbackCount} WHERE "id" = ${stepExecutionId}`;
+    }
+    if (patch.commitCount !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "commit_count" = ${patch.commitCount} WHERE "id" = ${stepExecutionId}`;
+    }
+    if (patch.exitCode !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "exit_code" = ${patch.exitCode} WHERE "id" = ${stepExecutionId}`;
+    }
+    if (patch.exitMessage !== undefined) {
+      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "exit_message" = ${patch.exitMessage} WHERE "id" = ${stepExecutionId}`;
+    }
   }
 
   async getStepExecution(stepExecutionId: string): Promise<StepExecution | null> {
-    const s = await this.prisma.batchStepExecution.findUnique({
-      where: { id: stepExecutionId },
-    });
-    return s ? mapStepExecution(s as unknown as { id: string; jobExecutionId: string; stepName: string; status: string; readCount: number; writeCount: number; skipCount: number; rollbackCount: number; commitCount: number; exitCode: string; exitMessage: string }) : null;
+    const rows = (await this.prisma.$queryRaw`
+      SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+      FROM "batch_step_execution" WHERE "id" = ${stepExecutionId} LIMIT 1
+    `) as StepExecutionRow[];
+    return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
   }
 
   async findLatestStepExecution(
     jobExecutionId: string,
     stepName: string,
   ): Promise<StepExecution | null> {
-    const rows = await this.prisma.batchStepExecution.findMany({
-      where: { jobExecutionId, stepName },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: 1,
-    });
-    return rows.length > 0
-      ? mapStepExecution(rows[0] as unknown as { id: string; jobExecutionId: string; stepName: string; status: string; readCount: number; writeCount: number; skipCount: number; rollbackCount: number; commitCount: number; exitCode: string; exitMessage: string })
-      : null;
+    const rows = (await this.prisma.$queryRaw`
+      SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+      FROM "batch_step_execution"
+      WHERE "job_execution_id" = ${jobExecutionId} AND "step_name" = ${stepName}
+      ORDER BY "created_at" DESC, "id" DESC
+      LIMIT 1
+    `) as StepExecutionRow[];
+    return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
   }
 
   async getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext> {
     const key = scopeKey(scope);
     if (key.startsWith('job::')) {
-      const e = await this.prisma.batchJobExecutionContext.findUnique({
-        where: { jobExecutionId: key.slice(5) },
-      });
-      if (e) {
+      const rows = (await this.prisma.$queryRaw`
+        SELECT "data", "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ${key.slice(5)} LIMIT 1
+      `) as ContextRow[];
+      if (rows.length > 0) {
         return {
-          data: e.data.length > 0 ? deserializeContext(e.data) : null,
-          version: e.version,
+          data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
+          version: rows[0]!.version,
         };
       }
     } else {
-      const e = await this.prisma.batchStepExecutionContext.findUnique({
-        where: { stepExecutionId: key.slice(6) },
-      });
-      if (e) {
+      const rows = (await this.prisma.$queryRaw`
+        SELECT "data", "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ${key.slice(6)} LIMIT 1
+      `) as ContextRow[];
+      if (rows.length > 0) {
         return {
-          data: e.data.length > 0 ? deserializeContext(e.data) : null,
-          version: e.version,
+          data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
+          version: rows[0]!.version,
         };
       }
     }
@@ -368,35 +380,33 @@ export class PrismaJobRepository extends JobRepository {
     const serialized = serializeContext(deepClone(ctx.data));
     if (key.startsWith('job::')) {
       const jobExecutionId = key.slice(5);
-      const existing = await this.prisma.batchJobExecutionContext.findUnique({
-        where: { jobExecutionId },
-      });
-      const nextVersion = version !== undefined ? version : (existing?.version ?? 0) + 1;
-      if (existing) {
-        await this.prisma.batchJobExecutionContext.update({
-          where: { jobExecutionId },
-          data: { data: serialized, version: nextVersion },
-        });
+      const existing = (await this.prisma.$queryRaw`
+        SELECT "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ${jobExecutionId} LIMIT 1
+      `) as ContextRow[];
+      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
+      if (existing.length > 0) {
+        await this.prisma.$executeRaw`
+          UPDATE "batch_job_execution_context" SET "data" = ${serialized}, "version" = ${nextVersion} WHERE "job_execution_id" = ${jobExecutionId}
+        `;
       } else {
-        await this.prisma.batchJobExecutionContext.create({
-          data: { jobExecutionId, data: serialized, version: nextVersion },
-        });
+        await this.prisma.$executeRaw`
+          INSERT INTO "batch_job_execution_context" ("job_execution_id", "data", "version") VALUES (${jobExecutionId}, ${serialized}, ${nextVersion})
+        `;
       }
     } else {
       const stepExecutionId = key.slice(6);
-      const existing = await this.prisma.batchStepExecutionContext.findUnique({
-        where: { stepExecutionId },
-      });
-      const nextVersion = version !== undefined ? version : (existing?.version ?? 0) + 1;
-      if (existing) {
-        await this.prisma.batchStepExecutionContext.update({
-          where: { stepExecutionId },
-          data: { data: serialized, version: nextVersion },
-        });
+      const existing = (await this.prisma.$queryRaw`
+        SELECT "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ${stepExecutionId} LIMIT 1
+      `) as ContextRow[];
+      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
+      if (existing.length > 0) {
+        await this.prisma.$executeRaw`
+          UPDATE "batch_step_execution_context" SET "data" = ${serialized}, "version" = ${nextVersion} WHERE "step_execution_id" = ${stepExecutionId}
+        `;
       } else {
-        await this.prisma.batchStepExecutionContext.create({
-          data: { stepExecutionId, data: serialized, version: nextVersion },
-        });
+        await this.prisma.$executeRaw`
+          INSERT INTO "batch_step_execution_context" ("step_execution_id", "data", "version") VALUES (${stepExecutionId}, ${serialized}, ${nextVersion})
+        `;
       }
     }
   }
