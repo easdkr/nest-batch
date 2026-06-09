@@ -16,6 +16,41 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres-prisma:
+    image: postgres:16-alpine
+    container_name: nest-batch-postgres-prisma
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: nest_batch_prisma
+    volumes:
+      - pgdata_prisma:/var/lib/postgresql/data
+      - ./packages/prisma/prisma/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d nest_batch_prisma"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-drizzle:
+    image: postgres:16-alpine
+    container_name: nest-batch-postgres-drizzle
+    ports:
+      - "5436:5432"
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: nest_batch_drizzle
+    volumes:
+      - pgdata_drizzle:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d nest_batch_drizzle"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7-alpine
     container_name: nest-batch-redis
@@ -63,3 +98,5 @@ services:
 
 volumes:
   pgdata:
+  pgdata_prisma:
+  pgdata_drizzle:
