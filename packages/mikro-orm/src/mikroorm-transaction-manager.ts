@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/core';
 import { TransactionManager, TransactionContext } from '@nest-batch/core';
+import { MikroOrmDriverProvider } from './mikro-orm.driver-provider';
 
 export interface MikroOrmTransactionContext extends TransactionContext {
   readonly entityManager: EntityManager;
@@ -24,7 +25,9 @@ export interface MikroOrmTransactionContext extends TransactionContext {
  */
 @Injectable()
 export class MikroORMTransactionManager extends TransactionManager {
-  constructor(private readonly em: EntityManager) {
+  constructor(
+    @Inject(MikroOrmDriverProvider) private readonly em: EntityManager,
+  ) {
     super();
   }
 

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   JobRepository,
@@ -19,9 +19,8 @@ import type {
   ExecutionContext,
   ExecutionScope,
 } from '@nest-batch/core';
-import { eq, inArray, and, desc, sql } from 'drizzle-orm';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import * as schema from '../schema';
+import { sql } from 'drizzle-orm';
+import { DrizzleDriverProvider } from '../drizzle.driver-provider';
 
 function scopeKey(scope: ExecutionScope): string {
   if ('jobExecutionId' in scope) return `job::${scope.jobExecutionId}`;
@@ -39,109 +38,160 @@ function deepClone<T>(value: T): T {
   return out as T;
 }
 
-function mapJobInstance(e: typeof schema.batchJobInstance.$inferSelect): JobInstance {
+interface JobInstanceRow {
+  id: string;
+  job_name: string;
+  job_key: string;
+  created_at: string | Date;
+}
+
+interface JobExecutionRow {
+  id: string;
+  job_instance_id: string;
+  status: string;
+  start_time: string | Date | null;
+  end_time: string | Date | null;
+  exit_code: string;
+  exit_message: string;
+  params: string;
+}
+
+interface StepExecutionRow {
+  id: string;
+  job_execution_id: string;
+  step_name: string;
+  status: string;
+  read_count: number;
+  write_count: number;
+  skip_count: number;
+  rollback_count: number;
+  commit_count: number;
+  exit_code: string;
+  exit_message: string;
+  created_at: string | Date;
+}
+
+interface ContextRow {
+  data: string;
+  version: number;
+}
+
+function mapJobInstance(r: JobInstanceRow): JobInstance {
   return {
-    id: e.id,
-    jobName: e.jobName,
-    jobKey: e.jobKey,
-    createdAt: e.createdAt,
+    id: r.id,
+    jobName: r.job_name,
+    jobKey: r.job_key,
+    createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
   };
 }
 
-function mapJobExecution(e: typeof schema.batchJobExecution.$inferSelect): JobExecution {
+function mapJobExecution(r: JobExecutionRow): JobExecution {
   let params: JobParameters = {};
-  if (e.params && e.params.length > 0) {
+  if (r.params && r.params.length > 0) {
     try {
-      params = deserializeContext<JobParameters>(e.params);
+      params = deserializeContext<JobParameters>(r.params);
     } catch {
       params = {};
     }
   }
   return {
-    id: e.id,
-    jobInstanceId: e.jobInstanceId,
-    status: e.status as JobStatus,
-    startTime: e.startTime ?? null,
-    endTime: e.endTime ?? null,
-    exitCode: e.exitCode,
-    exitMessage: e.exitMessage,
+    id: r.id,
+    jobInstanceId: r.job_instance_id,
+    status: r.status as JobStatus,
+    startTime: r.start_time ? (r.start_time instanceof Date ? r.start_time : new Date(r.start_time)) : null,
+    endTime: r.end_time ? (r.end_time instanceof Date ? r.end_time : new Date(r.end_time)) : null,
+    exitCode: r.exit_code,
+    exitMessage: r.exit_message,
     params,
   };
 }
 
-function mapStepExecution(e: typeof schema.batchStepExecution.$inferSelect): StepExecution {
+function mapStepExecution(r: StepExecutionRow): StepExecution {
   return {
-    id: e.id,
-    jobExecutionId: e.jobExecutionId,
-    stepName: e.stepName,
-    status: e.status as StepStatus,
-    readCount: e.readCount,
-    writeCount: e.writeCount,
-    skipCount: e.skipCount,
-    rollbackCount: e.rollbackCount,
-    commitCount: e.commitCount,
+    id: r.id,
+    jobExecutionId: r.job_execution_id,
+    stepName: r.step_name,
+    status: r.status as StepStatus,
+    readCount: r.read_count,
+    writeCount: r.write_count,
+    skipCount: r.skip_count,
+    rollbackCount: r.rollback_count,
+    commitCount: r.commit_count,
     startTime: null,
     endTime: null,
-    exitCode: e.exitCode,
-    exitMessage: e.exitMessage,
+    exitCode: r.exit_code,
+    exitMessage: r.exit_message,
   };
 }
 
 /**
  * Drizzle ORM-backed `JobRepository`.
+ *
+ * The package is driver-agnostic: the actual Drizzle `Database`
+ * (e.g. `NodePgDatabase` for Postgres, `MySql2Database` for MySQL)
+ * is provided by the `@nest-batch/postgresql` (or future
+ * `@nest-batch/mysql`) driver sibling via the
+ * `DrizzleDriverProvider` token. The repository itself uses
+ * driver-agnostic raw SQL via the `sql` template tag from
+ * `drizzle-orm` (NOT from `drizzle-orm/pg-core` or
+ * `drizzle-orm/mysql-core`).
  */
 @Injectable()
 export class DrizzleJobRepository extends JobRepository {
-  constructor(private readonly db: NodePgDatabase<typeof schema>) {
+  // The Drizzle `Database` is generic over a schema. The slot
+  // pattern casts to `unknown` for the slot side; the driver
+  // sibling holds the concrete schema and casts on its side.
+  // `any` is intentional: the slot repository uses raw SQL
+  // (`sql` template), so the schema type is opaque to it.
+  constructor(@Inject(DrizzleDriverProvider) private readonly db: any) {
     super();
   }
 
   async getOrCreateJobInstance(name: string, jobKey: string): Promise<JobInstance> {
-    const existing = await this.db
-      .select()
-      .from(schema.batchJobInstance)
-      .where(and(eq(schema.batchJobInstance.jobName, name), eq(schema.batchJobInstance.jobKey, jobKey)))
-      .limit(1);
+    const existing = (await this.db.execute(
+      sql`SELECT "id", "job_name", "job_key", "created_at"
+          FROM "batch_job_instance"
+          WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
+          LIMIT 1`,
+    )) as JobInstanceRow[];
     if (existing.length > 0) return mapJobInstance(existing[0]!);
 
     const id = randomUUID();
     try {
-      await this.db.insert(schema.batchJobInstance).values({
-        id,
-        jobName: name,
-        jobKey,
-        createdAt: new Date(),
-      });
-      return { id, jobName: name, jobKey, createdAt: new Date() };
+      const inserted = (await this.db.execute(
+        sql`INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
+            VALUES (${id}, ${name}, ${jobKey}, NOW())
+            ON CONFLICT ("job_name", "job_key") DO NOTHING
+            RETURNING "id", "job_name", "job_key", "created_at"`,
+      )) as JobInstanceRow[];
+      if (inserted.length > 0) return mapJobInstance(inserted[0]!);
     } catch {
-      const winner = await this.db
-        .select()
-        .from(schema.batchJobInstance)
-        .where(and(eq(schema.batchJobInstance.jobName, name), eq(schema.batchJobInstance.jobKey, jobKey)))
-        .limit(1);
-      if (winner.length > 0) return mapJobInstance(winner[0]!);
-      throw new Error(
-        `Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`,
-      );
+      // Fall through to read-back.
     }
+    const winner = (await this.db.execute(
+      sql`SELECT "id", "job_name", "job_key", "created_at"
+          FROM "batch_job_instance"
+          WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
+          LIMIT 1`,
+    )) as JobInstanceRow[];
+    if (winner.length === 0) {
+      throw new Error(`Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`);
+    }
+    return mapJobInstance(winner[0]!);
   }
 
   async createJobExecution(
     jobInstanceId: string,
     params: JobParameters,
   ): Promise<JobExecution> {
-    const exec = {
-      id: randomUUID(),
-      jobInstanceId,
-      status: JobStatus.STARTING,
-      startTime: null,
-      endTime: null,
-      exitCode: '',
-      exitMessage: '',
-      params: serializeContext(deepClone(params)),
-    };
-    await this.db.insert(schema.batchJobExecution).values(exec);
-    return mapJobExecution(exec as typeof schema.batchJobExecution.$inferSelect);
+    const execId = randomUUID();
+    const execParams = serializeContext(deepClone(params));
+    const rows = (await this.db.execute(
+      sql`INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
+          VALUES (${execId}, ${jobInstanceId}, ${JobStatus.STARTING}, NULL, NULL, '', '', ${execParams})
+          RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
+    )) as JobExecutionRow[];
+    return mapJobExecution(rows[0]!);
   }
 
   async createExecutionAtomic(
@@ -149,8 +199,8 @@ export class DrizzleJobRepository extends JobRepository {
     jobKey: string,
     params: JobParameters,
   ): Promise<JobExecution> {
-    return this.db.transaction(async (tx) => {
-      // 1. Ensure the JobInstance row exists
+    return this.db.transaction(async (tx: any) => {
+      // 1. Idempotent INSERT.
       const instId = randomUUID();
       await tx.execute(
         sql`INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
@@ -158,85 +208,73 @@ export class DrizzleJobRepository extends JobRepository {
             ON CONFLICT ("job_name", "job_key") DO NOTHING`,
       );
 
-      // 2. Lock the instance row with SKIP LOCKED
-      const locked = await tx.execute(
+      // 2. Lock the instance row with FOR UPDATE SKIP LOCKED.
+      const locked = (await tx.execute(
         sql`SELECT "id", "job_name", "job_key", "created_at"
             FROM "batch_job_instance"
             WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
             FOR UPDATE SKIP LOCKED
             LIMIT 1`,
-      );
-      if (!locked || !locked.rows || locked.rows.length === 0) {
+      )) as Array<{ id: string }>;
+      if (!locked || locked.length === 0) {
         throw new JobExecutionAlreadyRunningError(name);
       }
-      const instanceId = (locked.rows[0] as { id: string }).id;
+      const instanceId = locked[0]!.id;
 
-      // 3. Under the lock, verify no running execution
-      const running = await tx
-        .select()
-        .from(schema.batchJobExecution)
-        .where(
-          and(
-            eq(schema.batchJobExecution.jobInstanceId, instanceId),
-            inArray(schema.batchJobExecution.status, [JobStatus.STARTING, JobStatus.STARTED]),
-          ),
-        )
-        .limit(1);
+      // 3. Under the lock, verify no running execution.
+      const running = (await tx.execute(
+        sql`SELECT "id" FROM "batch_job_execution"
+            WHERE "job_instance_id" = ${instanceId}
+              AND "status" IN (${JobStatus.STARTING}, ${JobStatus.STARTED})
+            LIMIT 1`,
+      )) as Array<{ id: string }>;
       if (running.length > 0) {
         throw new JobExecutionAlreadyRunningError(running[0]!.id);
       }
 
-      // 4. Create the new execution row
-      const exec = {
-        id: randomUUID(),
-        jobInstanceId: instanceId,
-        status: JobStatus.STARTING,
-        startTime: null,
-        endTime: null,
-        exitCode: '',
-        exitMessage: '',
-        params: serializeContext(deepClone(params)),
-      };
-      await tx.insert(schema.batchJobExecution).values(exec);
-      return mapJobExecution(exec as typeof schema.batchJobExecution.$inferSelect);
+      // 4. Create the new execution row.
+      const execId = randomUUID();
+      const execParams = serializeContext(deepClone(params));
+      const inserted = (await tx.execute(
+        sql`INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
+            VALUES (${execId}, ${instanceId}, ${JobStatus.STARTING}, NULL, NULL, '', '', ${execParams})
+            RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
+      )) as JobExecutionRow[];
+      return mapJobExecution(inserted[0]!);
     });
   }
 
   async updateJobExecution(executionId: string, patch: JobExecutionPatch): Promise<void> {
-    const data: Partial<typeof schema.batchJobExecution.$inferInsert> = {};
-    if (patch.status !== undefined) data.status = patch.status;
-    if (patch.startTime !== undefined) data.startTime = patch.startTime;
-    if (patch.endTime !== undefined) data.endTime = patch.endTime;
-    if (patch.exitCode !== undefined) data.exitCode = patch.exitCode;
-    if (patch.exitMessage !== undefined) data.exitMessage = patch.exitMessage;
-    await this.db
-      .update(schema.batchJobExecution)
-      .set(data)
-      .where(eq(schema.batchJobExecution.id, executionId));
+    const sets: ReturnType<typeof sql>[] = [];
+    if (patch.status !== undefined) sets.push(sql`"status" = ${patch.status}`);
+    if (patch.startTime !== undefined) sets.push(sql`"start_time" = ${patch.startTime}`);
+    if (patch.endTime !== undefined) sets.push(sql`"end_time" = ${patch.endTime}`);
+    if (patch.exitCode !== undefined) sets.push(sql`"exit_code" = ${patch.exitCode}`);
+    if (patch.exitMessage !== undefined) sets.push(sql`"exit_message" = ${patch.exitMessage}`);
+    if (sets.length === 0) return;
+    await this.db.execute(
+      sql`UPDATE "batch_job_execution" SET ${sql.join(sets, sql`, `)} WHERE "id" = ${executionId}`,
+    );
   }
 
   async getJobExecution(executionId: string): Promise<JobExecution | null> {
-    const rows = await this.db
-      .select()
-      .from(schema.batchJobExecution)
-      .where(eq(schema.batchJobExecution.id, executionId))
-      .limit(1);
+    const rows = (await this.db.execute(
+      sql`SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+          FROM "batch_job_execution" WHERE "id" = ${executionId} LIMIT 1`,
+    )) as JobExecutionRow[];
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     if (!jobInstanceId) return null;
-    const rows = await this.db
-      .select()
-      .from(schema.batchJobExecution)
-      .where(
-        and(
-          eq(schema.batchJobExecution.jobInstanceId, jobInstanceId),
-          inArray(schema.batchJobExecution.status, [JobStatus.STARTING, JobStatus.STARTED]),
-        ),
-      )
-      .orderBy(desc(schema.batchJobExecution.startTime))
-      .limit(1);
+    const rows = (await this.db.execute(
+      sql`SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+          FROM "batch_job_execution"
+          WHERE "job_instance_id" = ${jobInstanceId}
+            AND "status" IN (${JobStatus.STARTING}, ${JobStatus.STARTED})
+          ORDER BY "start_time" DESC NULLS LAST
+          LIMIT 1`,
+    )) as JobExecutionRow[];
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
@@ -244,49 +282,39 @@ export class DrizzleJobRepository extends JobRepository {
     jobExecutionId: string,
     stepName: string,
   ): Promise<StepExecution> {
-    const step = {
-      id: randomUUID(),
-      jobExecutionId,
-      stepName,
-      status: StepStatus.STARTING,
-      readCount: 0,
-      writeCount: 0,
-      skipCount: 0,
-      rollbackCount: 0,
-      commitCount: 0,
-      exitCode: '',
-      exitMessage: '',
-      createdAt: new Date(),
-    };
-    await this.db.insert(schema.batchStepExecution).values(step);
-    return mapStepExecution(step as typeof schema.batchStepExecution.$inferSelect);
+    const stepId = randomUUID();
+    const rows = (await this.db.execute(
+      sql`INSERT INTO "batch_step_execution" ("id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at")
+          VALUES (${stepId}, ${jobExecutionId}, ${stepName}, ${StepStatus.STARTING}, 0, 0, 0, 0, 0, '', '', NOW())
+          RETURNING "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"`,
+    )) as StepExecutionRow[];
+    return mapStepExecution(rows[0]!);
   }
 
   async updateStepExecution(
     stepExecutionId: string,
     patch: StepExecutionPatch,
   ): Promise<void> {
-    const data: Partial<typeof schema.batchStepExecution.$inferInsert> = {};
-    if (patch.status !== undefined) data.status = patch.status;
-    if (patch.readCount !== undefined) data.readCount = patch.readCount;
-    if (patch.writeCount !== undefined) data.writeCount = patch.writeCount;
-    if (patch.skipCount !== undefined) data.skipCount = patch.skipCount;
-    if (patch.rollbackCount !== undefined) data.rollbackCount = patch.rollbackCount;
-    if (patch.commitCount !== undefined) data.commitCount = patch.commitCount;
-    if (patch.exitCode !== undefined) data.exitCode = patch.exitCode;
-    if (patch.exitMessage !== undefined) data.exitMessage = patch.exitMessage;
-    await this.db
-      .update(schema.batchStepExecution)
-      .set(data)
-      .where(eq(schema.batchStepExecution.id, stepExecutionId));
+    const sets: ReturnType<typeof sql>[] = [];
+    if (patch.status !== undefined) sets.push(sql`"status" = ${patch.status}`);
+    if (patch.readCount !== undefined) sets.push(sql`"read_count" = ${patch.readCount}`);
+    if (patch.writeCount !== undefined) sets.push(sql`"write_count" = ${patch.writeCount}`);
+    if (patch.skipCount !== undefined) sets.push(sql`"skip_count" = ${patch.skipCount}`);
+    if (patch.rollbackCount !== undefined) sets.push(sql`"rollback_count" = ${patch.rollbackCount}`);
+    if (patch.commitCount !== undefined) sets.push(sql`"commit_count" = ${patch.commitCount}`);
+    if (patch.exitCode !== undefined) sets.push(sql`"exit_code" = ${patch.exitCode}`);
+    if (patch.exitMessage !== undefined) sets.push(sql`"exit_message" = ${patch.exitMessage}`);
+    if (sets.length === 0) return;
+    await this.db.execute(
+      sql`UPDATE "batch_step_execution" SET ${sql.join(sets, sql`, `)} WHERE "id" = ${stepExecutionId}`,
+    );
   }
 
   async getStepExecution(stepExecutionId: string): Promise<StepExecution | null> {
-    const rows = await this.db
-      .select()
-      .from(schema.batchStepExecution)
-      .where(eq(schema.batchStepExecution.id, stepExecutionId))
-      .limit(1);
+    const rows = (await this.db.execute(
+      sql`SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+          FROM "batch_step_execution" WHERE "id" = ${stepExecutionId} LIMIT 1`,
+    )) as StepExecutionRow[];
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
   }
 
@@ -294,46 +322,36 @@ export class DrizzleJobRepository extends JobRepository {
     jobExecutionId: string,
     stepName: string,
   ): Promise<StepExecution | null> {
-    const rows = await this.db
-      .select()
-      .from(schema.batchStepExecution)
-      .where(
-        and(
-          eq(schema.batchStepExecution.jobExecutionId, jobExecutionId),
-          eq(schema.batchStepExecution.stepName, stepName),
-        ),
-      )
-      .orderBy(desc(schema.batchStepExecution.createdAt), desc(schema.batchStepExecution.id))
-      .limit(1);
+    const rows = (await this.db.execute(
+      sql`SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+          FROM "batch_step_execution"
+          WHERE "job_execution_id" = ${jobExecutionId} AND "step_name" = ${stepName}
+          ORDER BY "created_at" DESC, "id" DESC
+          LIMIT 1`,
+    )) as StepExecutionRow[];
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
   }
 
   async getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext> {
     const key = scopeKey(scope);
     if (key.startsWith('job::')) {
-      const rows = await this.db
-        .select()
-        .from(schema.batchJobExecutionContext)
-        .where(eq(schema.batchJobExecutionContext.jobExecutionId, key.slice(5)))
-        .limit(1);
+      const rows = (await this.db.execute(
+        sql`SELECT "data", "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ${key.slice(5)} LIMIT 1`,
+      )) as ContextRow[];
       if (rows.length > 0) {
-        const e = rows[0]!;
         return {
-          data: e.data.length > 0 ? deserializeContext(e.data) : null,
-          version: e.version,
+          data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
+          version: rows[0]!.version,
         };
       }
     } else {
-      const rows = await this.db
-        .select()
-        .from(schema.batchStepExecutionContext)
-        .where(eq(schema.batchStepExecutionContext.stepExecutionId, key.slice(6)))
-        .limit(1);
+      const rows = (await this.db.execute(
+        sql`SELECT "data", "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ${key.slice(6)} LIMIT 1`,
+      )) as ContextRow[];
       if (rows.length > 0) {
-        const e = rows[0]!;
         return {
-          data: e.data.length > 0 ? deserializeContext(e.data) : null,
-          version: e.version,
+          data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
+          version: rows[0]!.version,
         };
       }
     }
@@ -350,43 +368,33 @@ export class DrizzleJobRepository extends JobRepository {
     const serialized = serializeContext(deepClone(ctx.data));
     if (key.startsWith('job::')) {
       const jobExecutionId = key.slice(5);
-      const existing = await this.db
-        .select()
-        .from(schema.batchJobExecutionContext)
-        .where(eq(schema.batchJobExecutionContext.jobExecutionId, jobExecutionId))
-        .limit(1);
-      const nextVersion = version !== undefined ? version : (existing[0]?.version ?? 0) + 1;
+      const existing = (await this.db.execute(
+        sql`SELECT "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ${jobExecutionId} LIMIT 1`,
+      )) as ContextRow[];
+      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
       if (existing.length > 0) {
-        await this.db
-          .update(schema.batchJobExecutionContext)
-          .set({ data: serialized, version: nextVersion })
-          .where(eq(schema.batchJobExecutionContext.jobExecutionId, jobExecutionId));
+        await this.db.execute(
+          sql`UPDATE "batch_job_execution_context" SET "data" = ${serialized}, "version" = ${nextVersion} WHERE "job_execution_id" = ${jobExecutionId}`,
+        );
       } else {
-        await this.db.insert(schema.batchJobExecutionContext).values({
-          jobExecutionId,
-          data: serialized,
-          version: nextVersion,
-        });
+        await this.db.execute(
+          sql`INSERT INTO "batch_job_execution_context" ("job_execution_id", "data", "version") VALUES (${jobExecutionId}, ${serialized}, ${nextVersion})`,
+        );
       }
     } else {
       const stepExecutionId = key.slice(6);
-      const existing = await this.db
-        .select()
-        .from(schema.batchStepExecutionContext)
-        .where(eq(schema.batchStepExecutionContext.stepExecutionId, stepExecutionId))
-        .limit(1);
-      const nextVersion = version !== undefined ? version : (existing[0]?.version ?? 0) + 1;
+      const existing = (await this.db.execute(
+        sql`SELECT "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ${stepExecutionId} LIMIT 1`,
+      )) as ContextRow[];
+      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
       if (existing.length > 0) {
-        await this.db
-          .update(schema.batchStepExecutionContext)
-          .set({ data: serialized, version: nextVersion })
-          .where(eq(schema.batchStepExecutionContext.stepExecutionId, stepExecutionId));
+        await this.db.execute(
+          sql`UPDATE "batch_step_execution_context" SET "data" = ${serialized}, "version" = ${nextVersion} WHERE "step_execution_id" = ${stepExecutionId}`,
+        );
       } else {
-        await this.db.insert(schema.batchStepExecutionContext).values({
-          stepExecutionId,
-          data: serialized,
-          version: nextVersion,
-        });
+        await this.db.execute(
+          sql`INSERT INTO "batch_step_execution_context" ("step_execution_id", "data", "version") VALUES (${stepExecutionId}, ${serialized}, ${nextVersion})`,
+        );
       }
     }
   }

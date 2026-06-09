@@ -76,17 +76,21 @@ const DEP_FIELDS: readonly string[] = [
  * Substrings in `package.json` dep keys that imply a Postgres
  * provider. The check is on the *key* (package name), not the
  * value (semver range).
+ *
+ * The substring `drizzle-orm` is intentionally NOT in the list. The
+ * `drizzle` adapter package declares `drizzle-orm@^0.40.0` as a
+ * schema-only peer dep (it owns the `pgTable` factory imports, not
+ * any specific driver), and the `mysql` sibling declares
+ * `drizzle-orm` for `drizzle-orm/mysql-core`. The T-AC-2b final
+ * form (`packages/postgresql/tests/boundary/no-forbidden-imports.test.ts`)
+ * scans `src/**` for driver-specific specifiers
+ * (`drizzle-orm/pg-core`, `drizzle-orm/node-postgres`) which is the
+ * precise leak signal.
  */
 const POSTGRES_DEP_KEY_SUBSTRINGS: readonly string[] = [
   'pg-core',
   'postgresql',
   '@nestjs/typeorm',
-  // `drizzle-orm` is the umbrella package; we also block it
-  // because the Postgres-specific bits (`drizzle-orm/pg-core`)
-  // come from it. The boundary test in core already blocks
-  // `drizzle-orm` outright; this substring check enforces the
-  // same rule at the dep level for the adapter packages.
-  'drizzle-orm',
 ];
 
 function* walkTypeScriptFiles(dir: string): Generator<string> {
