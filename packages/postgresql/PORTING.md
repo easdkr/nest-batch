@@ -312,3 +312,147 @@ expected public exports (to be added to
   `DrizzlePostgres`, `PrismaPostgres` as the public shell
   names. The implementation task should verify these match the
   ported shells' actual exports.
+
+---
+
+## 10. T-AC-2b Boundary Verification (2026-06-10)
+
+The boundary test at
+`packages/core/tests/core/boundary/no-postgres-in-existing-packages.test.ts`
+is the guardrail for the 0.2.0 user-imposed rule "DB adapters
+must not depend on a DB provider". It is the spec that
+*port-of-shell-code-into-`packages/postgresql/`* is a
+hard contract, not a soft preference. The test was confirmed
+GREEN against the current tree on 2026-06-10.
+
+### What the test scans
+
+The test walks an 8-entry watchlist
+(`NON_POSTGRES_PACKAGES = ['core', 'mikro-orm', 'typeorm',
+'bullmq', 'drizzle', 'prisma', 'kafka', 'mysql']`) and, for
+each package that has a `packages/<pkg>/` directory, applies
+four checks:
+
+1. **src-import** — every `.ts` file under `src/**` is scanned
+   for these specifiers (the `POSTGRES_SPEC_RE` regex):
+   - bare `pg` (word-bounded)
+   - `@mikro-orm/postgresql`
+   - `@nestjs/typeorm` (carries the Postgres driver)
+   - `drizzle-orm/pg-core`
+   - `drizzle-orm/node-postgres`
+2. **package-json** — the four `dependencies` /
+   `devDependencies` / `peerDependencies` /
+   `optionalDependencies` blocks are scanned for dep *keys*
+   containing one of: `pg-core`, `postgresql`, `@nestjs/typeorm`.
+   (The `drizzle-orm` substring is intentionally absent — the
+   `drizzle` slot legitimately declares `drizzle-orm` for the
+   `pgTable` factory, and the future `mysql` slot will declare
+   it for `mysql-core`.)
+3. **src-env** — every `.ts` file under `src/**` is scanned for
+   string literals matching `\bPOSTGRES_[A-Z_]+\b` (the
+   `POSTGRES_*` env-var prefix).
+4. **prisma-schema** — `packages/<pkg>/prisma/schema.prisma`
+   is scanned for `provider\s*=\s*["']postgresql["']`.
+
+The test does NOT scan `dist/**` (build artifacts may carry
+stale strings) and does NOT scan `README.md` (prose mentions
+are not a contract).
+
+### Why `@nest-batch/postgresql` is intentionally not in the watchlist
+
+`postgresql` does not appear in `NON_POSTGRES_PACKAGES`. This
+package **owns** the Postgres providers — `pg`,
+`@mikro-orm/postgresql`, `@nestjs/typeorm`,
+`drizzle-orm/pg-core`, `drizzle-orm/node-postgres`, and
+`prisma` with `provider = "postgresql"` are the deliverables
+that move *into* this package in 0.2.0. Putting `postgresql`
+in the watchlist would make the test self-contradictory
+("the Postgres package must not contain Postgres imports").
+The boundary is "the 4 slots stay clean, the 1 owner carries
+the leak".
+
+### Test result (current tree)
+
+`pnpm --filter @nest-batch/core test 2>&1 | tee
+.omo/evidence/task-4-boundary-test.txt` on 2026-06-10:
+
+```
+✓ tests/core/boundary/no-postgres-in-existing-packages.test.ts (3 tests) 2ms
+...
+ Test Files  48 passed (48)
+      Tests  550 passed (550)
+   Duration  2.76s
+```
+
+All 3 boundary assertions pass:
+
+- `scans every existing non-Postgres package (sanity check)` —
+  the 4 adapter slots (`mikro-orm`, `typeorm`, `drizzle`,
+  `prisma`) all exist; the test would *fail* the build if any
+  of them were missing.
+- `contains no Postgres provider imports, peer deps, env
+  literals, or prisma schemas in any non-Postgres package` —
+  the main guard. Asserts `allViolations.toEqual([])`.
+- `the watchlist covers every known non-Postgres sibling
+  (guardrail)` — meta-check that the watchlist includes
+  `core`, `mikro-orm`, `typeorm`, `bullmq`, `drizzle`,
+  `prisma`, `kafka`. The test would *fail* the build if a new
+  non-Postgres sibling were added to the repo without being
+  added to the watchlist.
+
+### What the test will catch in future shells
+
+The 4 Postgres shells (`postgres-drizzle/`,
+`postgres-mikroorm/`, `postgres-prisma/`,
+`postgres-typeorm/`) MUST live in
+`packages/postgresql/src/<orm>/`. The boundary test will fail
+if any of them ends up in the wrong directory:
+
+- A `from 'pg'` import added to
+  `packages/mikro-orm/src/something.ts` will fail the
+  `src-import` check.
+- A `pg` entry in
+  `packages/drizzle/package.json#peerDependencies` will fail
+  the `package-json` check (matches substring `pg` via the
+  regex's `\bpg\b` *only* for the specifier form; the
+  `package-json` check uses the substring list, so `pg` alone
+  is not on the list — `pg-core`, `postgresql`, and
+  `@nestjs/typeorm` are). The exact dependency-key substring
+  matches for the 4 shells are:
+  - `drizzle-orm/pg-core` — substring `pg-core` → flagged.
+  - `@mikro-orm/postgresql` — substring `postgresql` → flagged.
+  - `@nestjs/typeorm` — substring `@nestjs/typeorm` → flagged.
+  - `drizzle-orm/node-postgres` — substring `postgresql`
+    (the `\bpostgresql\b` inside `node-postgres` does not
+    match `pg-core` / `postgresql` / `@nestjs/typeorm`
+    directly; the `package.json` substring check would
+    miss a bare `drizzle-orm/node-postgres` dep, but the
+    `src-import` regex catches it).
+- A `POSTGRES_HOST` string literal in any slot's `src/**` will
+  fail the `src-env` check.
+- A `prisma/schema.prisma` in any non-Postgres package with
+  `provider = "postgresql"` will fail the `prisma-schema`
+  check.
+
+### Follow-up actions for the Wave 1 implementation task
+
+1. Port the 4 Postgres shells into
+   `packages/postgresql/src/<orm>/` (see §2 / §4 for the
+   file layout). Re-run the boundary test after each shell
+   is added — it must stay green.
+2. Add the new public exports to
+   `packages/postgresql/src/index.ts` (the barrel currently
+   only exports `BATCH_META_ENTITIES`).
+3. If the Wave 1 task touches the boundary test itself (e.g.
+   to add a new sibling like `kafka` to the watchlist),
+   re-run the full core test suite (`pnpm --filter
+   @nest-batch/core test`) and capture the evidence under
+   `.omo/evidence/`. Do **not** mark the test as `it.skip` /
+   `it.todo` — the GREEN state is the spec, not a coincidence
+   to suppress.
+4. The 4 shells can each be a thin re-export of the
+   corresponding slot's repository / transaction-manager
+   (since the repo logic is driver-agnostic; only the
+   connection options differ). If Wave 1 takes that route,
+   the shell files live in `packages/postgresql/src/<orm>/`
+   even when their bodies are 1-line re-exports.
