@@ -31,10 +31,11 @@ import { MikroORM } from '@mikro-orm/core';
 import { MySqlDriver } from '@mikro-orm/mysql';
 import { DataSource } from 'typeorm';
 
-import { BATCH_META_ENTITIES } from '@nest-batch/mikro-orm';
+import { BATCH_META_ENTITIES } from '@nest-batch/mysql';
 import * as mysqlDrizzleSchema from '../src/drizzle/schema';
 import { MysqlMikroOrmJobRepository } from '../src/mikroorm/mysql-mikroorm-job-repository';
 import { MysqlMikroOrmTransactionManager } from '../src/mikroorm/mysql-mikroorm-transaction-manager';
+import type { MysqlEntityManager } from '../src/mikroorm/mysql-mikroorm-job-repository';
 import { MysqlTypeOrmJobRepository } from '../src/typeorm/mysql-typeorm-job-repository';
 import { MysqlTypeOrmTransactionManager } from '../src/typeorm/mysql-typeorm-transaction-manager';
 import { MysqlDrizzleJobRepository } from '../src/drizzle/mysql-drizzle-job-repository';
@@ -191,8 +192,15 @@ describeE2E('MySQL e2e (testcontainers MySQL 8.x, gated by RUN_MYSQL_E2E=1)', ()
     let tx: MysqlMikroOrmTransactionManager;
 
     beforeEach(() => {
-      repo = new MysqlMikroOrmJobRepository(mikroOrm.em);
-      tx = new MysqlMikroOrmTransactionManager(mikroOrm.em);
+      // The `orm.em` is typed as the generic `EntityManager`
+      // (`@mikro-orm/core`); the mysql shell's classes accept the
+      // MySQL-specific `MysqlEntityManager` (`@mikro-orm/mysql`).
+      // The runtime values are structurally identical for the slot's
+      // driver-agnostic `MikroORMJobRepository` (the actual repo is
+      // a re-export); the type widening is a documentation aid.
+      const em = mikroOrm.em as unknown as MysqlEntityManager;
+      repo = new MysqlMikroOrmJobRepository(em);
+      tx = new MysqlMikroOrmTransactionManager(em);
     });
 
     runJobRepositoryContract(
@@ -270,7 +278,7 @@ describeE2E('MySQL e2e (testcontainers MySQL 8.x, gated by RUN_MYSQL_E2E=1)', ()
     // assertion below is the shape smoke test that the shell
     // exists and is correctly importable from the public API.
     test('MysqlPrismaAdapter / JobRepository / TransactionManager are importable from the public API', async () => {
-      const mod = await import('../src/index');
+      const mod = await import('../src/index.js');
       expect(typeof mod.MysqlPrismaAdapter.forRoot).toBe('function');
       expect(typeof mod.MysqlPrismaJobRepository).toBe('function');
       expect(typeof mod.MysqlPrismaTransactionManager).toBe('function');

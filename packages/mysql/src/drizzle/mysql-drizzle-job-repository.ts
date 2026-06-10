@@ -190,7 +190,7 @@ export class MysqlDrizzleJobRepository extends JobRepository {
             LIMIT 1`,
       );
       const lockedRows = (Array.isArray(locked)
-        ? (locked as Array<{ id: string }>)
+        ? (locked as unknown as Array<{ id: string }>)
         : ((locked as unknown as { rows: Array<{ id: string }> }).rows ?? []));
       if (lockedRows.length === 0) {
         throw new JobExecutionAlreadyRunningError(name);

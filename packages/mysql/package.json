@@ -40,7 +40,7 @@
     "build": "swc src -d dist --config-file ../../.swcrc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "true"
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "@nest-batch/core": "workspace:^",

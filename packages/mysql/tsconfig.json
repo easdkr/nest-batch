@@ -10,7 +10,8 @@
       "@nest-batch/mikro-orm": ["../mikro-orm/src/index.ts"],
       "@nest-batch/typeorm": ["../typeorm/src/index.ts"],
       "@nest-batch/drizzle": ["../drizzle/src/index.ts"],
-      "@nest-batch/prisma": ["../prisma/src/index.ts"]
+      "@nest-batch/prisma": ["../prisma/src/index.ts"],
+      "@nest-batch/mysql": ["../mysql/src/index.ts"]
     }
   },
   "include": ["src/**/*", "tests/**/*"],
