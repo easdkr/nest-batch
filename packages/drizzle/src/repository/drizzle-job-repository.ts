@@ -27,6 +27,27 @@ function scopeKey(scope: ExecutionScope): string {
   return `step::${scope.stepExecutionId}`;
 }
 
+/**
+ * Normalize the result of a Drizzle `db.execute(sql\`SELECT ...\`)`
+ * call to a plain array. Drizzle's `execute()` return shape varies
+ * by driver: the `pg` / `node-postgres` driver returns a
+ * `QueryResult`-like object with a `.rows` property, while the
+ * `libsql` and `mysql2` drivers return a raw array or a
+ * `ResultSetHeader` (depending on the query type). The slot is
+ * driver-agnostic; this helper accepts any of the three shapes
+ * and returns the underlying row array so the cast
+ * `as JobInstanceRow[]` is honest.
+ */
+function rowsOf<T>(result: unknown): T[] {
+  if (result == null) return [];
+  if (Array.isArray(result)) return result as T[];
+  if (typeof result === 'object') {
+    const maybe = (result as { rows?: unknown }).rows;
+    if (Array.isArray(maybe)) return maybe as T[];
+  }
+  return [];
+}
+
 function deepClone<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value;
   if (value instanceof Date) return new Date(value.getTime()) as unknown as T;
@@ -148,32 +169,38 @@ export class DrizzleJobRepository extends JobRepository {
   }
 
   async getOrCreateJobInstance(name: string, jobKey: string): Promise<JobInstance> {
-    const existing = (await this.db.execute(
-      sql`SELECT "id", "job_name", "job_key", "created_at"
-          FROM "batch_job_instance"
-          WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
-          LIMIT 1`,
-    )) as JobInstanceRow[];
+    const existing = rowsOf<JobInstanceRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_name", "job_key", "created_at"
+            FROM "batch_job_instance"
+            WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
+            LIMIT 1`,
+      ),
+    );
     if (existing.length > 0) return mapJobInstance(existing[0]!);
 
     const id = randomUUID();
     try {
-      const inserted = (await this.db.execute(
-        sql`INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
-            VALUES (${id}, ${name}, ${jobKey}, NOW())
-            ON CONFLICT ("job_name", "job_key") DO NOTHING
-            RETURNING "id", "job_name", "job_key", "created_at"`,
-      )) as JobInstanceRow[];
+      const inserted = rowsOf<JobInstanceRow>(
+        await this.db.execute(
+          sql`INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
+              VALUES (${id}, ${name}, ${jobKey}, NOW())
+              ON CONFLICT ("job_name", "job_key") DO NOTHING
+              RETURNING "id", "job_name", "job_key", "created_at"`,
+        ),
+      );
       if (inserted.length > 0) return mapJobInstance(inserted[0]!);
     } catch {
       // Fall through to read-back.
     }
-    const winner = (await this.db.execute(
-      sql`SELECT "id", "job_name", "job_key", "created_at"
-          FROM "batch_job_instance"
-          WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
-          LIMIT 1`,
-    )) as JobInstanceRow[];
+    const winner = rowsOf<JobInstanceRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_name", "job_key", "created_at"
+            FROM "batch_job_instance"
+            WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
+            LIMIT 1`,
+      ),
+    );
     if (winner.length === 0) {
       throw new Error(`Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`);
     }
@@ -186,11 +213,13 @@ export class DrizzleJobRepository extends JobRepository {
   ): Promise<JobExecution> {
     const execId = randomUUID();
     const execParams = serializeContext(deepClone(params));
-    const rows = (await this.db.execute(
-      sql`INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
-          VALUES (${execId}, ${jobInstanceId}, ${JobStatus.STARTING}, NULL, NULL, '', '', ${execParams})
-          RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
-    )) as JobExecutionRow[];
+    const rows = rowsOf<JobExecutionRow>(
+      await this.db.execute(
+        sql`INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
+            VALUES (${execId}, ${jobInstanceId}, ${JobStatus.STARTING}, NULL, NULL, '', '', ${execParams})
+            RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
+      ),
+    );
     return mapJobExecution(rows[0]!);
   }
 
@@ -209,25 +238,29 @@ export class DrizzleJobRepository extends JobRepository {
       );
 
       // 2. Lock the instance row with FOR UPDATE SKIP LOCKED.
-      const locked = (await tx.execute(
-        sql`SELECT "id", "job_name", "job_key", "created_at"
-            FROM "batch_job_instance"
-            WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
-            FOR UPDATE SKIP LOCKED
-            LIMIT 1`,
-      )) as Array<{ id: string }>;
-      if (!locked || locked.length === 0) {
+      const locked = rowsOf<{ id: string }>(
+        await tx.execute(
+          sql`SELECT "id", "job_name", "job_key", "created_at"
+              FROM "batch_job_instance"
+              WHERE "job_name" = ${name} AND "job_key" = ${jobKey}
+              FOR UPDATE SKIP LOCKED
+              LIMIT 1`,
+        ),
+      );
+      if (locked.length === 0) {
         throw new JobExecutionAlreadyRunningError(name);
       }
       const instanceId = locked[0]!.id;
 
       // 3. Under the lock, verify no running execution.
-      const running = (await tx.execute(
-        sql`SELECT "id" FROM "batch_job_execution"
-            WHERE "job_instance_id" = ${instanceId}
-              AND "status" IN (${JobStatus.STARTING}, ${JobStatus.STARTED})
-            LIMIT 1`,
-      )) as Array<{ id: string }>;
+      const running = rowsOf<{ id: string }>(
+        await tx.execute(
+          sql`SELECT "id" FROM "batch_job_execution"
+              WHERE "job_instance_id" = ${instanceId}
+                AND "status" IN (${JobStatus.STARTING}, ${JobStatus.STARTED})
+              LIMIT 1`,
+        ),
+      );
       if (running.length > 0) {
         throw new JobExecutionAlreadyRunningError(running[0]!.id);
       }
@@ -235,11 +268,13 @@ export class DrizzleJobRepository extends JobRepository {
       // 4. Create the new execution row.
       const execId = randomUUID();
       const execParams = serializeContext(deepClone(params));
-      const inserted = (await tx.execute(
-        sql`INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
-            VALUES (${execId}, ${instanceId}, ${JobStatus.STARTING}, NULL, NULL, '', '', ${execParams})
-            RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
-      )) as JobExecutionRow[];
+      const inserted = rowsOf<JobExecutionRow>(
+        await tx.execute(
+          sql`INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
+              VALUES (${execId}, ${instanceId}, ${JobStatus.STARTING}, NULL, NULL, '', '', ${execParams})
+              RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
+        ),
+      );
       return mapJobExecution(inserted[0]!);
     });
   }
@@ -258,23 +293,27 @@ export class DrizzleJobRepository extends JobRepository {
   }
 
   async getJobExecution(executionId: string): Promise<JobExecution | null> {
-    const rows = (await this.db.execute(
-      sql`SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
-          FROM "batch_job_execution" WHERE "id" = ${executionId} LIMIT 1`,
-    )) as JobExecutionRow[];
+    const rows = rowsOf<JobExecutionRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+            FROM "batch_job_execution" WHERE "id" = ${executionId} LIMIT 1`,
+      ),
+    );
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     if (!jobInstanceId) return null;
-    const rows = (await this.db.execute(
-      sql`SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
-          FROM "batch_job_execution"
-          WHERE "job_instance_id" = ${jobInstanceId}
-            AND "status" IN (${JobStatus.STARTING}, ${JobStatus.STARTED})
-          ORDER BY "start_time" DESC NULLS LAST
-          LIMIT 1`,
-    )) as JobExecutionRow[];
+    const rows = rowsOf<JobExecutionRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+            FROM "batch_job_execution"
+            WHERE "job_instance_id" = ${jobInstanceId}
+              AND "status" IN (${JobStatus.STARTING}, ${JobStatus.STARTED})
+            ORDER BY "start_time" DESC NULLS LAST
+            LIMIT 1`,
+      ),
+    );
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
@@ -283,11 +322,13 @@ export class DrizzleJobRepository extends JobRepository {
     stepName: string,
   ): Promise<StepExecution> {
     const stepId = randomUUID();
-    const rows = (await this.db.execute(
-      sql`INSERT INTO "batch_step_execution" ("id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at")
-          VALUES (${stepId}, ${jobExecutionId}, ${stepName}, ${StepStatus.STARTING}, 0, 0, 0, 0, 0, '', '', NOW())
-          RETURNING "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"`,
-    )) as StepExecutionRow[];
+    const rows = rowsOf<StepExecutionRow>(
+      await this.db.execute(
+        sql`INSERT INTO "batch_step_execution" ("id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at")
+            VALUES (${stepId}, ${jobExecutionId}, ${stepName}, ${StepStatus.STARTING}, 0, 0, 0, 0, 0, '', '', NOW())
+            RETURNING "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"`,
+      ),
+    );
     return mapStepExecution(rows[0]!);
   }
 
@@ -311,10 +352,12 @@ export class DrizzleJobRepository extends JobRepository {
   }
 
   async getStepExecution(stepExecutionId: string): Promise<StepExecution | null> {
-    const rows = (await this.db.execute(
-      sql`SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
-          FROM "batch_step_execution" WHERE "id" = ${stepExecutionId} LIMIT 1`,
-    )) as StepExecutionRow[];
+    const rows = rowsOf<StepExecutionRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+            FROM "batch_step_execution" WHERE "id" = ${stepExecutionId} LIMIT 1`,
+      ),
+    );
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
   }
 
@@ -322,22 +365,26 @@ export class DrizzleJobRepository extends JobRepository {
     jobExecutionId: string,
     stepName: string,
   ): Promise<StepExecution | null> {
-    const rows = (await this.db.execute(
-      sql`SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
-          FROM "batch_step_execution"
-          WHERE "job_execution_id" = ${jobExecutionId} AND "step_name" = ${stepName}
-          ORDER BY "created_at" DESC, "id" DESC
-          LIMIT 1`,
-    )) as StepExecutionRow[];
+    const rows = rowsOf<StepExecutionRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+            FROM "batch_step_execution"
+            WHERE "job_execution_id" = ${jobExecutionId} AND "step_name" = ${stepName}
+            ORDER BY "created_at" DESC, "id" DESC
+            LIMIT 1`,
+      ),
+    );
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
   }
 
   async getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext> {
     const key = scopeKey(scope);
     if (key.startsWith('job::')) {
-      const rows = (await this.db.execute(
-        sql`SELECT "data", "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ${key.slice(5)} LIMIT 1`,
-      )) as ContextRow[];
+      const rows = rowsOf<ContextRow>(
+        await this.db.execute(
+          sql`SELECT "data", "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ${key.slice(5)} LIMIT 1`,
+        ),
+      );
       if (rows.length > 0) {
         return {
           data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
@@ -345,9 +392,11 @@ export class DrizzleJobRepository extends JobRepository {
         };
       }
     } else {
-      const rows = (await this.db.execute(
-        sql`SELECT "data", "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ${key.slice(6)} LIMIT 1`,
-      )) as ContextRow[];
+      const rows = rowsOf<ContextRow>(
+        await this.db.execute(
+          sql`SELECT "data", "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ${key.slice(6)} LIMIT 1`,
+        ),
+      );
       if (rows.length > 0) {
         return {
           data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
@@ -368,10 +417,12 @@ export class DrizzleJobRepository extends JobRepository {
     const serialized = serializeContext(deepClone(ctx.data));
     if (key.startsWith('job::')) {
       const jobExecutionId = key.slice(5);
-      const existing = (await this.db.execute(
-        sql`SELECT "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ${jobExecutionId} LIMIT 1`,
-      )) as ContextRow[];
-      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
+      const existing = rowsOf<ContextRow>(
+        await this.db.execute(
+          sql`SELECT "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ${jobExecutionId} LIMIT 1`,
+        ),
+      );
+      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 1);
       if (existing.length > 0) {
         await this.db.execute(
           sql`UPDATE "batch_job_execution_context" SET "data" = ${serialized}, "version" = ${nextVersion} WHERE "job_execution_id" = ${jobExecutionId}`,
@@ -383,10 +434,12 @@ export class DrizzleJobRepository extends JobRepository {
       }
     } else {
       const stepExecutionId = key.slice(6);
-      const existing = (await this.db.execute(
-        sql`SELECT "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ${stepExecutionId} LIMIT 1`,
-      )) as ContextRow[];
-      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
+      const existing = rowsOf<ContextRow>(
+        await this.db.execute(
+          sql`SELECT "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ${stepExecutionId} LIMIT 1`,
+        ),
+      );
+      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 1);
       if (existing.length > 0) {
         await this.db.execute(
           sql`UPDATE "batch_step_execution_context" SET "data" = ${serialized}, "version" = ${nextVersion} WHERE "step_execution_id" = ${stepExecutionId}`,
