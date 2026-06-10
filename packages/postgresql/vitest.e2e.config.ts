@@ -36,16 +36,19 @@ export default defineConfig({
   test: {
     globals: false,
     environment: 'node',
+    // The 4-shell e2e suite spins up one Postgres testcontainer,
+    // applies the 6-table migration, then boots 4 separate Nest test
+    // modules (one per shell). Cold Docker pull on CI is the slow
+    // path; 180 s covers a worst-case first run. The 4 Nest module
+    // boots together add another ~5–10 s.
+    testTimeout: 180_000,
+    // Container teardown on a busy CI runner can take ~10 s.
+    hookTimeout: 180_000,
     server: {
       deps: {
         inline: ['@nestjs/core', '@nestjs/common', '@nestjs/testing'],
       },
     },
     include: ['tests/e2e/**/*.test.ts'],
-    // No-tests guard: vitest 2.x defaults `passWithNoTests: false`,
-    // so an empty `tests/e2e/` directory fails the run with exit 1.
-    // The real 4-shell e2e suite lands in Task #13; until then, this
-    // flag keeps `pnpm test:e2e` (gated by RUN_POSTGRES_E2E=1) green.
-    passWithNoTests: true,
   },
 });

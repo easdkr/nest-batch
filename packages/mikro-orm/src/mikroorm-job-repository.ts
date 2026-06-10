@@ -43,6 +43,13 @@ function mapJobInstance(e: JobInstanceEntity): JobInstance {
   return { id: e.id, jobName: e.jobName, jobKey: e.jobKey, createdAt: e.createdAt };
 }
 
+function toDateOrNull(value: Date | string | null | undefined): Date | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') return new Date(value);
+  return null;
+}
+
 function mapJobExecution(e: JobExecutionEntity, overrideParams?: JobParameters): JobExecution {
   let params: JobParameters = {};
   if (overrideParams !== undefined) {
@@ -58,8 +65,16 @@ function mapJobExecution(e: JobExecutionEntity, overrideParams?: JobParameters):
     id: e.id,
     jobInstanceId: e.jobInstanceId,
     status: e.status as JobStatus,
-    startTime: e.startTime ?? null,
-    endTime: e.endTime ?? null,
+    // The Postgres `timestamptz` column comes back from
+    // `@mikro-orm/postgresql` 6.x as a string in some queries
+    // (no `forceUtcTimezone` config is set in this slot's
+    // connection init). The contract suite calls
+    // `startTime.toISOString()` on the returned value, which
+    // requires a `Date`. Normalize both shapes here so the
+    // contract is satisfied without forcing the host to set
+    // MikroORM-wide options it does not otherwise need.
+    startTime: toDateOrNull(e.startTime),
+    endTime: toDateOrNull(e.endTime),
     exitCode: e.exitCode,
     exitMessage: e.exitMessage,
     params,

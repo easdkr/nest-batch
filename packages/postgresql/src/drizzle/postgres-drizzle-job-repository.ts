@@ -31,7 +31,9 @@ function scopeKey(scope: ExecutionScope): string {
 function deepClone<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value;
   if (value instanceof Date) return new Date(value.getTime()) as unknown as T;
-  if (Array.isArray(value)) return deepClone(value) as unknown as T;
+  if (Array.isArray(value)) {
+    return value.map((v) => deepClone(v)) as unknown as T;
+  }
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(value as Record<string, unknown>)) {
     out[k] = deepClone((value as Record<string, unknown>)[k]);
