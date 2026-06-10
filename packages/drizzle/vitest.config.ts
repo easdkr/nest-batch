@@ -38,5 +38,11 @@ export default defineConfig({
       'tests/**/*.spec.ts',
       'src/**/*.spec.ts',
     ],
+    // No-tests guard: vitest 2.x defaults `passWithNoTests: false`,
+    // so a package with zero matching files fails with exit 1.
+    // The e2e suite is opt-in via RUN_DRIZZLE_E2E=1 (separate gated
+    // include glob); this guard keeps `pnpm test` green when only
+    // the gated e2e harness exists or is temporarily empty.
+    passWithNoTests: true,
   },
 });
