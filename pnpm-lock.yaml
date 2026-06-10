@@ -219,15 +219,27 @@ importers:
       '@swc/core':
         specifier: ^1.10.7
         version: 1.15.40
+      '@testcontainers/postgresql':
+        specifier: ^12.0.1
+        version: 12.0.1
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
+      '@types/pg':
+        specifier: ^8.20.0
+        version: 8.20.0
       drizzle-orm:
         specifier: ^0.40.0
         version: 0.40.1(@prisma/client@6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3))(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.10.0)(knex@3.2.10(better-sqlite3@12.10.0)(mysql2@3.22.5(@types/node@22.19.19))(pg@8.21.0))(mysql2@3.22.5(@types/node@22.19.19))(pg@8.21.0)(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))
+      pg:
+        specifier: ^8.21.0
+        version: 8.21.0
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
+      testcontainers:
+        specifier: ^12.0.1
+        version: 12.0.1
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
@@ -467,6 +479,9 @@ importers:
       '@nest-batch/core':
         specifier: workspace:*
         version: link:../core
+      '@nest-batch/postgresql':
+        specifier: workspace:*
+        version: link:../postgresql
       '@nestjs/common':
         specifier: ^11.0.0
         version: 11.1.24(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -482,12 +497,18 @@ importers:
       '@swc/core':
         specifier: ^1.10.7
         version: 1.15.40
+      '@testcontainers/postgresql':
+        specifier: ^12.0.1
+        version: 12.0.1
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
+      testcontainers:
+        specifier: ^12.0.1
+        version: 12.0.1
       typescript:
         specifier: ^5.5.0
         version: 5.9.3

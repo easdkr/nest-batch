@@ -34,6 +34,7 @@
   "scripts": {
     "build": "swc src -d dist --config-file ../../.swcrc && tsc --emitDeclarationOnly -p tsconfig.build.json",
     "test": "vitest run",
+    "test:e2e": "RUN_PRISMA_E2E=1 vitest run --config vitest.e2e.config.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
@@ -55,13 +56,16 @@
   },
   "devDependencies": {
     "@nest-batch/core": "workspace:*",
+    "@nest-batch/postgresql": "workspace:*",
     "@nestjs/common": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
     "@prisma/client": "^6.0.0",
     "@swc/cli": "^0.7.0",
     "@swc/core": "^1.10.7",
+    "@testcontainers/postgresql": "^12.0.1",
     "@types/node": "^22.0.0",
     "reflect-metadata": "^0.2.2",
+    "testcontainers": "^12.0.1",
     "typescript": "^5.5.0",
     "unplugin-swc": "^1.5.0",
     "vitest": "^2.0.0"

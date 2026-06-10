@@ -427,7 +427,11 @@ export class PostgresPrismaJobRepository extends JobRepository {
                    WHERE "job_execution_id" = ${jobExecutionId} LIMIT 1`,
       );
       const nextVersion =
-        version !== undefined ? version : existing.length > 0 ? existing[0]!.version + 1 : 0;
+        version !== undefined
+          ? version
+          : existing.length > 0
+            ? existing[0]!.version + 1
+            : 1;
       if (existing.length > 0) {
         await this.prisma.$executeRaw(
           Prisma.sql`UPDATE "batch_job_execution_context"
@@ -447,7 +451,11 @@ export class PostgresPrismaJobRepository extends JobRepository {
                    WHERE "step_execution_id" = ${stepExecutionId} LIMIT 1`,
       );
       const nextVersion =
-        version !== undefined ? version : existing.length > 0 ? existing[0]!.version + 1 : 0;
+        version !== undefined
+          ? version
+          : existing.length > 0
+            ? existing[0]!.version + 1
+            : 1;
       if (existing.length > 0) {
         await this.prisma.$executeRaw(
           Prisma.sql`UPDATE "batch_step_execution_context"
