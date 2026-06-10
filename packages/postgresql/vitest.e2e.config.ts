@@ -42,5 +42,10 @@ export default defineConfig({
       },
     },
     include: ['tests/e2e/**/*.test.ts'],
+    // No-tests guard: vitest 2.x defaults `passWithNoTests: false`,
+    // so an empty `tests/e2e/` directory fails the run with exit 1.
+    // The real 4-shell e2e suite lands in Task #13; until then, this
+    // flag keeps `pnpm test:e2e` (gated by RUN_POSTGRES_E2E=1) green.
+    passWithNoTests: true,
   },
 });

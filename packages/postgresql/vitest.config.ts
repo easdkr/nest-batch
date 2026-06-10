@@ -46,5 +46,10 @@ export default defineConfig({
       'tests/**/*.spec.ts',
       'src/**/*.spec.ts',
     ],
+    // No-tests guard: vitest 2.x defaults `passWithNoTests: false`,
+    // so a package with zero matching files fails with exit 1.
+    // Symmetric with `vitest.e2e.config.ts` so `pnpm test` stays
+    // green when boundary/e2e suites are temporarily empty.
+    passWithNoTests: true,
   },
 });
