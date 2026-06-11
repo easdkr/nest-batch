@@ -93,6 +93,35 @@ const POSTGRES_DEP_KEY_SUBSTRINGS: readonly string[] = [
   '@nestjs/typeorm',
 ];
 
+/**
+ * devDependency packages that are NOT Postgres provider leaks. The
+ * boundary test's substring check is intentionally coarse (to catch
+ * accidental `@mikro-orm/postgresql` additions), but it produces
+ * false positives on test infrastructure and sibling shells:
+ *
+ *  - `@testcontainers/*` — the testcontainers-node library used by
+ *    each slot's e2e suite to spin up a real Postgres / MySQL
+ *    container. It is dev-time only and does not bundle any
+ *    Postgres driver code into the consuming package's production
+ *    build.
+ *  - `@nest-batch/postgresql` / `@nest-batch/mysql` — the 0.2.0
+ *    driver sibling packages. The slot packages declare these in
+ *    `devDependencies` so their e2e harness can wire the actual
+ *    driver; they are not providers bundled into the slot itself.
+ *
+ * Allowlist scope: `devDependencies` ONLY. `dependencies`,
+ * `peerDependencies`, and `optionalDependencies` are still scanned
+ * strictly — production code paths must never transitively import
+ * a Postgres driver via a slot package.
+ */
+function isAllowedTestInfraDep(key: string): boolean {
+  return (
+    key.startsWith('@testcontainers/') ||
+    key === '@nest-batch/postgresql' ||
+    key === '@nest-batch/mysql'
+  );
+}
+
 function* walkTypeScriptFiles(dir: string): Generator<string> {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
@@ -151,6 +180,17 @@ function findPostgresInPackageJson(pkgJsonPath: string): PackageViolation[] {
     const deps = obj[field];
     if (typeof deps !== 'object' || deps === null) continue;
     for (const key of Object.keys(deps as Record<string, unknown>)) {
+      // Skip test infrastructure and sibling shells in devDependencies.
+      // These are NOT Postgres provider leaks — they are legitimate
+      // test infra (`@testcontainers/*`) or sibling shells
+      // (`@nest-batch/postgresql`, `@nest-batch/mysql`) that the
+      // 0.2.0 architecture routes through the slot packages. The
+      // `dependencies` / `peerDependencies` / `optionalDependencies`
+      // paths are intentionally NOT skipped — a slot must never
+      // declare a Postgres / MySQL provider as a production dep.
+      if (field === 'devDependencies' && isAllowedTestInfraDep(key)) {
+        continue;
+      }
       for (const needle of POSTGRES_DEP_KEY_SUBSTRINGS) {
         if (key.includes(needle)) {
           violations.push({
