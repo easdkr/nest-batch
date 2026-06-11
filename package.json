@@ -13,7 +13,7 @@
     "pretest:e2e": "docker info >/dev/null 2>&1 || { echo \"Docker is required for e2e tests. Install Docker or run unit tests with: pnpm test\" >&2; exit 1; }",
     "test:e2e": "pnpm -r --workspace-concurrency=1 run test:e2e",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r --filter !@nest-batch/mysql exec tsc --noEmit",
+    "typecheck": "pnpm -r exec tsc --noEmit",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yaml,yml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yaml,yml}\"",
     "changeset": "changeset",
