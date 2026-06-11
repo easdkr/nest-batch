@@ -79,3 +79,72 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  e2e:
+    name: E2E (testcontainers)
+    # E2E job runs the testcontainer-based integration suites
+    # (packages/{postgresql,mysql,drizzle,prisma,core}, etc.). Each
+    # suite spins up a real Postgres / Redis / Prisma-engine container
+    # on demand, so the job needs a Docker daemon — we expose one
+    # via the `docker:dind` service container and route
+    # testcontainers-node at it via the DOCKER_HOST env var. The
+    # job runs in parallel with `package-quality` (no `needs:` edge)
+    # and uses its own concurrency group, so a stale push cancels
+    # this predecessor without affecting the unit-test job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      packages: write
+
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+      DOCKER_HOST: tcp://localhost:2375
+
+    concurrency:
+      group: e2e-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /var/lib/docker
+          key: docker-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            docker-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Rebuild native modules
+        run: pnpm rebuild better-sqlite3
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test (e2e)
+        run: pnpm test:e2e
