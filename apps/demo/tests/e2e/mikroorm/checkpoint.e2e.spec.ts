@@ -36,12 +36,11 @@ import {
   BATCH_META_ENTITIES,
   JobInstanceEntity,
   JobExecutionEntity,
-  JobExecutionParamsEntity,
   StepExecutionEntity,
   JobExecutionContextEntity,
   StepExecutionContextEntity,
-  MikroORMJobRepository,
-} from '@nest-batch/mikro-orm';
+} from '@nest-batch/postgresql';
+import { MikroORMJobRepository } from '@nest-batch/mikro-orm';
 
 // ---------------------------------------------------------------------------
 // Test configuration

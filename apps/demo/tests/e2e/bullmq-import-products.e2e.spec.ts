@@ -89,7 +89,7 @@ import {
   BATCH_META_ENTITIES,
   JobExecutionEntity,
   StepExecutionEntity,
-} from '@nest-batch/mikro-orm';
+} from '@nest-batch/postgresql';
 
 import { AppModule } from '../../src/app.module';
 import { ProductEntity } from '../../src/entities/product.entity';

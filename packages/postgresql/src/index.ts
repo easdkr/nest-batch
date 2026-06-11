@@ -100,6 +100,14 @@ export {
 } from './prisma/postgres-prisma.module';
 
 // Batch meta-entities (Postgres-specific MikroORM entity classes).
+// Each class is also exported individually for tests and apps that
+// need to query / instantiate them directly (e.g., `em.findOne(
+// StepExecutionEntity, ...)`, `new JobInstanceEntity()`).
+export { JobInstanceEntity } from './job-meta-entities.postgres';
+export { JobExecutionEntity } from './job-meta-entities.postgres';
+export { StepExecutionEntity } from './job-meta-entities.postgres';
+export { JobExecutionContextEntity } from './job-meta-entities.postgres';
+export { StepExecutionContextEntity } from './job-meta-entities.postgres';
 // The `BATCH_META_ENTITIES` tuple is the canonical list of batch
 // meta tables registered with the host's metadata system.
 export { BATCH_META_ENTITIES } from './job-meta-entities.postgres';

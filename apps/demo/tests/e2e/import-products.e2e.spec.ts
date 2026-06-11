@@ -85,10 +85,11 @@ import {
   BATCH_META_ENTITIES,
   JobInstanceEntity,
   JobExecutionEntity,
-  JobExecutionParamsEntity,
   StepExecutionEntity,
   JobExecutionContextEntity,
   StepExecutionContextEntity,
+} from '@nest-batch/postgresql';
+import {
   MikroOrmAdapter,
   MikroORMJobRepository,
   MikroORMTransactionManager,
