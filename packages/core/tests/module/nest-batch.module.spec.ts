@@ -7,6 +7,9 @@ import { Jobable, Stepable, Tasklet } from '../../src/decorators';
 import { JobRegistry } from '../../src/registry/job-registry';
 import { BatchExplorer } from '../../src/explorer/batch-explorer';
 import { DefinitionCompiler } from '../../src/compiler/definition-compiler';
+import { BatchWorkerRunner } from '../../src/execution/batch-worker-runner';
+import { JobExplorer } from '../../src/execution/job-explorer';
+import { JobOperator } from '../../src/execution/job-operator';
 import { JobRepository } from '../../src/core/repository/job-repository';
 import type {
   JobInstance,
@@ -194,7 +197,7 @@ describe('NestBatchModule.forRoot()', () => {
     await moduleRef.close();
   });
 
-  it('exposes BatchExplorer and DefinitionCompiler as injectables too', async () => {
+  it('exposes explorer, compiler, and operator providers as injectables too', async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [NestBatchModule.forRoot({ adapters: stubAdapters })],
     }).compile();
@@ -202,6 +205,9 @@ describe('NestBatchModule.forRoot()', () => {
     await moduleRef.init();
     expect(moduleRef.get(BatchExplorer)).toBeInstanceOf(BatchExplorer);
     expect(moduleRef.get(DefinitionCompiler)).toBeInstanceOf(DefinitionCompiler);
+    expect(moduleRef.get(JobExplorer)).toBeInstanceOf(JobExplorer);
+    expect(moduleRef.get(JobOperator)).toBeInstanceOf(JobOperator);
+    expect(moduleRef.get(BatchWorkerRunner)).toBeInstanceOf(BatchWorkerRunner);
 
     await moduleRef.close();
   });

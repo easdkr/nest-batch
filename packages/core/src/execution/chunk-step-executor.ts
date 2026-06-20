@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { ChunkStepDefinition, ReaderRef, ProcessorRef, WriterRef } from '../core/ir';
 import { RefKind } from '../core/ir';
-import type { ItemReader, ItemProcessor, ItemWriter } from '../core/item';
-import type { JobRepository } from '../core/repository';
+import type { ItemReader, ItemProcessor, ItemStream, ItemWriter } from '../core/item';
+import type { ExecutionContext, JobRepository } from '../core/repository';
 import type { TransactionManager } from '../core/transaction';
 import { StepStatus } from '../core/status';
 import type { SkipPolicy, SkipContext } from '../policies/skip-policy';
@@ -104,6 +104,29 @@ interface RunPhaseOptions {
   onSkip: (err: unknown) => Promise<void>;
 }
 
+function isItemStream(value: unknown): value is ItemStream {
+  if (value === null || typeof value !== 'object') return false;
+  const stream = value as Partial<ItemStream>;
+  return (
+    typeof stream.open === 'function' &&
+    typeof stream.update === 'function' &&
+    typeof stream.close === 'function'
+  );
+}
+
+function withLastChunkIndex(ctx: ExecutionContext, chunkIndex: number): ExecutionContext {
+  const current = ctx.data;
+  const data =
+    current !== null && typeof current === 'object' && !Array.isArray(current)
+      ? { ...(current as Record<string, unknown>), lastChunkIndex: chunkIndex }
+      : { lastChunkIndex: chunkIndex };
+
+  return {
+    data: data as ExecutionContext['data'],
+    version: ctx.version,
+  };
+}
+
 @Injectable()
 export class ChunkStepExecutor {
   async execute(
@@ -164,6 +187,8 @@ export class ChunkStepExecutor {
     // restart path to decide which chunks to skip and where to record
     // the last-committed checkpoint.
     let chunkIndex = 0;
+    let openedStreams: ItemStream[] = [];
+    let streamContext: ExecutionContext | null = null;
 
     try {
       // Resolve inside the try block so a missing provider-token ref
@@ -172,6 +197,18 @@ export class ChunkStepExecutor {
       const reader = this.resolveReader(step.reader, context);
       const processor = step.processor ? this.resolveProcessor(step.processor, context) : null;
       const writer = this.resolveWriter(step.writer, context);
+
+      const streams: ItemStream[] = [];
+      if (isItemStream(reader)) streams.push(reader);
+      if (isItemStream(writer)) streams.push(writer);
+      streamContext = await context.jobRepository.getExecutionContext({
+        stepExecutionId: context.stepExecutionId,
+      });
+      for (const stream of streams) {
+        await stream.open(streamContext);
+        openedStreams.push(stream);
+      }
+
       // Outer loop: keep reading chunks until reader returns null
       // eslint-disable-next-line no-constant-condition
       while (true) {
@@ -323,14 +360,23 @@ export class ChunkStepExecutor {
         // checkpoint reflects "we successfully moved past this chunk",
         // and we only reach this line after the write completed
         // (either OK or skipped — both are forward progress).
+        streamContext = withLastChunkIndex(streamContext, chunkIndex);
+        streamContext = await this.updateStreams(openedStreams, streamContext);
         await context.jobRepository.saveExecutionContext(
           { stepExecutionId: context.stepExecutionId },
-          { data: { lastChunkIndex: chunkIndex }, version: 0 },
+          streamContext,
         );
+        streamContext = await context.jobRepository.getExecutionContext({
+          stepExecutionId: context.stepExecutionId,
+        });
 
         commitCount += 1;
         chunkIndex += 1;
       }
+
+      const streamsToClose = openedStreams;
+      openedStreams = [];
+      await this.closeStreams(streamsToClose);
 
       return {
         status: StepStatus.COMPLETED,
@@ -342,15 +388,43 @@ export class ChunkStepExecutor {
         commitCount,
       };
     } catch (err) {
+      let finalError = err;
+      const streamsToClose = openedStreams;
+      openedStreams = [];
+      try {
+        await this.closeStreams(streamsToClose);
+      } catch (closeErr) {
+        finalError = closeErr;
+      }
       return {
         status: StepStatus.FAILED,
         exitCode: 'FAILED',
-        exitMessage: err instanceof Error ? err.message : String(err),
+        exitMessage: finalError instanceof Error ? finalError.message : String(finalError),
         readCount,
         writeCount,
         skipCount,
         commitCount,
       };
+    }
+  }
+
+  private async updateStreams(
+    streams: readonly ItemStream[],
+    ctx: ExecutionContext,
+  ): Promise<ExecutionContext> {
+    let next = ctx;
+    for (const stream of streams) {
+      const updated = await stream.update(next);
+      if (updated !== undefined) {
+        next = updated;
+      }
+    }
+    return next;
+  }
+
+  private async closeStreams(streams: readonly ItemStream[]): Promise<void> {
+    for (let i = streams.length - 1; i >= 0; i--) {
+      await streams[i]!.close();
     }
   }
 

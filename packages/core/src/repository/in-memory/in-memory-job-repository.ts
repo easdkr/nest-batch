@@ -9,6 +9,8 @@ import type {
   StepExecutionPatch,
   ExecutionContext,
   ExecutionScope,
+  JobInstanceFilter,
+  JobExecutionFilter,
 } from '@nest-batch/core';
 import { JobStatus, StepStatus } from '@nest-batch/core';
 import { JobExecutionAlreadyRunningError } from '@nest-batch/core';
@@ -189,6 +191,57 @@ export class InMemoryJobRepository extends JobRepository {
     return e ? deepClone(e) : null;
   }
 
+  override async getJobInstance(jobInstanceId: string): Promise<JobInstance | null> {
+    const instance = this.state.instances.get(jobInstanceId);
+    return instance ? deepClone(instance) : null;
+  }
+
+  override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
+    const rows: JobInstance[] = [];
+    for (const instance of this.state.instances.values()) {
+      if (filter.jobName !== undefined && instance.jobName !== filter.jobName) continue;
+      if (filter.jobKey !== undefined && instance.jobKey !== filter.jobKey) continue;
+      rows.push(deepClone(instance));
+    }
+    return rows;
+  }
+
+  override async findJobExecutions(filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
+    let statuses: Set<JobStatus> | undefined;
+    if (filter.status !== undefined) {
+      const statusFilter = filter.status;
+      const statusList: readonly JobStatus[] = Array.isArray(statusFilter)
+        ? statusFilter
+        : [statusFilter];
+      statuses = new Set<JobStatus>(statusList);
+    }
+
+    const rows: JobExecution[] = [];
+    for (const execution of this.state.executions.values()) {
+      if (
+        filter.jobInstanceId !== undefined &&
+        execution.jobInstanceId !== filter.jobInstanceId
+      ) {
+        continue;
+      }
+      if (statuses !== undefined && !statuses.has(execution.status)) continue;
+      if (
+        filter.startedAfter !== undefined &&
+        (execution.startTime === null || execution.startTime < filter.startedAfter)
+      ) {
+        continue;
+      }
+      if (
+        filter.startedBefore !== undefined &&
+        (execution.startTime === null || execution.startTime > filter.startedBefore)
+      ) {
+        continue;
+      }
+      rows.push(deepClone(execution));
+    }
+    return rows;
+  }
+
   async createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution> {
     const step: StepExecution = {
       id: this.idGen.next(),
@@ -219,6 +272,16 @@ export class InMemoryJobRepository extends JobRepository {
   async getStepExecution(stepExecutionId: string): Promise<StepExecution | null> {
     const s = this.state.stepExecutions.get(stepExecutionId);
     return s ? deepClone(s) : null;
+  }
+
+  override async findStepExecutions(jobExecutionId: string): Promise<StepExecution[]> {
+    const rows: StepExecution[] = [];
+    for (const step of this.state.stepExecutions.values()) {
+      if (step.jobExecutionId === jobExecutionId) {
+        rows.push(deepClone(step));
+      }
+    }
+    return rows;
   }
 
   async getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext> {

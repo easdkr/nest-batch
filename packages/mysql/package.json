@@ -16,7 +16,6 @@
   "keywords": [
     "nestjs",
     "batch",
-    "spring-batch",
     "mysql",
     "mikro-orm",
     "typeorm",

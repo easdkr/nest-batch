@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * Creates the six Spring Batch-compatible meta-tables in MySQL 8.x
+ * Creates the six batch meta-tables in MySQL 8.x
  * (the MySQL driver shells: MikroORM MySQL, TypeORM MySQL, Drizzle
  * MySQL, Prisma MySQL).
  *

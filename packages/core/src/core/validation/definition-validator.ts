@@ -105,6 +105,25 @@ export class DefinitionValidator {
       }
     }
 
+    const deciderStepIds = new Set<string>();
+    for (const d of job.deciders ?? []) {
+      if (!(d.afterStepId in job.steps)) {
+        throw new InvalidFlowGraphError(
+          'MISSING_TARGET',
+          `Decider afterStepId "${d.afterStepId}" not found in steps`,
+          { jobId: job.id, afterStepId: d.afterStepId },
+        );
+      }
+      if (deciderStepIds.has(d.afterStepId)) {
+        throw new InvalidFlowGraphError(
+          'DUPLICATE_DECIDER',
+          `Step "${d.afterStepId}" has multiple deciders`,
+          { jobId: job.id, afterStepId: d.afterStepId },
+        );
+      }
+      deciderStepIds.add(d.afterStepId);
+    }
+
     // 5. No unreachable steps (BFS from startStepId).
     const reachable = this.collectReachable(job);
 

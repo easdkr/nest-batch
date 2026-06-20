@@ -7,7 +7,10 @@ import type {
   StepExecutionPatch,
   ExecutionContext,
   ExecutionScope,
+  JobInstanceFilter,
+  JobExecutionFilter,
 } from './types';
+import { UnsupportedJobRepositoryOperationError } from '../errors';
 
 export interface IJobRepository {
   getOrCreateJobInstance(name: string, jobKey: string): Promise<JobInstance>;
@@ -33,10 +36,14 @@ export interface IJobRepository {
   ): Promise<JobExecution>;
   updateJobExecution(executionId: string, patch: JobExecutionPatch): Promise<void>;
   getJobExecution(executionId: string): Promise<JobExecution | null>;
+  getJobInstance(jobInstanceId: string): Promise<JobInstance | null>;
+  findJobInstances(filter?: JobInstanceFilter): Promise<JobInstance[]>;
+  findJobExecutions(filter?: JobExecutionFilter): Promise<JobExecution[]>;
   getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null>;
   createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution>;
   updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void>;
   getStepExecution(stepExecutionId: string): Promise<StepExecution | null>;
+  findStepExecutions(jobExecutionId: string): Promise<StepExecution[]>;
   getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext>;
   saveExecutionContext(
     scope: ExecutionScope,
@@ -64,10 +71,22 @@ export abstract class JobRepository implements IJobRepository {
   ): Promise<JobExecution>;
   abstract updateJobExecution(executionId: string, patch: JobExecutionPatch): Promise<void>;
   abstract getJobExecution(executionId: string): Promise<JobExecution | null>;
+  getJobInstance(_jobInstanceId: string): Promise<JobInstance | null> {
+    throw new UnsupportedJobRepositoryOperationError('getJobInstance');
+  }
+  findJobInstances(_filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
+    throw new UnsupportedJobRepositoryOperationError('findJobInstances');
+  }
+  findJobExecutions(_filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
+    throw new UnsupportedJobRepositoryOperationError('findJobExecutions');
+  }
   abstract getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null>;
   abstract createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution>;
   abstract updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void>;
   abstract getStepExecution(stepExecutionId: string): Promise<StepExecution | null>;
+  findStepExecutions(_jobExecutionId: string): Promise<StepExecution[]> {
+    throw new UnsupportedJobRepositoryOperationError('findStepExecutions');
+  }
   abstract getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext>;
   abstract saveExecutionContext(
     scope: ExecutionScope,

@@ -18,6 +18,8 @@ import type {
   StepExecutionPatch,
   ExecutionContext,
   ExecutionScope,
+  JobInstanceFilter,
+  JobExecutionFilter,
 } from '@nest-batch/core';
 import { sql } from 'drizzle-orm';
 import { DrizzleDriverProvider } from '../drizzle.driver-provider';
@@ -302,6 +304,59 @@ export class DrizzleJobRepository extends JobRepository {
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
+  override async getJobInstance(jobInstanceId: string): Promise<JobInstance | null> {
+    const rows = rowsOf<JobInstanceRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_name", "job_key", "created_at"
+            FROM "batch_job_instance"
+            WHERE "id" = ${jobInstanceId}
+            LIMIT 1`,
+      ),
+    );
+    return rows.length > 0 ? mapJobInstance(rows[0]!) : null;
+  }
+
+  override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
+    const conditions: ReturnType<typeof sql>[] = [];
+    if (filter.jobName !== undefined) conditions.push(sql`"job_name" = ${filter.jobName}`);
+    if (filter.jobKey !== undefined) conditions.push(sql`"job_key" = ${filter.jobKey}`);
+    const rows = rowsOf<JobInstanceRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_name", "job_key", "created_at"
+            FROM "batch_job_instance"
+            ${conditions.length > 0 ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``}
+            ORDER BY "created_at" ASC, "id" ASC`,
+      ),
+    );
+    return rows.map(mapJobInstance);
+  }
+
+  override async findJobExecutions(filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
+    const conditions: ReturnType<typeof sql>[] = [];
+    if (filter.jobInstanceId !== undefined) {
+      conditions.push(sql`"job_instance_id" = ${filter.jobInstanceId}`);
+    }
+    if (filter.status !== undefined) {
+      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+      conditions.push(sql`"status" IN (${sql.join(statuses.map((status) => sql`${status}`), sql`, `)})`);
+    }
+    if (filter.startedAfter !== undefined) {
+      conditions.push(sql`"start_time" >= ${filter.startedAfter}`);
+    }
+    if (filter.startedBefore !== undefined) {
+      conditions.push(sql`"start_time" <= ${filter.startedBefore}`);
+    }
+    const rows = rowsOf<JobExecutionRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+            FROM "batch_job_execution"
+            ${conditions.length > 0 ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``}
+            ORDER BY "start_time" DESC NULLS LAST, "id" DESC`,
+      ),
+    );
+    return rows.map(mapJobExecution);
+  }
+
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     if (!jobInstanceId) return null;
     const rows = rowsOf<JobExecutionRow>(
@@ -359,6 +414,18 @@ export class DrizzleJobRepository extends JobRepository {
       ),
     );
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
+  }
+
+  override async findStepExecutions(jobExecutionId: string): Promise<StepExecution[]> {
+    const rows = rowsOf<StepExecutionRow>(
+      await this.db.execute(
+        sql`SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+            FROM "batch_step_execution"
+            WHERE "job_execution_id" = ${jobExecutionId}
+            ORDER BY "created_at" ASC, "id" ASC`,
+      ),
+    );
+    return rows.map(mapStepExecution);
   }
 
   async findLatestStepExecution(

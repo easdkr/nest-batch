@@ -1,7 +1,7 @@
 import { Entity, Property, PrimaryKey, Unique, Index } from '@mikro-orm/core';
 
 /**
- * Spring Batch BATCH_JOB_INSTANCE equivalent (MySQL 8.x).
+ * `batch_job_instance` metadata row (MySQL 8.x).
  *
  * One row per logical job instance. Uniqueness is enforced on
  * (jobName, jobKey) so that the same canonical key resolves to
@@ -10,7 +10,7 @@ import { Entity, Property, PrimaryKey, Unique, Index } from '@mikro-orm/core';
  * Owned by `@nest-batch/mysql` in 0.2.0. The class is the
  * MySQL-flavored sibling of the Postgres `JobInstanceEntity` in
  * `@nest-batch/postgresql/src/job-meta-entities.postgres.ts` —
- * the shape is byte-identical (Spring Batch meta-schema) and the
+ * the shape is byte-identical to the shared batch meta-schema and the
  * column types resolve to the MySQL equivalents of their Postgres
  * counterparts under the `@mikro-orm/mysql` driver.
  */
@@ -31,7 +31,7 @@ export class JobInstanceEntity {
 }
 
 /**
- * Spring Batch BATCH_JOB_EXECUTION equivalent (MySQL 8.x).
+ * `batch_job_execution` metadata row (MySQL 8.x).
  *
  * One row per job run. `status` is the stringified JobStatus enum.
  * `jobInstanceId` is a logical FK (no DB-level FK constraint to
@@ -66,7 +66,7 @@ export class JobExecutionEntity {
 }
 
 /**
- * Spring Batch BATCH_STEP_EXECUTION equivalent (MySQL 8.x).
+ * `batch_step_execution` metadata row (MySQL 8.x).
  *
  * One row per step run. Counter columns default to 0 so the
  * entity can be persisted immediately upon creation, before any
@@ -113,7 +113,7 @@ export class StepExecutionEntity {
 }
 
 /**
- * Spring Batch BATCH_JOB_EXECUTION_CONTEXT equivalent (MySQL 8.x).
+ * `batch_job_execution_context` metadata row (MySQL 8.x).
  *
  * `data` is a JSON-serialized ExecutionContext payload. `version`
  * guards against lost updates during concurrent writers.
@@ -131,7 +131,7 @@ export class JobExecutionContextEntity {
 }
 
 /**
- * Spring Batch BATCH_STEP_EXECUTION_CONTEXT equivalent (MySQL 8.x).
+ * `batch_step_execution_context` metadata row (MySQL 8.x).
  *
  * Mirrors the job-level context table but scoped to a single
  * step execution. The 0.2.0 decision was to drop

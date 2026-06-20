@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * Creates the six Spring Batch-compatible meta-tables for PostgreSQL:
+ * Creates the six batch meta-tables for PostgreSQL:
  *
  *   - batch_job_instance            (root, unique on (job_name, job_key))
  *   - batch_job_execution           (one per job run, indexed by instance)

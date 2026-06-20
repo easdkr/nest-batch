@@ -1,4 +1,4 @@
--- Migration: 0001 — 6-table Spring Batch-compatible meta-schema for PostgreSQL.
+-- Migration: 0001 — 6-table batch meta-schema for PostgreSQL.
 --
 -- This file is the canonical raw-SQL DDL for the `@nest-batch/postgresql`
 -- driver sibling. It is the source of truth for the meta-schema shape

@@ -9,7 +9,7 @@ import {
 } from 'drizzle-orm/mysql-core';
 
 /**
- * MySQL-flavored Drizzle schema for the six Spring Batch-compatible
+ * MySQL-flavored Drizzle schema for the six batch
  * batch meta tables.
  *
  * The column names match the PostgreSQL `pgTable` schema in

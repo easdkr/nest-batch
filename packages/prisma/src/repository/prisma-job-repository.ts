@@ -19,6 +19,8 @@ import type {
   StepExecutionPatch,
   ExecutionContext,
   ExecutionScope,
+  JobInstanceFilter,
+  JobExecutionFilter,
 } from '@nest-batch/core';
 import { PrismaDriverProvider } from '../prisma.driver-provider';
 
@@ -266,6 +268,68 @@ export class PrismaJobRepository extends JobRepository {
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
+  override async getJobInstance(jobInstanceId: string): Promise<JobInstance | null> {
+    const rows = (await this.prisma.$queryRaw`
+      SELECT "id", "job_name", "job_key", "created_at"
+      FROM "batch_job_instance"
+      WHERE "id" = ${jobInstanceId}
+      LIMIT 1
+    `) as JobInstanceRow[];
+    return rows.length > 0 ? mapJobInstance(rows[0]!) : null;
+  }
+
+  override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
+    const rows = filter.jobName !== undefined && filter.jobKey !== undefined
+      ? ((await this.prisma.$queryRaw`
+          SELECT "id", "job_name", "job_key", "created_at"
+          FROM "batch_job_instance"
+          WHERE "job_name" = ${filter.jobName} AND "job_key" = ${filter.jobKey}
+          ORDER BY "created_at" ASC, "id" ASC
+        `) as JobInstanceRow[])
+      : filter.jobName !== undefined
+        ? ((await this.prisma.$queryRaw`
+            SELECT "id", "job_name", "job_key", "created_at"
+            FROM "batch_job_instance"
+            WHERE "job_name" = ${filter.jobName}
+            ORDER BY "created_at" ASC, "id" ASC
+          `) as JobInstanceRow[])
+        : filter.jobKey !== undefined
+          ? ((await this.prisma.$queryRaw`
+              SELECT "id", "job_name", "job_key", "created_at"
+              FROM "batch_job_instance"
+              WHERE "job_key" = ${filter.jobKey}
+              ORDER BY "created_at" ASC, "id" ASC
+            `) as JobInstanceRow[])
+          : ((await this.prisma.$queryRaw`
+              SELECT "id", "job_name", "job_key", "created_at"
+              FROM "batch_job_instance"
+              ORDER BY "created_at" ASC, "id" ASC
+            `) as JobInstanceRow[]);
+    return rows.map(mapJobInstance);
+  }
+
+  override async findJobExecutions(filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
+    const allRows = (await this.prisma.$queryRaw`
+      SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+      FROM "batch_job_execution"
+      ORDER BY "start_time" DESC NULLS LAST, "id" DESC
+    `) as JobExecutionRow[];
+    const statuses =
+      filter.status === undefined
+        ? undefined
+        : new Set(Array.isArray(filter.status) ? filter.status : [filter.status]);
+    return allRows
+      .filter((row) => filter.jobInstanceId === undefined || row.job_instance_id === filter.jobInstanceId)
+      .filter((row) => statuses === undefined || statuses.has(row.status as JobStatus))
+      .filter((row) => {
+        const startTime = row.start_time instanceof Date ? row.start_time : row.start_time ? new Date(row.start_time) : null;
+        if (filter.startedAfter !== undefined && (startTime === null || startTime < filter.startedAfter)) return false;
+        if (filter.startedBefore !== undefined && (startTime === null || startTime > filter.startedBefore)) return false;
+        return true;
+      })
+      .map(mapJobExecution);
+  }
+
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     if (!jobInstanceId) return null;
     const rows = (await this.prisma.$queryRaw`
@@ -328,6 +392,16 @@ export class PrismaJobRepository extends JobRepository {
       FROM "batch_step_execution" WHERE "id" = ${stepExecutionId} LIMIT 1
     `) as StepExecutionRow[];
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
+  }
+
+  override async findStepExecutions(jobExecutionId: string): Promise<StepExecution[]> {
+    const rows = (await this.prisma.$queryRaw`
+      SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+      FROM "batch_step_execution"
+      WHERE "job_execution_id" = ${jobExecutionId}
+      ORDER BY "created_at" ASC, "id" ASC
+    `) as StepExecutionRow[];
+    return rows.map(mapStepExecution);
   }
 
   async findLatestStepExecution(

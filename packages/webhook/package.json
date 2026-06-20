@@ -16,7 +16,6 @@
   "keywords": [
     "nestjs",
     "batch",
-    "spring-batch",
     "webhook",
     "hmac",
     "hmac-sha256",

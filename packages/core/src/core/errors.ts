@@ -54,6 +54,36 @@ export class JobExecutionAlreadyRunningError extends BatchError {
   }
 }
 
+export class JobExecutionNotFoundError extends BatchError {
+  readonly code = 'JOB_EXECUTION_NOT_FOUND';
+  constructor(executionId: string) {
+    super(`Job execution not found: ${executionId}`, { executionId });
+  }
+}
+
+export class JobInstanceNotFoundError extends BatchError {
+  readonly code = 'JOB_INSTANCE_NOT_FOUND';
+  constructor(jobInstanceId: string) {
+    super(`Job instance not found: ${jobInstanceId}`, { jobInstanceId });
+  }
+}
+
+export class InvalidJobOperationError extends BatchError {
+  readonly code = 'INVALID_JOB_OPERATION';
+  constructor(operation: string, message: string, details?: unknown) {
+    super(message, { operation, ...(typeof details === 'object' && details !== null ? details : {}) });
+  }
+}
+
+export class UnsupportedJobRepositoryOperationError extends BatchError {
+  readonly code = 'UNSUPPORTED_JOB_REPOSITORY_OPERATION';
+  constructor(operation: string) {
+    super(`JobRepository operation is not supported by this adapter: ${operation}`, {
+      operation,
+    });
+  }
+}
+
 /**
  * Thrown when a restart is attempted against a JobDefinition that was
  * declared with `restartable: false`. Restarting a FAILED execution is

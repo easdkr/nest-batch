@@ -12,6 +12,7 @@ export enum JobStatus {
   FAILED = 'FAILED',
   STOPPING = 'STOPPING',
   STOPPED = 'STOPPED',
+  ABANDONED = 'ABANDONED',
   UNKNOWN = 'UNKNOWN',
 }
 

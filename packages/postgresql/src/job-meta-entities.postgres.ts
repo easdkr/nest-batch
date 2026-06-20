@@ -1,7 +1,7 @@
 import { Entity, Property, PrimaryKey, Unique, Index } from '@mikro-orm/core';
 
 /**
- * Spring Batch BATCH_JOB_INSTANCE equivalent.
+ * `batch_job_instance` metadata row.
  *
  * One row per logical job instance. Uniqueness is enforced on
  * (jobName, jobKey) so that the same canonical key resolves to
@@ -32,7 +32,7 @@ export class JobInstanceEntity {
 }
 
 /**
- * Spring Batch BATCH_JOB_EXECUTION equivalent.
+ * `batch_job_execution` metadata row.
  *
  * One row per job run. `status` is the stringified JobStatus enum.
  * `jobInstanceId` is a logical FK (no DB-level FK constraint to
@@ -67,7 +67,7 @@ export class JobExecutionEntity {
 }
 
 /**
- * Spring Batch BATCH_STEP_EXECUTION equivalent.
+ * `batch_step_execution` metadata row.
  *
  * One row per step run. Counter columns default to 0 so the
  * entity can be persisted immediately upon creation, before any
@@ -114,7 +114,7 @@ export class StepExecutionEntity {
 }
 
 /**
- * Spring Batch BATCH_JOB_EXECUTION_CONTEXT equivalent.
+ * `batch_job_execution_context` metadata row.
  *
  * `data` is a JSON-serialized ExecutionContext payload. `version`
  * guards against lost updates during concurrent writers.
@@ -132,7 +132,7 @@ export class JobExecutionContextEntity {
 }
 
 /**
- * Spring Batch BATCH_STEP_EXECUTION_CONTEXT equivalent.
+ * `batch_step_execution_context` metadata row.
  *
  * Mirrors the job-level context table but scoped to a single
  * step execution. The 0.2.0 decision was to drop

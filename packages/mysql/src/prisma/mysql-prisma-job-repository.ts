@@ -18,6 +18,8 @@ import type {
   StepExecutionPatch,
   ExecutionContext,
   ExecutionScope,
+  JobInstanceFilter,
+  JobExecutionFilter,
 } from '@nest-batch/core';
 import type { PrismaClient } from '@prisma/client';
 
@@ -111,6 +113,38 @@ function mapStepExecution(e: {
   };
 }
 
+type MysqlJobInstanceRecord = {
+  id: string;
+  jobName: string;
+  jobKey: string;
+  createdAt: Date;
+};
+
+type MysqlJobExecutionRecord = {
+  id: string;
+  jobInstanceId: string;
+  status: string;
+  startTime: Date | null;
+  endTime: Date | null;
+  exitCode: string;
+  exitMessage: string;
+  params: string;
+};
+
+type MysqlStepExecutionRecord = {
+  id: string;
+  jobExecutionId: string;
+  stepName: string;
+  status: string;
+  readCount: number;
+  writeCount: number;
+  skipCount: number;
+  rollbackCount: number;
+  commitCount: number;
+  exitCode: string;
+  exitMessage: string;
+};
+
 /**
  * MySQL-flavored Prisma `JobRepository`.
  *
@@ -146,6 +180,27 @@ export class MysqlPrismaJobRepository extends JobRepository {
         `Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`,
       );
     }
+  }
+
+  override async getJobInstance(jobInstanceId: string): Promise<JobInstance | null> {
+    const instance = await this.prisma.batchJobInstance.findUnique({
+      where: { id: jobInstanceId },
+    });
+    return instance ? mapJobInstance(instance as unknown as MysqlJobInstanceRecord) : null;
+  }
+
+  override async findJobInstances(
+    filter: JobInstanceFilter = {},
+  ): Promise<JobInstance[]> {
+    const where: Record<string, unknown> = {};
+    if (filter.jobName !== undefined) where.jobName = filter.jobName;
+    if (filter.jobKey !== undefined) where.jobKey = filter.jobKey;
+
+    const rows = await this.prisma.batchJobInstance.findMany({
+      where,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map((row) => mapJobInstance(row as unknown as MysqlJobInstanceRecord));
   }
 
   async createJobExecution(
@@ -246,6 +301,30 @@ export class MysqlPrismaJobRepository extends JobRepository {
     return e ? mapJobExecution(e as unknown as { id: string; jobInstanceId: string; status: string; startTime: Date | null; endTime: Date | null; exitCode: string; exitMessage: string; params: string }) : null;
   }
 
+  override async findJobExecutions(
+    filter: JobExecutionFilter = {},
+  ): Promise<JobExecution[]> {
+    const where: Record<string, unknown> = {};
+    if (filter.jobInstanceId !== undefined) where.jobInstanceId = filter.jobInstanceId;
+    if (filter.status !== undefined) {
+      where.status = Array.isArray(filter.status)
+        ? { in: [...filter.status] }
+        : filter.status;
+    }
+    if (filter.startedAfter !== undefined || filter.startedBefore !== undefined) {
+      const startTime: Record<string, Date> = {};
+      if (filter.startedAfter !== undefined) startTime.gte = filter.startedAfter;
+      if (filter.startedBefore !== undefined) startTime.lte = filter.startedBefore;
+      where.startTime = startTime;
+    }
+
+    const rows = await this.prisma.batchJobExecution.findMany({
+      where,
+      orderBy: [{ startTime: 'desc' }, { id: 'desc' }],
+    });
+    return rows.map((row) => mapJobExecution(row as unknown as MysqlJobExecutionRecord));
+  }
+
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     if (!jobInstanceId) return null;
     const e = await this.prisma.batchJobExecution.findFirst({
@@ -305,6 +384,14 @@ export class MysqlPrismaJobRepository extends JobRepository {
       where: { id: stepExecutionId },
     });
     return s ? mapStepExecution(s as unknown as { id: string; jobExecutionId: string; stepName: string; status: string; readCount: number; writeCount: number; skipCount: number; rollbackCount: number; commitCount: number; exitCode: string; exitMessage: string }) : null;
+  }
+
+  override async findStepExecutions(jobExecutionId: string): Promise<StepExecution[]> {
+    const rows = await this.prisma.batchStepExecution.findMany({
+      where: { jobExecutionId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map((row) => mapStepExecution(row as unknown as MysqlStepExecutionRecord));
   }
 
   async findLatestStepExecution(

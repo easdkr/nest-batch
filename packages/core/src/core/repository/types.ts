@@ -64,3 +64,28 @@ export interface ExecutionContext {
 export type ExecutionScope = { jobExecutionId: string } | { stepExecutionId: string };
 
 export type JobParameters = Record<string, JsonValue>;
+
+export interface JobInstanceFilter {
+  jobName?: string;
+  jobKey?: string;
+}
+
+export interface JobExecutionFilter {
+  jobInstanceId?: string;
+  status?: JobStatus | readonly JobStatus[];
+  startedAfter?: Date;
+  startedBefore?: Date;
+}
+
+export interface StepExecutionContextEntry {
+  stepExecutionId: string;
+  context: ExecutionContext;
+}
+
+export interface JobExecutionDetails {
+  jobInstance: JobInstance;
+  jobExecution: JobExecution;
+  stepExecutions: StepExecution[];
+  jobContext: ExecutionContext;
+  stepContexts: StepExecutionContextEntry[];
+}

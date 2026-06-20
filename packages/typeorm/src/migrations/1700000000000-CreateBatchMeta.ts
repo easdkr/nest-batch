@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * Creates the six Spring Batch-compatible meta-tables owned by
+ * Creates the six batch meta-tables owned by
  * this package:
  *
  *   - batch_job_instance            (root, unique on (job_name, job_key))

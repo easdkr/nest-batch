@@ -13,7 +13,8 @@ import {
   type SkipPolicyConfig,
   type RetryPolicyConfig,
 } from '../../src/core/ir';
-import type { ItemReader, ItemProcessor, ItemWriter } from '../../src/core/item';
+import type { ItemReader, ItemProcessor, ItemStream, ItemWriter } from '../../src/core/item';
+import type { ExecutionContext } from '../../src/core/repository';
 import { StepStatus } from '../../src/core/status';
 import { SkipLimitExceededError, RetryLimitExceededError } from '../../src/core/errors';
 
@@ -107,6 +108,69 @@ class RecordingWriter implements ItemWriter<number> {
       throw err;
     }
     this.chunks.push([...items]);
+  }
+}
+
+class StreamArrayReader implements ItemReader<number>, ItemStream {
+  private i = 0;
+  public updateCount = 0;
+  constructor(
+    private readonly items: number[],
+    private readonly events: string[],
+  ) {}
+  async open(_context: ExecutionContext): Promise<void> {
+    this.events.push('reader.open');
+  }
+  async read(): Promise<number | null> {
+    return this.i < this.items.length ? (this.items[this.i++] as number) : null;
+  }
+  async update(context: ExecutionContext): Promise<ExecutionContext> {
+    this.updateCount += 1;
+    this.events.push(`reader.update.${this.updateCount}`);
+    const data =
+      context.data !== null && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    return {
+      ...context,
+      data: {
+        ...data,
+        readerUpdateCount: this.updateCount,
+      },
+    };
+  }
+  async close(): Promise<void> {
+    this.events.push('reader.close');
+  }
+}
+
+class StreamRecordingWriter implements ItemWriter<number>, ItemStream {
+  public readonly chunks: number[][] = [];
+  public updateCount = 0;
+  constructor(private readonly events: string[]) {}
+  async open(_context: ExecutionContext): Promise<void> {
+    this.events.push('writer.open');
+  }
+  async write(items: number[]): Promise<void> {
+    this.chunks.push([...items]);
+  }
+  async update(context: ExecutionContext): Promise<ExecutionContext> {
+    this.updateCount += 1;
+    this.events.push(`writer.update.${this.updateCount}`);
+    const data =
+      context.data !== null && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    return {
+      ...context,
+      data: {
+        ...data,
+        writerUpdateCount: this.updateCount,
+      },
+    };
+  }
+  async close(): Promise<void> {
+    this.events.push('writer.close');
   }
 }
 
@@ -241,6 +305,50 @@ describe('ChunkStepExecutor', () => {
       [6, 8], // chunk 2: 3*2, 4*2
       [10], // chunk 3: 5*2
     ]);
+  });
+
+  test('stream-capable reader and writer receive open/update/close hooks', async () => {
+    const events: string[] = [];
+    const reader = new StreamArrayReader([1, 2, 3], events);
+    const writer = new StreamRecordingWriter(events);
+    const repository = new InMemoryJobRepository();
+    const step: ChunkStepDefinition = {
+      kind: 'chunk',
+      id: 'stream-step',
+      chunkSize: 2,
+      reader: { kind: RefKind.BuilderLambda, fn: () => reader },
+      writer: { kind: RefKind.BuilderLambda, fn: () => writer },
+      listeners: [],
+    };
+    const ctx: ChunkExecutionContext = {
+      ...buildContext({ reader, writer }),
+      stepExecutionId: 'stream-step-execution',
+      jobRepository: repository,
+    };
+
+    const result = await new ChunkStepExecutor().execute(step, ctx);
+    const persisted = await repository.getExecutionContext({
+      stepExecutionId: 'stream-step-execution',
+    });
+
+    expect(result.status).toBe(StepStatus.COMPLETED);
+    expect(result.commitCount).toBe(2);
+    expect(writer.chunks).toEqual([[1, 2], [3]]);
+    expect(events).toEqual([
+      'reader.open',
+      'writer.open',
+      'reader.update.1',
+      'writer.update.1',
+      'reader.update.2',
+      'writer.update.2',
+      'writer.close',
+      'reader.close',
+    ]);
+    expect(persisted.data).toEqual({
+      lastChunkIndex: 1,
+      readerUpdateCount: 2,
+      writerUpdateCount: 2,
+    });
   });
 
   test('empty reader → 0 reads, 0 writes, status COMPLETED, commitCount=0', async () => {

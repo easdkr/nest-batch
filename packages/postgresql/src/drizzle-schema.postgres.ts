@@ -10,7 +10,7 @@
  * driver imports live in this package, behind the package
  * boundary the T-AC-2b boundary test enforces.
  *
- * The schema shape is the Spring Batch meta-schema with one
+ * The schema shape is the batch meta-schema with one
  * intentional omission: `batch_step_execution_params` is dropped
  * (step parameters are derivable from the parent job execution
  * params plus the step execution context).

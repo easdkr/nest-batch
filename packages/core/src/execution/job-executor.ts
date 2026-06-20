@@ -106,10 +106,10 @@ export class JobExecutor {
   ): Promise<JobExecution> {
     // Capture the pre-execute status. For a fresh launch, the launcher
     // created the execution with status STARTING; for a restart, the
-    // caller (JobLauncher.run) is handing us a previously-FAILED
-    // execution. The check below gates the restart path on that
-    // distinction.
-    const isRestart = execution.status === JobStatus.FAILED;
+    // caller (JobLauncher.run) hands us a terminal execution that can
+    // be resumed.
+    const isRestart =
+      execution.status === JobStatus.FAILED || execution.status === JobStatus.STOPPED;
     if (isRestart && !jobDef.restartable) {
       throw new JobNotRestartableError(jobDef.id);
     }
@@ -281,20 +281,43 @@ export class JobExecutor {
             : result.status === StepStatus.FAILED
               ? FlowExecutionStatus.FAILED
               : FlowExecutionStatus.UNKNOWN;
+        const deciderExitStatus = await this.resolveDeciderExitStatus(
+          jobDef,
+          currentStepId,
+          {
+            jobExecution: execution,
+            stepId: step.id,
+            stepExecutionId: stepExecution.id,
+            stepStatus: result.status,
+            exitCode: result.exitCode,
+            exitMessage: result.exitMessage,
+          },
+        );
+        const flowExitStatus = deciderExitStatus ?? (result.exitCode || flowStatus);
 
-        const evaluatorResult = await this.flowEvaluator.evaluate(
+        let evaluatorResult = await this.flowEvaluator.evaluate(
           jobDef.transitions,
           currentStepId,
-          flowStatus,
+          flowExitStatus,
         );
 
         // Distinguish "no transition declared" (linear fallback) from
         // "transition declared with toStepId: null" (explicit END).
         // FlowEvaluator returns null for both, so we inspect the
         // transition list directly.
-        const hasMatchingTransition = jobDef.transitions.some(
-          (t) => t.fromStepId === currentStepId && t.onStatus === flowStatus,
+        let hasMatchingTransition = jobDef.transitions.some((t) =>
+          this.flowEvaluator.matches(t, currentStepId!, flowExitStatus),
         );
+        if (!hasMatchingTransition && flowExitStatus !== flowStatus) {
+          evaluatorResult = await this.flowEvaluator.evaluate(
+            jobDef.transitions,
+            currentStepId,
+            flowStatus,
+          );
+          hasMatchingTransition = jobDef.transitions.some((t) =>
+            this.flowEvaluator.matches(t, currentStepId!, flowStatus),
+          );
+        }
 
         let nextStepId: string | null;
         if (hasMatchingTransition) {
@@ -494,6 +517,18 @@ export class JobExecutor {
     }
     const value = (ctx.data as { lastChunkIndex?: unknown }).lastChunkIndex;
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  }
+
+  private async resolveDeciderExitStatus(
+    jobDef: JobDefinition,
+    afterStepId: string,
+    context: Parameters<NonNullable<JobDefinition['deciders']>[number]['decide']>[0],
+  ): Promise<string | undefined> {
+    const decider = (jobDef.deciders ?? []).find((d) => d.afterStepId === afterStepId);
+    if (decider === undefined) return undefined;
+    const status = await decider.decide(context);
+    const trimmed = status.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
   }
 
   /**

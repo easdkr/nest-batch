@@ -86,6 +86,34 @@ export function runJobRepositoryContract(
         expect(new Set([a.id, b.id, c.id]).size).toBe(3);
       });
 
+      test('getJobInstance returns an existing instance and null for an unknown id', async () => {
+        const instance = await repo.getOrCreateJobInstance('query-job', 'instance');
+
+        const found = await repo.getJobInstance(instance.id);
+        expect(found).not.toBeNull();
+        expect(found!.id).toBe(instance.id);
+        expect(found!.jobName).toBe('query-job');
+        expect(found!.jobKey).toBe('instance');
+
+        expect(await repo.getJobInstance('does-not-exist')).toBeNull();
+      });
+
+      test('findJobInstances filters by jobName and jobKey', async () => {
+        const first = await repo.getOrCreateJobInstance('query-instances', 'a');
+        const second = await repo.getOrCreateJobInstance('query-instances', 'b');
+        const other = await repo.getOrCreateJobInstance('query-instances-other', 'a');
+
+        const byName = await repo.findJobInstances({ jobName: 'query-instances' });
+        expect(byName.map((i) => i.id)).toEqual(expect.arrayContaining([first.id, second.id]));
+        expect(byName.map((i) => i.id)).not.toContain(other.id);
+
+        const byNameAndKey = await repo.findJobInstances({
+          jobName: 'query-instances',
+          jobKey: 'a',
+        });
+        expect(byNameAndKey.map((i) => i.id)).toEqual([first.id]);
+      });
+
       test('getOrCreateJobInstance is race-safe under Promise.all concurrency', async () => {
         const calls = Array.from({ length: 10 }, () =>
           repo.getOrCreateJobInstance('concurrent-create', 'k'),
@@ -249,6 +277,57 @@ export function runJobRepositoryContract(
         expect(result).toBeNull();
       });
 
+      test('findJobExecutions filters by instance, status, and start time window', async () => {
+        const oldStart = new Date('2025-01-01T00:00:00Z');
+        const newStart = new Date('2025-01-02T00:00:00Z');
+        const unrelatedStart = new Date('2025-01-03T00:00:00Z');
+
+        const first = await repo.createExecutionAtomic('query-executions', 'old', { p: 1 });
+        await repo.updateJobExecution(first.id, {
+          status: JobStatus.COMPLETED,
+          startTime: oldStart,
+          endTime: new Date('2025-01-01T00:10:00Z'),
+        });
+
+        const second = await repo.createExecutionAtomic('query-executions', 'new', { p: 2 });
+        await repo.updateJobExecution(second.id, {
+          status: JobStatus.FAILED,
+          startTime: newStart,
+          endTime: new Date('2025-01-02T00:10:00Z'),
+        });
+
+        const unrelated = await repo.createExecutionAtomic('query-executions-other', 'x', { p: 3 });
+        await repo.updateJobExecution(unrelated.id, {
+          status: JobStatus.COMPLETED,
+          startTime: unrelatedStart,
+          endTime: new Date('2025-01-03T00:10:00Z'),
+        });
+
+        const byInstance = await repo.findJobExecutions({
+          jobInstanceId: first.jobInstanceId,
+        });
+        expect(byInstance.map((e) => e.id)).toEqual([first.id]);
+
+        const failed = await repo.findJobExecutions({ status: JobStatus.FAILED });
+        expect(failed.map((e) => e.id)).toContain(second.id);
+        expect(failed.map((e) => e.id)).not.toContain(first.id);
+
+        const terminal = await repo.findJobExecutions({
+          status: [JobStatus.COMPLETED, JobStatus.FAILED],
+        });
+        expect(terminal.map((e) => e.id)).toEqual(
+          expect.arrayContaining([first.id, second.id, unrelated.id]),
+        );
+
+        const windowed = await repo.findJobExecutions({
+          startedAfter: new Date('2025-01-01T12:00:00Z'),
+          startedBefore: new Date('2025-01-02T12:00:00Z'),
+        });
+        expect(windowed.map((e) => e.id)).toContain(second.id);
+        expect(windowed.map((e) => e.id)).not.toContain(first.id);
+        expect(windowed.map((e) => e.id)).not.toContain(unrelated.id);
+      });
+
       test('createStepExecution + updateStepExecution + getStepExecution roundtrip', async () => {
         const exec = await repo.createExecutionAtomic('myJob', 'k-step', { p: 1 });
         const step = await repo.createStepExecution(exec.id, 'step-a');
@@ -278,6 +357,21 @@ export function runJobRepositoryContract(
       test('getStepExecution returns null for unknown id', async () => {
         const result = await repo.getStepExecution('does-not-exist');
         expect(result).toBeNull();
+      });
+
+      test('findStepExecutions returns all steps for the requested job execution', async () => {
+        const exec = await repo.createExecutionAtomic('query-steps', 'steps', { p: 1 });
+        const first = await repo.createStepExecution(exec.id, 'step-a');
+        const second = await repo.createStepExecution(exec.id, 'step-b');
+        const otherExec = await repo.createExecutionAtomic('query-steps-other', 'steps', { p: 2 });
+        const otherStep = await repo.createStepExecution(otherExec.id, 'step-a');
+
+        const steps = await repo.findStepExecutions(exec.id);
+        expect(steps.map((s) => s.id)).toEqual(expect.arrayContaining([first.id, second.id]));
+        expect(steps.map((s) => s.id)).not.toContain(otherStep.id);
+
+        await repo.updateJobExecution(exec.id, { status: JobStatus.COMPLETED });
+        await repo.updateJobExecution(otherExec.id, { status: JobStatus.COMPLETED });
       });
 
       test('saveExecutionContext + getExecutionContext roundtrip preserves data and version', async () => {

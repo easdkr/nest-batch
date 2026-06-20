@@ -1,5 +1,7 @@
 import type { ExecutionContext, ExecutionScope } from '../repository/types';
 
+type MaybePromise<T> = T | Promise<T>;
+
 /**
  * Reads one item at a time. Returns `null` to signal EOF.
  * For async iteration, use `AsyncIterable.read()` (not yet supported in MVP).
@@ -32,6 +34,20 @@ export interface ItemWriter<T = unknown> {
 export interface WriterResult {
   written: number;
   skipped: number;
+}
+
+/**
+ * Optional lifecycle contract for stateful chunk components.
+ *
+ * The chunk executor passes the step-scoped ExecutionContext to
+ * `open()` before the first read, calls `update()` after every committed
+ * chunk, persists the returned or mutated context, and calls `close()`
+ * before the step returns. Errors from any hook fail the step.
+ */
+export interface ItemStream {
+  open(context: ExecutionContext): MaybePromise<void>;
+  update(context: ExecutionContext): MaybePromise<ExecutionContext | void>;
+  close(): MaybePromise<void>;
 }
 
 /**

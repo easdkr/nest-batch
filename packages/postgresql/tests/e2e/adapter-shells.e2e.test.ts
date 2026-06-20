@@ -1,5 +1,5 @@
 // E2E harness for all 4 `@nest-batch/postgresql` shells against a
-// single shared Postgres testcontainer.
+// single shared live Postgres database.
 //
 // This file is the **integration** test the F4 REJECT called out —
 // the missing piece between the per-slot e2e harnesses in
@@ -12,12 +12,15 @@
 //
 // What it does, top to bottom:
 //
-//   1. Spins up ONE shared `PostgreSqlContainer` (gated by
+//   1. Uses one shared Postgres database (gated by
 //      `RUN_POSTGRES_E2E=1` — the `test:e2e` script in `package.json`
-//      sets the env var; default `pnpm test` does NOT).
+//      sets the env var; default `pnpm test` does NOT). When
+//      `POSTGRES_E2E_DATABASE_URL` is present, the harness uses
+//      that external database; otherwise it starts a
+//      `PostgreSqlContainer`.
 //   2. Applies the 6-table batch meta-schema DDL from
 //      `packages/postgresql/migrations/0001-create-batch-meta.sql`
-//      ONCE against the container (the file lists `CREATE INDEX`
+//      ONCE against the live database (the file lists `CREATE INDEX`
 //      statements interleaved with their target tables, so we
 //      reorder to run all `CREATE TABLE` first, then `CREATE INDEX`
 //      — Postgres rejects the index creation otherwise).
@@ -54,7 +57,8 @@
 //      is the same one every slot and every shell passes; the
 //      F4-reject gap was that no single e2e file exercised all 4
 //      shells against a real Postgres — this file closes it.
-//   5. Tears the container down in `afterAll`.
+//   5. Tears the testcontainer down in `afterAll` when the harness
+//      started one.
 //
 // Run locally with a Docker daemon up:
 //
@@ -120,6 +124,7 @@ import {
 } from '../../src';
 
 const E2E_ENABLED = process.env.RUN_POSTGRES_E2E === '1';
+const EXTERNAL_DATABASE_URL = process.env.POSTGRES_E2E_DATABASE_URL;
 
 const describeE2E = E2E_ENABLED ? describe : describe.skip;
 
@@ -137,8 +142,8 @@ const MIGRATION_PATH = resolve(
 );
 
 // The Prisma schema bundled with the postgresql package. The
-// Prisma shell applies it via `prisma db push` against the
-// testcontainer before the Prisma shell's describe block runs.
+// Prisma shell applies it via `prisma db push` against the live
+// database before the Prisma shell's describe block runs.
 const PRISMA_SCHEMA_PATH = resolve(
   __dirname,
   '..',
@@ -147,12 +152,42 @@ const PRISMA_SCHEMA_PATH = resolve(
   'schema.prisma',
 );
 
+interface PostgresConnectionDetails {
+  readonly host: string;
+  readonly port: number;
+  readonly database: string;
+  readonly user: string;
+  readonly password: string;
+}
+
+function parsePostgresConnectionString(
+  connectionString: string,
+): PostgresConnectionDetails {
+  const url = new URL(connectionString);
+  const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
+  if (!database) {
+    throw new Error(
+      'POSTGRES_E2E_DATABASE_URL must include a database name, e.g. ' +
+        'postgres://demo:demo@127.0.0.1:55432/nest_batch_postgres_e2e',
+    );
+  }
+
+  return {
+    host: url.hostname,
+    port: url.port ? Number(url.port) : 5432,
+    database,
+    user: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+  };
+}
+
 describeE2E(
-  '@nest-batch/postgresql — 4-shell integration e2e (testcontainers Postgres, gated by RUN_POSTGRES_E2E=1)',
+  '@nest-batch/postgresql — 4-shell integration e2e (live Postgres, gated by RUN_POSTGRES_E2E=1)',
   () => {
-    let container: Awaited<ReturnType<PostgreSqlContainer['start']>>;
+    let container: Awaited<ReturnType<PostgreSqlContainer['start']>> | undefined;
     let pool: Pool;
     let dbUrl: string;
+    let connection: PostgresConnectionDetails;
 
     beforeAll(async () => {
       if (!existsSync(MIGRATION_PATH)) {
@@ -165,13 +200,17 @@ describeE2E(
       }
       const ddl = readFileSync(MIGRATION_PATH, 'utf8');
 
-      container = await new PostgreSqlContainer('postgres:16-alpine')
-        .withDatabase('nest_batch_postgres_e2e')
-        .withUsername('demo')
-        .withPassword('demo')
-        .start();
-
-      dbUrl = container.getConnectionUri();
+      if (EXTERNAL_DATABASE_URL) {
+        dbUrl = EXTERNAL_DATABASE_URL;
+      } else {
+        container = await new PostgreSqlContainer('postgres:16-alpine')
+          .withDatabase('nest_batch_postgres_e2e')
+          .withUsername('demo')
+          .withPassword('demo')
+          .start();
+        dbUrl = container.getConnectionUri();
+      }
+      connection = parsePostgresConnectionString(dbUrl);
 
       // The 6-table migration file lists `CREATE INDEX` statements
       // interleaved with their target `CREATE TABLE` blocks. Postgres
@@ -283,11 +322,11 @@ describeE2E(
         orm = await MikroORM.init({
           entities: [...SLOT_BATCH_META_ENTITIES],
           driver: PostgreSqlDriver,
-          dbName: 'nest_batch_postgres_e2e',
-          host: container.getHost(),
-          port: container.getMappedPort(5432),
-          user: 'demo',
-          password: 'demo',
+          dbName: connection.database,
+          host: connection.host,
+          port: connection.port,
+          user: connection.user,
+          password: connection.password,
         });
         // The `orm.em` is typed as the generic `EntityManager`
         // (`@mikro-orm/core`); the postgresql shell's classes
@@ -354,11 +393,11 @@ describeE2E(
         // host's `DataSource` constructed just above.
         dataSource = new DataSource({
           type: 'postgres',
-          host: container.getHost(),
-          port: container.getMappedPort(5432),
-          username: 'demo',
-          password: 'demo',
-          database: 'nest_batch_postgres_e2e',
+          host: connection.host,
+          port: connection.port,
+          username: connection.user,
+          password: connection.password,
+          database: connection.database,
           entities: [...BATCH_META_ENTITIES],
           synchronize: false,
           migrationsRun: false,
@@ -538,7 +577,7 @@ describe('@nest-batch/postgresql — 4-shell e2e (skipped — RUN_POSTGRES_E2E=1
     console.log(
       '\n' +
         '  [postgresql e2e] skipped — set RUN_POSTGRES_E2E=1 to run the ' +
-        '4-shell testcontainers Postgres harness.\n' +
+        '4-shell live Postgres harness.\n' +
         '  [postgresql e2e] command: RUN_POSTGRES_E2E=1 pnpm --filter ' +
         '@nest-batch/postgresql test:e2e\n',
     );

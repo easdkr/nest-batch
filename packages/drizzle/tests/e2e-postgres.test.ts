@@ -1,7 +1,7 @@
 // E2E harness for `@nest-batch/drizzle` against a real Postgres.
 //
 // Spins up a Postgres testcontainer, applies the batch meta-schema
-// (the 6-table Spring Batch-compatible DDL shipped in
+// (the 6-table DDL shipped in
 // `@nest-batch/postgresql/migrations/0001-create-batch-meta.sql`),
 // runs the shared `@nest-batch/core` contract suite against the
 // slot's `DrizzleJobRepository` / `DrizzleTransactionManager`, and

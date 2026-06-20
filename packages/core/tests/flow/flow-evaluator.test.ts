@@ -5,7 +5,7 @@ import type { TransitionDefinition } from '../../src/core/ir';
 
 const t = (
   fromStepId: string,
-  onStatus: FlowExecutionStatus,
+  onStatus: FlowExecutionStatus | string,
   toStepId: string | null,
 ): TransitionDefinition => ({ fromStepId, onStatus, toStepId });
 
@@ -96,6 +96,29 @@ describe('FlowEvaluator', () => {
       );
       expect(result).toBe('s-error-handler');
     });
+
+    it('matches wildcard transition patterns', async () => {
+      const result = await evaluator.evaluate(
+        [t('s1', 'FAILED_*', 'recover')],
+        's1',
+        'FAILED_VALIDATION',
+      );
+
+      expect(result).toBe('recover');
+    });
+
+    it('prefers exact matches over wildcard matches', async () => {
+      const result = await evaluator.evaluate(
+        [
+          t('s1', '*', 'fallback'),
+          t('s1', 'NO_DATA', 'empty-branch'),
+        ],
+        's1',
+        'NO_DATA',
+      );
+
+      expect(result).toBe('empty-branch');
+    });
   });
 
   describe('ambiguity', () => {
@@ -137,6 +160,17 @@ describe('FlowEvaluator', () => {
           count: 3,
         });
       }
+    });
+
+    it('throws when multiple wildcard transitions have the same specificity', async () => {
+      const ambiguous: TransitionDefinition[] = [
+        t('s1', 'FAILED_?', 'short'),
+        t('s1', 'FAILED_*', 'long'),
+      ];
+
+      await expect(evaluator.evaluate(ambiguous, 's1', 'FAILED_X')).rejects.toBeInstanceOf(
+        InvalidFlowGraphError,
+      );
     });
   });
 

@@ -1,7 +1,33 @@
 import { Injectable } from '@nestjs/common';
 import type { TransitionDefinition } from '../core/ir';
-import type { FlowExecutionStatus } from '../core/status';
 import { InvalidFlowGraphError } from '../core/errors';
+
+function escapeRegex(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+.:]/g, '\\$&');
+}
+
+function matchesPattern(pattern: string, status: string): boolean {
+  if (!pattern.includes('*') && !pattern.includes('?')) {
+    return pattern === status;
+  }
+  const source = pattern
+    .split('')
+    .map((ch) => {
+      if (ch === '*') return '.*';
+      if (ch === '?') return '.';
+      return escapeRegex(ch);
+    })
+    .join('');
+  return new RegExp(`^${source}$`).test(status);
+}
+
+function patternSpecificity(pattern: string): number {
+  let score = 0;
+  for (const ch of pattern) {
+    if (ch !== '*' && ch !== '?') score += 1;
+  }
+  return pattern.includes('*') || pattern.includes('?') ? score : score + 1000;
+}
 
 /**
  * FlowEvaluator resolves the next step in a flow graph given the current step
@@ -21,10 +47,9 @@ export class FlowEvaluator {
    * - Returns `null` if the job should END — either no transition matches
    *   the (fromStepId, onStatus) pair, or the matching transition's
    *   `toStepId` is `null` (explicit END).
-   * - Throws `InvalidFlowGraphError` with code `AMBIGUOUS_TRANSITION` if
-   *   more than one transition matches the same (fromStepId, onStatus) —
-   *   the graph is malformed and the caller must fix it (Metis: "Invalid
-   *   flow graph fails validation: ambiguous transition").
+   * - Supports `*` and `?` wildcards in `onStatus`. Exact matches win
+   *   over wildcard matches. If multiple matches have the same
+   *   specificity, the graph is ambiguous and the caller must fix it.
    *
    * @param transitions  All transitions in the job's flow graph.
    * @param fromStepId   The current step's ID.
@@ -33,19 +58,32 @@ export class FlowEvaluator {
   async evaluate(
     transitions: TransitionDefinition[],
     fromStepId: string,
-    status: FlowExecutionStatus,
+    status: string,
   ): Promise<string | null> {
-    const matches = transitions.filter(
-      (t) => t.fromStepId === fromStepId && t.onStatus === status,
-    );
-    if (matches.length > 1) {
+    const matches = transitions.filter((t) => this.matches(t, fromStepId, status));
+    if (matches.length === 0) return null;
+
+    const ranked = matches.map((transition) => ({
+      transition,
+      specificity: patternSpecificity(transition.onStatus),
+    }));
+    const maxSpecificity = Math.max(...ranked.map((candidate) => candidate.specificity));
+    const best = ranked.filter((candidate) => candidate.specificity === maxSpecificity);
+
+    if (best.length > 1) {
       throw new InvalidFlowGraphError(
         'AMBIGUOUS_TRANSITION',
-        `Ambiguous transition from "${fromStepId}" on status "${status}": ${matches.length} matches`,
-        { fromStepId, status, count: matches.length },
+        `Ambiguous transition from "${fromStepId}" on status "${status}": ${best.length} matches`,
+        { fromStepId, status, count: best.length },
       );
     }
-    if (matches.length === 0) return null;
-    return matches[0]!.toStepId;
+    return best[0]!.transition.toStepId;
+  }
+
+  matches(transition: TransitionDefinition, fromStepId: string, status: string): boolean {
+    return (
+      transition.fromStepId === fromStepId &&
+      matchesPattern(transition.onStatus, status)
+    );
   }
 }

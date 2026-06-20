@@ -9,7 +9,7 @@ import {
 } from '../../src/scheduling/batch-scheduled';
 
 // ---------------------------------------------------------------------------
-// TDD-RED contract for the Spring Batch-like cron decorator API.
+// TDD-RED contract for the cron decorator API.
 // Every test in this file is a contract assertion; the current RED stub
 // satisfies only the metadata-storing subset. The validation tests, the
 // inert-mode tests, and the type-guard sanity tests fail today and are

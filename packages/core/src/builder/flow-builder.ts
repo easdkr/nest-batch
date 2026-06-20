@@ -1,5 +1,9 @@
-import type { TransitionDefinition } from '../core/ir';
-import type { FlowExecutionStatus } from '../core/status';
+import type {
+  DeciderDefinition,
+  FlowTransitionPattern,
+  ReusableFlowDefinition,
+  TransitionDefinition,
+} from '../core/ir';
 
 /**
  * Focused fluent builder for a single `TransitionDefinition`.
@@ -33,7 +37,7 @@ import type { FlowExecutionStatus } from '../core/status';
  */
 export class FlowBuilder {
   private fromStepId?: string;
-  private onStatus?: FlowExecutionStatus;
+  private onStatus?: FlowTransitionPattern;
   private toStepId: string | null | undefined;
   private committed = false;
 
@@ -56,7 +60,7 @@ export class FlowBuilder {
   }
 
   /** Set the status that triggers the transition. Must follow `.from()`. */
-  on(status: FlowExecutionStatus): this {
+  on(status: FlowTransitionPattern): this {
     if (this.committed) {
       throw new Error('FlowBuilder already committed; create a new instance');
     }
@@ -116,4 +120,22 @@ export class FlowBuilder {
       toStepId: this.toStepId,
     };
   }
+}
+
+export function defineReusableFlow(
+  definition: ReusableFlowDefinition,
+): ReusableFlowDefinition {
+  return Object.freeze({
+    transitions: Object.freeze([...definition.transitions]),
+    ...(definition.deciders !== undefined
+      ? { deciders: Object.freeze([...definition.deciders]) }
+      : {}),
+  });
+}
+
+export function defineDecider(
+  afterStepId: string,
+  decide: DeciderDefinition['decide'],
+): DeciderDefinition {
+  return Object.freeze({ afterStepId, decide });
 }

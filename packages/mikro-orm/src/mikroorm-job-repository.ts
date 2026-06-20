@@ -10,6 +10,8 @@ import type {
   StepExecutionPatch,
   ExecutionContext,
   ExecutionScope,
+  JobInstanceFilter,
+  JobExecutionFilter,
 } from '@nest-batch/core';
 import { JobStatus, StepStatus } from '@nest-batch/core';
 import { assertJsonSerializable, serializeContext, deserializeContext } from '@nest-batch/core';
@@ -223,6 +225,49 @@ export class MikroORMJobRepository extends JobRepository {
     });
   }
 
+  override async getJobInstance(jobInstanceId: string): Promise<JobInstance | null> {
+    return RequestContext.create(this.em, async () => {
+      const e = await this.em.findOne(JobInstanceEntity, { id: jobInstanceId });
+      return e ? mapJobInstance(e) : null;
+    });
+  }
+
+  override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
+    return RequestContext.create(this.em, async () => {
+      const where: Record<string, string> = {};
+      if (filter.jobName !== undefined) where.jobName = filter.jobName;
+      if (filter.jobKey !== undefined) where.jobKey = filter.jobKey;
+      const rows = await this.em.find(JobInstanceEntity, where, {
+        orderBy: { createdAt: 'ASC', id: 'ASC' },
+      });
+      return rows.map(mapJobInstance);
+    });
+  }
+
+  override async findJobExecutions(filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
+    return RequestContext.create(this.em, async () => {
+      const where: Record<string, unknown> = {};
+      if (filter.jobInstanceId !== undefined) {
+        where.jobInstanceId = filter.jobInstanceId;
+      }
+      if (filter.status !== undefined) {
+        where.status = {
+          $in: Array.isArray(filter.status) ? filter.status : [filter.status],
+        };
+      }
+      if (filter.startedAfter !== undefined || filter.startedBefore !== undefined) {
+        where.startTime = {
+          ...(filter.startedAfter !== undefined ? { $gte: filter.startedAfter } : {}),
+          ...(filter.startedBefore !== undefined ? { $lte: filter.startedBefore } : {}),
+        };
+      }
+      const rows = await this.em.find(JobExecutionEntity, where, {
+        orderBy: { startTime: 'DESC', id: 'DESC' },
+      });
+      return rows.map((row) => mapJobExecution(row));
+    });
+  }
+
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     return RequestContext.create(this.em, async () => {
       const em = this.em;
@@ -274,6 +319,17 @@ export class MikroORMJobRepository extends JobRepository {
       const em = this.em;
       const s = await em.findOne(StepExecutionEntity, { id: stepExecutionId });
       return s ? mapStepExecution(s) : null;
+    });
+  }
+
+  override async findStepExecutions(jobExecutionId: string): Promise<StepExecution[]> {
+    return RequestContext.create(this.em, async () => {
+      const rows = await this.em.find(
+        StepExecutionEntity,
+        { jobExecutionId },
+        { orderBy: { id: 'ASC' } },
+      );
+      return rows.map(mapStepExecution);
     });
   }
 

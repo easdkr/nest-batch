@@ -17,6 +17,9 @@ import { ChunkStepExecutor } from '../execution/chunk-step-executor';
 import { TaskletStepExecutor } from '../execution/tasklet-step-executor';
 import { ListenerInvoker } from '../execution/listener-invoker';
 import { JobLauncher } from '../execution/job-launcher';
+import { JobExplorer } from '../execution/job-explorer';
+import { JobOperator } from '../execution/job-operator';
+import { BatchWorkerRunner } from '../execution/batch-worker-runner';
 import {
   InProcessExecutionStrategy,
   IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
@@ -465,6 +468,9 @@ export class NestBatchModule {
         TaskletStepExecutor,
         ListenerInvoker,
         JobLauncher,
+        JobExplorer,
+        JobOperator,
+        BatchWorkerRunner,
         // Resolved options bag for adapter introspection.
         {
           provide: MODULE_OPTIONS_TOKEN,
@@ -505,6 +511,9 @@ export class NestBatchModule {
         TaskletStepExecutor,
         ListenerInvoker,
         JobLauncher,
+        JobExplorer,
+        JobOperator,
+        BatchWorkerRunner,
         // Adapter-supplied global providers — re-exported so the
         // host can resolve the persistence + transport bindings
         // from the global module chain.
@@ -619,6 +628,9 @@ export class NestBatchModule {
         TaskletStepExecutor,
         ListenerInvoker,
         JobLauncher,
+        JobExplorer,
+        JobOperator,
+        BatchWorkerRunner,
         {
           provide: BATCH_SCHEDULE_REGISTRY,
           useExisting: BatchScheduleRegistry,
@@ -648,6 +660,9 @@ export class NestBatchModule {
         TaskletStepExecutor,
         ListenerInvoker,
         JobLauncher,
+        JobExplorer,
+        JobOperator,
+        BatchWorkerRunner,
         // Adapter-supplied global providers — re-exported so the
         // host can resolve the persistence + transport bindings
         // from the global module chain.

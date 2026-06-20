@@ -1,7 +1,7 @@
 {
   "name": "@nest-batch/core",
   "version": "0.2.0",
-  "description": "Spring Batch-style batch processing engine for NestJS — jobs, steps, chunk-oriented processing, and the persistence/transport contracts the @nest-batch adapters implement.",
+  "description": "Batch processing engine for NestJS — jobs, steps, chunk-oriented processing, and the persistence/transport contracts the @nest-batch adapters implement.",
   "license": "MIT",
   "author": "easdkr",
   "homepage": "https://github.com/easdkr/nest-batch/tree/main/packages/core#readme",
@@ -16,7 +16,6 @@
   "keywords": [
     "nestjs",
     "batch",
-    "spring-batch",
     "job",
     "step",
     "chunk",

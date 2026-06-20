@@ -1,9 +1,12 @@
 import type {
   StepDefinition,
+  FlowTransitionPattern,
   TransitionDefinition,
   ListenerDefinition,
+  DeciderDefinition,
+  JobExecutionDecider,
+  ReusableFlowDefinition,
 } from '../core/ir';
-import type { FlowExecutionStatus } from '../core/status';
 import type { JobBuilderConfig } from '../compiler/builder-types';
 import { StepBuilder } from './step-builder';
 
@@ -32,10 +35,11 @@ export class JobBuilder {
   private readonly steps: Record<string, StepDefinition> = {};
   private readonly stepOrder: string[] = [];
   private readonly transitions: TransitionDefinition[] = [];
+  private readonly deciders: DeciderDefinition[] = [];
   private readonly listeners: ListenerDefinition[] = [];
   private currentTransition: {
     fromStepId?: string;
-    onStatus?: FlowExecutionStatus;
+    onStatus?: FlowTransitionPattern;
     toStepId?: string | null;
   } | null = null;
 
@@ -106,7 +110,7 @@ export class JobBuilder {
    * Set the status that triggers the current transition.
    * Must be called after `.from(stepId)`.
    */
-  on(status: FlowExecutionStatus): this {
+  on(status: FlowTransitionPattern): this {
     if (!this.currentTransition?.fromStepId) {
       throw new Error('Transition must start with .from(stepId)');
     }
@@ -135,6 +139,19 @@ export class JobBuilder {
     }
     this.currentTransition.toStepId = null;
     this.commitTransition();
+    return this;
+  }
+
+  addDecider(afterStepId: string, decide: JobExecutionDecider): this {
+    this.deciders.push({ afterStepId, decide });
+    return this;
+  }
+
+  useFlow(flow: ReusableFlowDefinition): this {
+    this.transitions.push(...flow.transitions);
+    if (flow.deciders !== undefined) {
+      this.deciders.push(...flow.deciders);
+    }
     return this;
   }
 
@@ -167,6 +184,7 @@ export class JobBuilder {
       steps: this.stepOrder.map((id) => this.steps[id]!),
       startStepId: this.stepOrder[0]!,
       transitions: this.transitions,
+      deciders: this.deciders,
       listeners: this.listeners,
     };
   }

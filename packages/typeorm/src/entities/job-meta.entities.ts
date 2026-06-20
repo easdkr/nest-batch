@@ -1,7 +1,7 @@
 import { Entity, PrimaryColumn, Column, Index } from 'typeorm';
 
 /**
- * Spring Batch BATCH_JOB_INSTANCE equivalent.
+ * `batch_job_instance` metadata row.
  *
  * One row per logical job instance. Uniqueness is enforced on
  * (jobName, jobKey) so that the same canonical key resolves to the
@@ -35,7 +35,7 @@ export class JobInstanceEntity {
 }
 
 /**
- * Spring Batch BATCH_JOB_EXECUTION equivalent.
+ * `batch_job_execution` metadata row.
  *
  * One row per job run. `status` is the stringified JobStatus enum
  * (kept as a plain varchar — TypeORM enum support varies across
@@ -78,7 +78,7 @@ export class JobExecutionEntity {
 }
 
 /**
- * Spring Batch BATCH_STEP_EXECUTION equivalent.
+ * `batch_step_execution` metadata row.
  *
  * One row per step run. Counters default to 0 so the entity can
  * be persisted immediately upon creation, before any items are
@@ -133,7 +133,7 @@ export class StepExecutionEntity {
 }
 
 /**
- * Spring Batch BATCH_JOB_EXECUTION_CONTEXT equivalent.
+ * `batch_job_execution_context` metadata row.
  *
  * `data` is a JSON-serialized ExecutionContext payload. `version`
  * guards against lost updates during concurrent writers.
@@ -151,7 +151,7 @@ export class JobExecutionContextEntity {
 }
 
 /**
- * Spring Batch BATCH_STEP_EXECUTION_CONTEXT equivalent.
+ * `batch_step_execution_context` metadata row.
  *
  * Mirrors the job-level context table but scoped to a single
  * step execution. There is intentionally no params sibling table

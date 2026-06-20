@@ -1,6 +1,6 @@
 /**
- * Reference built-in listeners — drop-in `Injectable` classes that mirror the
- * Spring Batch conventions (logging, metrics, timing). Each listener exposes
+ * Reference built-in listeners — drop-in `Injectable` classes that mirror common
+ * batch lifecycle conventions (logging, metrics, timing). Each listener exposes
  * the lifecycle methods consumed by `ListenerInvoker` and uses the canonical
  * `ResolverMap` key format (`${phase}:${kind}:${name}`), so a user can simply
  * instantiate one of these classes and register the bound methods under the

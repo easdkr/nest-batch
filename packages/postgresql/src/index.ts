@@ -32,8 +32,8 @@
 // meta tables registered with the host's metadata system. Spread
 // it into the host's MikroORM `entities` array, Drizzle schema
 // config, or Prisma `schema.prisma` include list, and the batch
-// meta tables are wired in. The shape is the Spring Batch
-// meta-schema with one intentional omission:
+// meta tables are wired in. The shape is the batch meta-schema
+// with one intentional omission:
 // `batch_job_execution_params` is dropped (its content is
 // derivable from the parent job execution params + step
 // execution context).

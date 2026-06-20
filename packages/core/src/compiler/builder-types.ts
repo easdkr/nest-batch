@@ -3,6 +3,7 @@ import type {
   StepDefinition,
   ListenerDefinition,
   TransitionDefinition,
+  DeciderDefinition,
 } from '../core/ir';
 import type { FlowExecutionStatus } from '../core/status';
 
@@ -21,5 +22,6 @@ export interface JobBuilderConfig {
   steps: StepDefinition[];
   startStepId: string;
   transitions: TransitionDefinition[];
+  deciders?: DeciderDefinition[];
   listeners: ListenerDefinition[];
 }

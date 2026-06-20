@@ -4,7 +4,11 @@ import { describe, it, expect } from 'vitest';
 import { BatchBuilder } from '../../src/builder/batch-builder';
 import { JobBuilder } from '../../src/builder/job-builder';
 import { StepBuilder } from '../../src/builder/step-builder';
-import { FlowBuilder } from '../../src/builder/flow-builder';
+import {
+  FlowBuilder,
+  defineDecider,
+  defineReusableFlow,
+} from '../../src/builder/flow-builder';
 import { RefKind } from '../../src/core/ir';
 import { FlowExecutionStatus } from '../../src/core/status';
 import {
@@ -501,6 +505,43 @@ describe('FlowBuilder — standalone transition builder', () => {
     expect(t.fromStepId).toBe('s1');
     expect(t.onStatus).toBe(FlowExecutionStatus.COMPLETED);
     expect(t.toStepId).toBe('s2');
+  });
+
+  it('accepts string exit-code patterns in transition builders', () => {
+    const t = FlowBuilder.from('s1').on('FAILED_*').to('recovery').build();
+
+    expect(t).toEqual({
+      fromStepId: 's1',
+      onStatus: 'FAILED_*',
+      toStepId: 'recovery',
+    });
+  });
+
+  it('reuses transition and decider bundles through JobBuilder.useFlow()', () => {
+    const flow = defineReusableFlow({
+      transitions: [
+        FlowBuilder.from('s1').on('EMPTY').to('empty').build(),
+        FlowBuilder.from('s1').on(FlowExecutionStatus.COMPLETED).to('done').build(),
+      ],
+      deciders: [
+        defineDecider('s1', ({ exitCode }) => (exitCode === 'NO_DATA' ? 'EMPTY' : 'COMPLETED')),
+      ],
+    });
+
+    const config = BatchBuilder.create()
+      .job('reusable-flow')
+      .addStep((b) => b.tasklet('s1', { kind: RefKind.BuilderLambda, fn: noop }))
+      .addStep((b) => b.tasklet('empty', { kind: RefKind.BuilderLambda, fn: noop }))
+      .addStep((b) => b.tasklet('done', { kind: RefKind.BuilderLambda, fn: noop }))
+      .useFlow(flow)
+      .build();
+
+    expect(config.transitions).toHaveLength(2);
+    expect(config.deciders).toHaveLength(1);
+
+    const job = compiler.compileFromBuilderConfig(config);
+    expect(job.transitions.map((t) => t.toStepId)).toEqual(['empty', 'done']);
+    expect(job.deciders?.[0]?.afterStepId).toBe('s1');
   });
 });
 

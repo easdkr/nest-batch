@@ -19,6 +19,8 @@ import type {
   StepExecutionPatch,
   ExecutionContext,
   ExecutionScope,
+  JobInstanceFilter,
+  JobExecutionFilter,
 } from '@nest-batch/core';
 import { TypeOrmDriverProvider } from '../typeorm.driver-provider';
 
@@ -311,6 +313,71 @@ export class TypeOrmJobRepository extends JobRepository {
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
+  override async getJobInstance(jobInstanceId: string): Promise<JobInstance | null> {
+    const rows = await this.em().query(
+      `SELECT "id", "job_name", "job_key", "created_at"
+       FROM "batch_job_instance"
+       WHERE "id" = $1
+       LIMIT 1`,
+      [jobInstanceId],
+    ) as JobInstanceRow[];
+    return rows.length > 0 ? mapJobInstance(rows[0]!) : null;
+  }
+
+  override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
+    const where: string[] = [];
+    const values: unknown[] = [];
+    let i = 1;
+    if (filter.jobName !== undefined) {
+      where.push(`"job_name" = $${i++}`);
+      values.push(filter.jobName);
+    }
+    if (filter.jobKey !== undefined) {
+      where.push(`"job_key" = $${i++}`);
+      values.push(filter.jobKey);
+    }
+    const rows = await this.em().query(
+      `SELECT "id", "job_name", "job_key", "created_at"
+       FROM "batch_job_instance"
+       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY "created_at" ASC, "id" ASC`,
+      values,
+    ) as JobInstanceRow[];
+    return rows.map(mapJobInstance);
+  }
+
+  override async findJobExecutions(filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
+    const where: string[] = [];
+    const values: unknown[] = [];
+    let i = 1;
+    if (filter.jobInstanceId !== undefined) {
+      where.push(`"job_instance_id" = $${i++}`);
+      values.push(filter.jobInstanceId);
+    }
+    if (filter.status !== undefined) {
+      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+      const placeholders = statuses.map(() => `$${i++}`);
+      where.push(`"status" IN (${placeholders.join(', ')})`);
+      values.push(...statuses);
+    }
+    if (filter.startedAfter !== undefined) {
+      where.push(`"start_time" >= $${i++}`);
+      values.push(filter.startedAfter);
+    }
+    if (filter.startedBefore !== undefined) {
+      where.push(`"start_time" <= $${i++}`);
+      values.push(filter.startedBefore);
+    }
+    const rows = await this.em().query(
+      `SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
+       FROM "batch_job_execution"
+       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY "start_time" DESC NULLS LAST, "id" DESC`,
+      values,
+    ) as JobExecutionRow[];
+    return rows.map(mapJobExecution);
+  }
+
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     if (!jobInstanceId) return null;
     const rows = await this.em().query(
@@ -367,6 +434,17 @@ export class TypeOrmJobRepository extends JobRepository {
       [stepExecutionId],
     ) as StepExecutionRow[];
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
+  }
+
+  override async findStepExecutions(jobExecutionId: string): Promise<StepExecution[]> {
+    const rows = await this.em().query(
+      `SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
+       FROM "batch_step_execution"
+       WHERE "job_execution_id" = $1
+       ORDER BY "created_at" ASC, "id" ASC`,
+      [jobExecutionId],
+    ) as StepExecutionRow[];
+    return rows.map(mapStepExecution);
   }
 
   /**

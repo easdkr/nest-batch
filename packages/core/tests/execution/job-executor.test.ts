@@ -424,4 +424,96 @@ describe('JobExecutor', () => {
     expect(result.status).toBe(JobStatus.COMPLETED);
     expect(result.exitCode).toBe('COMPLETED');
   });
+
+  test('13) after-step listener can route flow by custom exitCode pattern', async () => {
+    const repository = new InMemoryJobRepository();
+    const transactionManager = new InMemoryTransactionManager();
+    const listenerInvoker = new ListenerInvoker();
+    const taskletExecutor = new TaskletStepExecutor();
+    const chunkExecutor = new ChunkStepExecutor();
+    const flowEvaluator = new FlowEvaluator();
+    const executor = new JobExecutor(
+      repository,
+      transactionManager,
+      taskletExecutor,
+      chunkExecutor,
+      listenerInvoker,
+      flowEvaluator,
+    );
+
+    const listenerResolvers = new Map<string, ListenerResolver>();
+    listenerResolvers.set('after-step:custom-exit', async (_ctx, result) => {
+      const r = result as { exitCode: string; exitMessage: string };
+      if (r.exitMessage === 'empty-input') {
+        r.exitCode = 'NO_DATA';
+      }
+    });
+
+    const originalExecute = taskletExecutor.execute.bind(taskletExecutor);
+    (taskletExecutor as unknown as { execute: typeof originalExecute }).execute = ((
+      step: TaskletStepDefinition,
+      context: Parameters<typeof originalExecute>[1],
+    ) => {
+      return originalExecute(step, { ...context, listenerResolvers });
+    }) as typeof originalExecute;
+
+    const calls: string[] = [];
+    const jobDef = makeJobDef('custom-exit', {
+      s1: makeTaskletStep('s1', async () => {
+        calls.push('s1');
+        return 'empty-input';
+      }),
+      empty: makeTaskletStep('empty', async () => {
+        calls.push('empty');
+        return 'handled-empty';
+      }),
+      normal: makeTaskletStep('normal', async () => {
+        calls.push('normal');
+        return 'normal';
+      }),
+    });
+    jobDef.transitions = [
+      { fromStepId: 's1', onStatus: 'NO_*', toStepId: 'empty' },
+      { fromStepId: 's1', onStatus: FlowExecutionStatus.COMPLETED, toStepId: 'normal' },
+    ];
+
+    const execution = await makeStartedExecution(repository);
+    const result = await executor.execute(execution, jobDef);
+
+    expect(calls).toEqual(['s1', 'empty', 'normal']);
+    expect(result.status).toBe(JobStatus.COMPLETED);
+  });
+
+  test('14) job execution decider can override transition status after a step', async () => {
+    const { executor, repository } = makeExecutor();
+    const calls: string[] = [];
+    const decider = vi.fn(() => 'NEEDS_REVIEW');
+    const jobDef = makeJobDef('decider-flow', {
+      s1: makeTaskletStep('s1', async () => {
+        calls.push('s1');
+        return 'ok';
+      }),
+      review: makeTaskletStep('review', async () => {
+        calls.push('review');
+        return 'reviewed';
+      }),
+    });
+    jobDef.deciders = [{ afterStepId: 's1', decide: decider }];
+    jobDef.transitions = [
+      { fromStepId: 's1', onStatus: 'NEEDS_*', toStepId: 'review' },
+    ];
+
+    const execution = await makeStartedExecution(repository);
+    const result = await executor.execute(execution, jobDef);
+
+    expect(calls).toEqual(['s1', 'review']);
+    expect(decider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stepId: 's1',
+        stepStatus: StepStatus.COMPLETED,
+        exitCode: 'COMPLETED',
+      }),
+    );
+    expect(result.status).toBe(JobStatus.COMPLETED);
+  });
 });

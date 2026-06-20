@@ -1,8 +1,7 @@
 import { JobBuilder } from './job-builder';
 
 /**
- * Entry point for the fluent Builder API. Mirrors the design intent of
- * Spring Batch's `BatchBuilder` / `JobBuilderFactory`: a tiny, stateless
+ * Entry point for the fluent Builder API. A tiny, stateless
  * bootstrap object that hands out a fresh `JobBuilder` per `.job(id)` call.
  *
  *   const config = BatchBuilder.create()

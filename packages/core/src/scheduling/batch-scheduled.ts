@@ -6,7 +6,7 @@ import { BATCH_SCHEDULED_OPTIONS as SCHEDULED_KEY } from '../decorators/constant
 export const BATCH_SCHEDULED_OPTIONS = SCHEDULED_KEY;
 
 /**
- * Spring Batch-like overlap policies for cron-scheduled jobs:
+ * Overlap policies for cron-scheduled jobs:
  *
  * - `'skip'`     — drop the new tick if the previous run is still in flight.
  * - `'queue'`    — buffer the new tick and start it after the current one ends.
@@ -63,7 +63,7 @@ export interface BatchScheduledMetadata {
 }
 
 /**
- * `@BatchScheduled` — Spring Batch-like cron decorator.
+ * `@BatchScheduled` — cron decorator.
  *
  * Stamps `BATCH_SCHEDULED_OPTIONS` metadata onto the decorated method's
  * function reference (via `@nestjs/common`'s `SetMetadata`, which writes
@@ -96,7 +96,7 @@ export interface BatchScheduledMetadata {
 
 /**
  * Minimum + maximum number of whitespace-separated fields a valid
- * cron expression can have. Spring Batch / `cronstrue` / Linux
+ * cron expression can have. `cronstrue` / Linux
  * `crontab(5)` all agree on 5 (minute, hour, day-of-month, month,
  * day-of-week); Quartz-style extensions add a leading seconds field
  * for 6.
@@ -109,8 +109,7 @@ const CRON_MAX_FIELDS = 6;
  *
  * Accepts:
  *   - 5 fields: `minute hour dom month dow` (Linux crontab style)
- *   - 6 fields: `second minute hour dom month dow` (Quartz / Spring
- *     Batch style)
+ *   - 6 fields: `second minute hour dom month dow` (extended cron style)
  *
  * Each field is `\S+` (one or more non-whitespace tokens, no empty
  * fields). The trailing `\S+$` is the final field; the leading
@@ -201,7 +200,7 @@ export class InvalidBatchScheduledCronError extends Error {
   constructor(cron: string, reason: string) {
     super(
       `[BatchScheduled] invalid cron expression "${cron}": ${reason}. ` +
-        `Expected ${CRON_MIN_FIELDS} (Linux crontab) or ${CRON_MAX_FIELDS} (Quartz / Spring Batch) ` +
+        `Expected ${CRON_MIN_FIELDS} (Linux crontab) or ${CRON_MAX_FIELDS} (extended cron) ` +
         `whitespace-separated fields.`,
     );
     this.name = 'InvalidBatchScheduledCronError';

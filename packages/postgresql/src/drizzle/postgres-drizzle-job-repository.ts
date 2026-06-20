@@ -18,6 +18,8 @@ import type {
   StepExecutionPatch,
   ExecutionContext,
   ExecutionScope,
+  JobInstanceFilter,
+  JobExecutionFilter,
 } from '@nest-batch/core';
 import { eq, inArray, and, desc, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -268,6 +270,56 @@ export class PostgresDrizzleJobRepository extends JobRepository {
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
+  override async getJobInstance(jobInstanceId: string): Promise<JobInstance | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.batchJobInstance)
+      .where(eq(schema.batchJobInstance.id, jobInstanceId))
+      .limit(1);
+    return rows.length > 0 ? mapJobInstance(rows[0]!) : null;
+  }
+
+  override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
+    const conditions = [
+      ...(filter.jobName !== undefined ? [eq(schema.batchJobInstance.jobName, filter.jobName)] : []),
+      ...(filter.jobKey !== undefined ? [eq(schema.batchJobInstance.jobKey, filter.jobKey)] : []),
+    ];
+    const rows = await this.db
+      .select()
+      .from(schema.batchJobInstance)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(schema.batchJobInstance.createdAt, schema.batchJobInstance.id);
+    return rows.map(mapJobInstance);
+  }
+
+  override async findJobExecutions(filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
+    const conditions = [
+      ...(filter.jobInstanceId !== undefined
+        ? [eq(schema.batchJobExecution.jobInstanceId, filter.jobInstanceId)]
+        : []),
+      ...(filter.status !== undefined
+        ? [
+            inArray(
+              schema.batchJobExecution.status,
+              Array.isArray(filter.status) ? [...filter.status] : [filter.status],
+            ),
+          ]
+        : []),
+      ...(filter.startedAfter !== undefined
+        ? [sql`${schema.batchJobExecution.startTime} >= ${filter.startedAfter}`]
+        : []),
+      ...(filter.startedBefore !== undefined
+        ? [sql`${schema.batchJobExecution.startTime} <= ${filter.startedBefore}`]
+        : []),
+    ];
+    const rows = await this.db
+      .select()
+      .from(schema.batchJobExecution)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(schema.batchJobExecution.startTime), desc(schema.batchJobExecution.id));
+    return rows.map(mapJobExecution);
+  }
+
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     if (!jobInstanceId) return null;
     const rows = await this.db
@@ -335,6 +387,15 @@ export class PostgresDrizzleJobRepository extends JobRepository {
       .where(eq(schema.batchStepExecution.id, stepExecutionId))
       .limit(1);
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
+  }
+
+  override async findStepExecutions(jobExecutionId: string): Promise<StepExecution[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.batchStepExecution)
+      .where(eq(schema.batchStepExecution.jobExecutionId, jobExecutionId))
+      .orderBy(schema.batchStepExecution.createdAt, schema.batchStepExecution.id);
+    return rows.map(mapStepExecution);
   }
 
   /**

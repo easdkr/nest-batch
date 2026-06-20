@@ -31,7 +31,7 @@ export class ProductWriter implements ItemWriter<ProductEntity> {
           // executor reads `skipped` from the returned WriterResult
           // and rolls it into the step's `skipCount` / `writeCount`,
           // so duplicates are accounted for as skips rather than
-          // failing the whole chunk (Spring Batch pattern).
+          // failing the whole chunk (batch skip-accounting pattern).
           failedSkus.push(item.sku);
           continue;
         }

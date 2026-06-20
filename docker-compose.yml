@@ -51,6 +51,23 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres-e2e:
+    image: postgres:16-alpine
+    container_name: nest-batch-postgres-e2e
+    ports:
+      - "55432:5432"
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: nest_batch_postgres_e2e
+    volumes:
+      - pgdata_e2e:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d nest_batch_postgres_e2e"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7-alpine
     container_name: nest-batch-redis
@@ -100,3 +117,4 @@ volumes:
   pgdata:
   pgdata_prisma:
   pgdata_drizzle:
+  pgdata_e2e:
