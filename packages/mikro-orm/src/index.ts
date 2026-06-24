@@ -4,11 +4,9 @@
 // `MikroOrmAdapter` factory, the `MikroORMJobRepository` /
 // `MikroORMTransactionManager` interface shape, and the
 // `MikroOrmDriverProvider` injection token. It does NOT import
-// `@mikro-orm/postgresql` (or any other driver) — the driver
-// implementation lives in the `@nest-batch/postgresql` (or
-// `@nest-batch/mysql`) sibling package, which binds the
-// `MikroOrmDriverProvider` token to the concrete `EntityManager`
-// in its own `forRoot()` factory.
+// `@mikro-orm/postgresql` (or any other driver) — the host owns
+// `MikroOrmModule.forRoot(...)`, and the adapter aliases
+// `MikroOrmDriverProvider` to that host `EntityManager`.
 //
 // Apps wire the persistence concern into `NestBatchModule.forRoot()`
 // via the new `BatchAdapter` factory pattern:

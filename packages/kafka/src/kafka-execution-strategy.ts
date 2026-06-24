@@ -7,11 +7,7 @@ import {
 } from '@nest-batch/core';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-
-import {
-  KafkaRuntimeService,
-  KAFKA_STRATEGY_NAME,
-} from './kafka-runtime.service';
+import { KafkaRuntime, KAFKA_STRATEGY_NAME } from './kafka-runtime';
 
 /**
  * Kafka execution strategy — the `@nest-batch/core`-facing
@@ -21,7 +17,7 @@ import {
  * Design:
  *   - The actual Kafka resource ownership (producer / consumer
  *     lifecycle, connection tuning, event bridge) lives in
- *     `KafkaRuntimeService`. This class is a thin adapter that
+ *     `KafkaRuntime`. This class is a thin adapter that
  *     maps the `IExecutionStrategy` contract to the runtime
  *     service's `launch()` shape.
  *   - Splitting the two lets the runtime service be
@@ -55,8 +51,8 @@ export class KafkaExecutionStrategy implements IExecutionStrategy {
   private readonly logger = new Logger(KafkaExecutionStrategy.name);
 
   constructor(
-    @Inject(KafkaRuntimeService)
-    private readonly runtime: KafkaRuntimeService,
+    @Inject(KafkaRuntime)
+    private readonly runtime: KafkaRuntime,
   ) {}
 
   /**
@@ -78,5 +74,3 @@ export class KafkaExecutionStrategy implements IExecutionStrategy {
     return this.runtime.launch(job, params, ctx);
   }
 }
-
-

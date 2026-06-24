@@ -10,7 +10,7 @@ import {
   BATCH_TRANSITION_METADATA,
 } from '../decorators/constants';
 import type { JobableOptions, StepableOptions } from '../decorators';
-import type { ListenerKind, ListenerPhase } from '../core/ir/listener-definition';
+import type { ListenerKind, ListenerPhase, SkipSubKind } from '../core/ir/listener-definition';
 
 /**
  * Raw shape of a discovered batch job, as it appears immediately after the
@@ -50,6 +50,7 @@ export interface DiscoveredListener {
   methodName: string;
   kind: ListenerKind;
   phase: ListenerPhase;
+  skipKind?: SkipSubKind;
   nonCritical?: boolean;
 }
 
@@ -164,8 +165,7 @@ export class BatchExplorer implements OnModuleInit {
         | StepableOptions
         | undefined;
       if (!opts) continue;
-      const isTasklet =
-        Reflect.getMetadata(BATCH_TASKLET_METADATA, prototype, name) === true;
+      const isTasklet = Reflect.getMetadata(BATCH_TASKLET_METADATA, prototype, name) === true;
       result.push({ methodName: name, options: opts, isTasklet });
     }
     return result;
@@ -186,13 +186,19 @@ export class BatchExplorer implements OnModuleInit {
     const result: DiscoveredListener[] = [];
     for (const name of this.allMethodNames(prototype)) {
       const opts = Reflect.getMetadata(BATCH_LISTENER_METADATA, prototype, name) as
-        | { kind: ListenerKind; phase: ListenerPhase; nonCritical?: boolean }
+        | {
+            kind: ListenerKind;
+            phase: ListenerPhase;
+            skipKind?: SkipSubKind;
+            nonCritical?: boolean;
+          }
         | undefined;
       if (!opts) continue;
       result.push({
         methodName: name,
         kind: opts.kind,
         phase: opts.phase,
+        ...(opts.skipKind !== undefined ? { skipKind: opts.skipKind } : {}),
         nonCritical: opts.nonCritical,
       });
     }

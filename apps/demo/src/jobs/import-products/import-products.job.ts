@@ -1,7 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   BatchDecorators,
+  BatchScheduled,
   FlowExecutionStatus,
+  type ItemExecutionContext,
+  type JobParameters,
+  type ListenerContext,
   type TaskletContext,
   type WriterResult,
 } from '@nest-batch/core';
@@ -13,6 +17,8 @@ import { CsvProductReader, type RawProductRow } from './reader/csv-product.reade
 import { ValidateCsvTasklet } from './validate-csv.tasklet';
 import { ProductWriter } from './writer/product.writer';
 
+const DEFAULT_IMPORT_FILE = 'sample-data/products-valid.csv';
+
 /**
  * Decorator-defined 2-step `import-products` batch job.
  *
@@ -23,23 +29,30 @@ import { ProductWriter } from './writer/product.writer';
 @Injectable()
 @BatchDecorators.Jobable({ id: 'import-products', restartable: true })
 export class ImportProductsJob {
-  private filePath?: string;
-  private reader?: CsvProductReader;
+  private readonly logger = new Logger(ImportProductsJob.name);
+  private readonly readers = new Map<string, CsvProductReader>();
+  private readonly stepStartTimes = new Map<string, number>();
 
   constructor(
+    @Inject(ProductProcessor)
     private readonly productProcessor: ProductProcessor,
+    @Inject(ProductWriter)
     private readonly productWriter: ProductWriter,
   ) {}
 
-  configure(filePath: string): void {
-    this.filePath = filePath;
-    this.reader = undefined;
+  @BatchScheduled('0 * * * *', {
+    name: 'hourly-import-products',
+    timezone: 'UTC',
+    overlap: 'skip',
+  })
+  scheduledImportProducts(): void {
+    // Marker method for cron schedule metadata.
   }
 
   @BatchDecorators.Stepable({ id: 'validate-csv' })
   @BatchDecorators.Tasklet()
   async validateCsv(ctx: TaskletContext): Promise<{ rows: number }> {
-    return new ValidateCsvTasklet(this.requireFilePath()).execute(ctx);
+    return new ValidateCsvTasklet(this.resolveFilePath(ctx.jobParameters)).execute(ctx);
   }
 
   @BatchDecorators.Stepable({
@@ -48,9 +61,7 @@ export class ImportProductsJob {
     skipPolicy: { limit: 100, skippable: [InvalidProductError, DuplicateSkuError] },
     retryPolicy: {
       limit: 3,
-      retryable: [
-        (err) => !(err instanceof Error && err.message.startsWith('Malformed CSV:')),
-      ],
+      retryable: [(err) => !(err instanceof Error && err.message.startsWith('Malformed CSV:'))],
       backoff: { type: 'exponential', initialMs: 100 },
     },
   })
@@ -59,18 +70,19 @@ export class ImportProductsJob {
   }
 
   @BatchDecorators.ItemReader()
-  async read(): Promise<RawProductRow | null> {
-    return this.requireReader().read();
+  async read(ctx?: ItemExecutionContext): Promise<RawProductRow | null> {
+    const itemContext = this.requireItemContext(ctx);
+    return this.requireReader(itemContext).read(itemContext);
   }
 
   @BatchDecorators.ItemProcessor()
-  async process(item: RawProductRow): Promise<ProductEntity | null> {
-    return this.productProcessor.process(item);
+  async process(item: RawProductRow, ctx?: ItemExecutionContext): Promise<ProductEntity | null> {
+    return this.productProcessor.process(item, ctx);
   }
 
   @BatchDecorators.ItemWriter()
-  async write(items: ProductEntity[]): Promise<WriterResult | void> {
-    return this.productWriter.write(items);
+  async write(items: ProductEntity[], ctx?: ItemExecutionContext): Promise<WriterResult | void> {
+    return this.productWriter.write(items, ctx);
   }
 
   @BatchDecorators.OnTransition({
@@ -82,17 +94,168 @@ export class ImportProductsJob {
     // Marker method for decorator metadata.
   }
 
-  private requireReader(): CsvProductReader {
-    if (!this.reader) {
-      this.reader = new CsvProductReader(this.requireFilePath());
-    }
-    return this.reader;
+  @BatchDecorators.BeforeJob()
+  beforeJob(ctx: ListenerContext): void {
+    this.logger.log(
+      `Starting import-products with file=${this.resolveFilePath(ctx.jobParameters)}`,
+    );
   }
 
-  private requireFilePath(): string {
-    if (!this.filePath) {
-      throw new Error('ImportProductsJob is not configured with a CSV file path');
+  @BatchDecorators.AfterJob()
+  afterJob(ctx: ListenerContext, result?: { status?: string }): void {
+    this.readers.clear();
+    this.stepStartTimes.clear();
+    this.logger.log(
+      `Finished import-products jobExecutionId=${ctx.jobExecutionId} status=${result?.status ?? 'UNKNOWN'}`,
+    );
+  }
+
+  @BatchDecorators.BeforeStep()
+  beforeStep(ctx: ListenerContext): void {
+    if (ctx.stepExecutionId) {
+      this.stepStartTimes.set(ctx.stepExecutionId, Date.now());
     }
-    return this.filePath;
+    this.logger.log(`Step ${ctx.stepName ?? '<unknown>'} starting`);
+  }
+
+  @BatchDecorators.AfterStep()
+  afterStep(
+    ctx: ListenerContext,
+    result?: {
+      status?: string;
+      readCount?: number;
+      writeCount?: number;
+      skipCount?: number;
+    },
+  ): void {
+    const durationMs =
+      ctx.stepExecutionId !== undefined && this.stepStartTimes.has(ctx.stepExecutionId)
+        ? Date.now() - this.stepStartTimes.get(ctx.stepExecutionId)!
+        : 0;
+
+    if (ctx.stepExecutionId !== undefined) {
+      this.stepStartTimes.delete(ctx.stepExecutionId);
+      if (ctx.stepName === 'import-products') {
+        this.readers.delete(ctx.stepExecutionId);
+      }
+    }
+
+    this.logger.log(
+      `Step ${ctx.stepName ?? '<unknown>'} ${result?.status ?? 'UNKNOWN'} in ${durationMs}ms ` +
+        `(read=${result?.readCount ?? 0}, write=${result?.writeCount ?? 0}, skip=${result?.skipCount ?? 0})`,
+    );
+  }
+
+  @BatchDecorators.BeforeChunk()
+  beforeChunk(ctx: ListenerContext): void {
+    this.logger.debug(`Chunk ${String(ctx.chunkIndex ?? '?')} starting`);
+  }
+
+  @BatchDecorators.AfterChunk()
+  afterChunk(
+    ctx: ListenerContext,
+    result?: { readCount?: number; writeCount?: number; skipCount?: number },
+  ): void {
+    this.logger.debug(
+      `Chunk ${String(ctx.chunkIndex ?? '?')} done ` +
+        `(read=${result?.readCount ?? 0}, write=${result?.writeCount ?? 0}, skip=${result?.skipCount ?? 0})`,
+    );
+  }
+
+  @BatchDecorators.OnChunkError()
+  onChunkError(ctx: ListenerContext, error: unknown): void {
+    this.logger.error(`Chunk ${String(ctx.chunkIndex ?? '?')} failed: ${this.formatError(error)}`);
+  }
+
+  @BatchDecorators.BeforeRead()
+  beforeRead(ctx: ListenerContext): void {
+    this.logger.debug(`Reading from ${this.resolveFilePath(ctx.jobParameters)}`);
+  }
+
+  @BatchDecorators.AfterRead()
+  afterRead(item: RawProductRow): void {
+    this.logger.debug(`Read row sku=${item.sku}`);
+  }
+
+  @BatchDecorators.OnReadError()
+  onReadError(error: unknown, ctx: ListenerContext): void {
+    this.logger.warn(
+      `Read failed for file=${this.resolveFilePath(ctx.jobParameters)}: ${this.formatError(error)}`,
+    );
+  }
+
+  @BatchDecorators.BeforeProcess()
+  beforeProcess(item: RawProductRow): void {
+    this.logger.debug(`Processing row sku=${item.sku}`);
+  }
+
+  @BatchDecorators.AfterProcess()
+  afterProcess(item: RawProductRow, result: ProductEntity | null | undefined): void {
+    this.logger.debug(result ? `Processed sku=${item.sku}` : `Filtered row sku=${item.sku}`);
+  }
+
+  @BatchDecorators.OnProcessError()
+  onProcessError(item: RawProductRow, error: unknown): void {
+    this.logger.warn(`Process skipped sku=${item.sku}: ${this.formatError(error)}`);
+  }
+
+  @BatchDecorators.BeforeWrite()
+  beforeWrite(items: ProductEntity[]): void {
+    this.logger.debug(`Writing ${items.length} product(s)`);
+  }
+
+  @BatchDecorators.AfterWrite()
+  afterWrite(items: ProductEntity[], result?: WriterResult | void): void {
+    const writerResult = result && typeof result === 'object' ? result : undefined;
+    this.logger.debug(
+      `Wrote chunk requested=${items.length}, written=${writerResult?.written ?? items.length}, skipped=${writerResult?.skipped ?? 0}`,
+    );
+  }
+
+  @BatchDecorators.OnWriteError()
+  onWriteError(items: ProductEntity[], error: unknown): void {
+    this.logger.error(`Write failed for ${items.length} product(s): ${this.formatError(error)}`);
+  }
+
+  @BatchDecorators.OnSkipRead()
+  onSkipRead(error: unknown, item: unknown): void {
+    this.logger.warn(`Skip read item=${String(item)}: ${this.formatError(error)}`);
+  }
+
+  @BatchDecorators.OnSkipProcess()
+  onSkipProcess(item: RawProductRow, error: unknown): void {
+    this.logger.warn(`Skip process sku=${item.sku}: ${this.formatError(error)}`);
+  }
+
+  @BatchDecorators.OnSkipWrite()
+  onSkipWrite(items: ProductEntity[], error: unknown): void {
+    this.logger.warn(`Skip write count=${items.length}: ${this.formatError(error)}`);
+  }
+
+  private requireReader(ctx: ItemExecutionContext): CsvProductReader {
+    const existing = this.readers.get(ctx.stepExecutionId);
+    if (existing) return existing;
+    const reader = new CsvProductReader(this.resolveFilePath(ctx.jobParameters));
+    this.readers.set(ctx.stepExecutionId, reader);
+    return reader;
+  }
+
+  private requireItemContext(ctx: ItemExecutionContext | undefined): ItemExecutionContext {
+    if (!ctx) {
+      throw new Error('ImportProductsJob item handlers require an ItemExecutionContext');
+    }
+    return ctx;
+  }
+
+  private resolveFilePath(params: JobParameters | undefined): string {
+    const requested = params?.file;
+    if (typeof requested === 'string' && requested.trim().length > 0) {
+      return requested;
+    }
+    return process.env.IMPORT_FILE ?? DEFAULT_IMPORT_FILE;
+  }
+
+  private formatError(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 }

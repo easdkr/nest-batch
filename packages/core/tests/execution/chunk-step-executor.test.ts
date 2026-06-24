@@ -13,8 +13,14 @@ import {
   type SkipPolicyConfig,
   type RetryPolicyConfig,
 } from '../../src/core/ir';
-import type { ItemReader, ItemProcessor, ItemStream, ItemWriter } from '../../src/core/item';
-import type { ExecutionContext } from '../../src/core/repository';
+import type {
+  ItemExecutionContext,
+  ItemReader,
+  ItemProcessor,
+  ItemStream,
+  ItemWriter,
+} from '../../src/core/item';
+import type { ExecutionContext, JobParameters } from '../../src/core/repository';
 import { StepStatus } from '../../src/core/status';
 import { SkipLimitExceededError, RetryLimitExceededError } from '../../src/core/errors';
 
@@ -218,6 +224,8 @@ function buildContext(opts: {
   processor?: ItemProcessor<number, number>;
   writer: ItemWriter<number>;
   jobExecutionId2?: string;
+  jobParameters?: JobParameters;
+  listenerResolvers?: ResolverMap;
   transactionManager?: TransactionManager;
   skipListenerResolvers?: ResolverMap;
 }): ChunkExecutionContext {
@@ -251,6 +259,8 @@ function buildContext(opts: {
     jobRepository: new InMemoryJobRepository(),
     transactionManager: opts.transactionManager ?? new InMemoryTransactionManager(),
     listenerInvoker: new ListenerInvoker(),
+    ...(opts.jobParameters ? { jobParameters: opts.jobParameters } : {}),
+    ...(opts.listenerResolvers ? { listenerResolvers: opts.listenerResolvers } : {}),
     resolvers,
     jobExecutionId2: opts.jobExecutionId2 ?? 'test',
     ...(opts.skipListenerResolvers ? { skipListenerResolvers: opts.skipListenerResolvers } : {}),
@@ -514,6 +524,94 @@ describe('ChunkStepExecutor', () => {
     expect(writer.chunks).toEqual([]); // writer.write never called when processed is empty
   });
 
+  test('reader/processor/writer receive ItemExecutionContext with jobParameters', async () => {
+    const seen: Array<{
+      phase: string;
+      file: unknown;
+      stepExecutionId: string;
+      stepName?: string;
+    }> = [];
+
+    class ContextReader implements ItemReader<number> {
+      private i = 0;
+      async read(ctx?: ItemExecutionContext): Promise<number | null> {
+        seen.push({
+          phase: 'read',
+          file: ctx?.jobParameters?.file,
+          stepExecutionId: ctx?.stepExecutionId ?? '<missing>',
+          stepName: ctx?.stepName,
+        });
+        if (this.i > 0) return null;
+        this.i += 1;
+        return 3;
+      }
+    }
+
+    class ContextProcessor implements ItemProcessor<number, number> {
+      async process(item: number, ctx?: ItemExecutionContext): Promise<number> {
+        seen.push({
+          phase: 'process',
+          file: ctx?.jobParameters?.file,
+          stepExecutionId: ctx?.stepExecutionId ?? '<missing>',
+          stepName: ctx?.stepName,
+        });
+        return item * 2;
+      }
+    }
+
+    class ContextWriter implements ItemWriter<number> {
+      async write(items: number[], ctx?: ItemExecutionContext): Promise<void> {
+        seen.push({
+          phase: `write:${items.join(',')}`,
+          file: ctx?.jobParameters?.file,
+          stepExecutionId: ctx?.stepExecutionId ?? '<missing>',
+          stepName: ctx?.stepName,
+        });
+      }
+    }
+
+    const reader = new ContextReader();
+    const processor = new ContextProcessor();
+    const writer = new ContextWriter();
+    const step = chunkStep({ chunkSize: 1 });
+    const ctx = buildContext({
+      reader,
+      processor,
+      writer,
+      jobParameters: { file: 'launch-param.csv' },
+    });
+
+    const result = await new ChunkStepExecutor().execute(step, ctx);
+
+    expect(result.status).toBe(StepStatus.COMPLETED);
+    expect(seen).toEqual([
+      {
+        phase: 'read',
+        file: 'launch-param.csv',
+        stepExecutionId: 'step-1',
+        stepName: 'step-1',
+      },
+      {
+        phase: 'process',
+        file: 'launch-param.csv',
+        stepExecutionId: 'step-1',
+        stepName: 'step-1',
+      },
+      {
+        phase: 'write:6',
+        file: 'launch-param.csv',
+        stepExecutionId: 'step-1',
+        stepName: 'step-1',
+      },
+      {
+        phase: 'read',
+        file: 'launch-param.csv',
+        stepExecutionId: 'step-1',
+        stepName: 'step-1',
+      },
+    ]);
+  });
+
   // -------------------------------------------------------------------------
   // Skip / retry integration
   // -------------------------------------------------------------------------
@@ -643,6 +741,60 @@ describe('ChunkStepExecutor', () => {
     expect(skipListener).toHaveBeenCalledTimes(2);
     expect(skipListener).toHaveBeenNthCalledWith(1, expect.any(SkipError), null);
     expect(skipListener).toHaveBeenNthCalledWith(2, expect.any(SkipError), null);
+  });
+
+  test('READ RETRY LISTENERS: before/error fire per attempt, after fires only on success', async () => {
+    const reader = new FlakyReader([1], new Set([0]), new RetryableError('transient'));
+    const processor = new MultiplyProcessor();
+    const writer = new RecordingWriter();
+    const events: string[] = [];
+    const listenerResolvers: ResolverMap = new Map([
+      ['before:item-read:tracker', { fn: () => void events.push('before-read') }],
+      ['after:item-read:tracker', { fn: (item: number) => void events.push(`after-read:${item}`) }],
+      ['on-error:item-read:tracker', { fn: () => void events.push('read-error') }],
+    ]);
+
+    const step = chunkStep({
+      chunkSize: 1,
+      retryPolicy: { limit: 2, retryable: [RetryableError], backoff: { type: 'none' } },
+    });
+    const ctx = buildContext({ reader, processor, writer, listenerResolvers });
+
+    const result = await new ChunkStepExecutor().execute(step, ctx);
+
+    expect(result.status).toBe(StepStatus.COMPLETED);
+    expect(events).toEqual([
+      'before-read',
+      'read-error',
+      'before-read',
+      'after-read:1',
+      'before-read',
+    ]);
+  });
+
+  test('READ SKIP LISTENERS: skip listener fires only after skip policy accepts the skip', async () => {
+    const reader = new FlakyReader([], new Set([0]), new SkipError('skip once'));
+    const processor = new MultiplyProcessor();
+    const writer = new RecordingWriter();
+    const events: string[] = [];
+    const listenerResolvers: ResolverMap = new Map([
+      ['before:item-read:tracker', { fn: () => void events.push('before-read') }],
+      ['after:item-read:tracker', { fn: () => void events.push('after-read') }],
+      ['on-error:item-read:tracker', { fn: () => void events.push('read-error') }],
+      ['on-skip:read:tracker', { fn: () => void events.push('skip-read') }],
+    ]);
+
+    const step = chunkStep({
+      chunkSize: 2,
+      skipPolicy: { limit: 1, skippable: [SkipError] },
+    });
+    const ctx = buildContext({ reader, processor, writer, listenerResolvers });
+
+    const result = await new ChunkStepExecutor().execute(step, ctx);
+
+    expect(result.status).toBe(StepStatus.COMPLETED);
+    expect(result.skipCount).toBe(1);
+    expect(events).toEqual(['before-read', 'read-error', 'skip-read', 'before-read']);
   });
 
   test('TX WRAP: write phase wraps writer.write in transactionManager.withTransaction once per chunk (chunk-level atomicity)', async () => {

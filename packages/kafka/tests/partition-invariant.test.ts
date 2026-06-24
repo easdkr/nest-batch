@@ -29,7 +29,7 @@
  * Pinned source:
  *   `packages/core/src/core/ir/step-definition.ts` — the
  *     `ChunkStepDefinition` shape (extended in T8 with `partitions`).
- *   `packages/kafka/src/kafka-runtime.service.ts` — the
+ *   `packages/kafka/src/kafka-runtime.ts` — the
  *     `KafkaJobPayload` with `partitionIndex?: number`.
  *   `packages/kafka/src/kafka-execution-strategy.ts` — the strategy
  *     class (thin adapter over the runtime service's `launch()`).
@@ -55,10 +55,7 @@ import {
   type JobParameters,
 } from '@nest-batch/core';
 
-import {
-  KafkaRuntimeService,
-  type KafkaJobPayload,
-} from '../src/kafka-runtime.service';
+import { KafkaRuntime, type KafkaJobPayload } from '../src/kafka-runtime';
 import type { ResolvedKafkaModuleOptions } from '../src/module-options';
 
 // ---------------------------------------------------------------------------
@@ -81,11 +78,9 @@ import type { ResolvedKafkaModuleOptions } from '../src/module-options';
 const kafkajsMock = vi.hoisted(() => {
   const producerConnect = vi.fn(async () => undefined);
   const producerDisconnect = vi.fn(async () => undefined);
-  const producerSend = vi.fn(
-    async (_args: { topic: string; messages: unknown[] }) => [
-      { topicName: 'mock-topic', partition: 0, errorCode: 0, baseOffset: '0', offset: '0' },
-    ],
-  );
+  const producerSend = vi.fn(async (_args: { topic: string; messages: unknown[] }) => [
+    { topicName: 'mock-topic', partition: 0, errorCode: 0, baseOffset: '0', offset: '0' },
+  ]);
   const Producer = vi.fn().mockImplementation(() => ({
     connect: producerConnect,
     disconnect: producerDisconnect,
@@ -232,12 +227,14 @@ function makePartitionedChunkJob(args: {
   /** Optional explicit range resolver; defaults to even split. */
   range?: (i: number, n: number) => readonly [number, number];
 }): JobDefinition {
-  const range = args.range ?? ((i: number, n: number) => {
-    const total = args.rowCount;
-    const from = Math.floor((i * total) / n);
-    const to = Math.floor(((i + 1) * total) / n);
-    return [from, to] as const;
-  });
+  const range =
+    args.range ??
+    ((i: number, n: number) => {
+      const total = args.rowCount;
+      const from = Math.floor((i * total) / n);
+      const to = Math.floor(((i + 1) * total) / n);
+      return [from, to] as const;
+    });
 
   return {
     id: args.id,
@@ -277,8 +274,7 @@ function makePartitionedChunkJob(args: {
           fn: () => ({
             write: async (items: number[]) => {
               const idx = currentPartitionIndex;
-              args.partitionWriteCounts[idx] =
-                (args.partitionWriteCounts[idx] ?? 0) + items.length;
+              args.partitionWriteCounts[idx] = (args.partitionWriteCounts[idx] ?? 0) + items.length;
               args.totalCommitCount.value += items.length;
             },
           }),
@@ -305,21 +301,16 @@ function makePartitionedChunkJob(args: {
 // ---------------------------------------------------------------------------
 
 /**
- * Build a fully-wired `KafkaRuntimeService` against the in-memory
+ * Build a fully-wired `KafkaRuntime` against the in-memory
  * repository / tx manager / executor graph. Mirrors the production DI
  * graph minus the Kafka clients (which are mocked).
  */
-function buildRuntimeService(args: {
+function buildRuntime(args: {
   registry: JobRegistry;
   repository: InMemoryJobRepository;
   jobExecutor: JobExecutor;
-}): KafkaRuntimeService {
-  return new KafkaRuntimeService(
-    baseOptions,
-    args.repository,
-    args.registry,
-    args.jobExecutor,
-  );
+}): KafkaRuntime {
+  return new KafkaRuntime(baseOptions, args.repository, args.registry, args.jobExecutor);
 }
 
 /**
@@ -355,7 +346,7 @@ function buildJobExecutor(repository: InMemoryJobRepository): JobExecutor {
  * list for the assertion below.
  */
 async function captureProducedPayloads(
-  runtime: KafkaRuntimeService,
+  runtime: KafkaRuntime,
   jobDef: JobDefinition,
   execution: JobExecution,
 ): Promise<KafkaJobPayload[]> {
@@ -468,14 +459,12 @@ describe('Kafka partition orchestration — T-AC-3 second half (invariant)', () 
     });
     registry.register(jobDef);
 
-    const runtime = buildRuntimeService({ registry, repository, jobExecutor });
+    const runtime = buildRuntime({ registry, repository, jobExecutor });
     runtime.onApplicationBootstrap();
 
-    const execution = await repository.createExecutionAtomic(
-      jobDef.id,
-      'partitioned-4::k1',
-      { nonce: 'k1' },
-    );
+    const execution = await repository.createExecutionAtomic(jobDef.id, 'partitioned-4::k1', {
+      nonce: 'k1',
+    });
 
     const payloads = await captureProducedPayloads(runtime, jobDef, execution);
 
@@ -516,14 +505,12 @@ describe('Kafka partition orchestration — T-AC-3 second half (invariant)', () 
     });
     registry.register(jobDef);
 
-    const runtime = buildRuntimeService({ registry, repository, jobExecutor });
+    const runtime = buildRuntime({ registry, repository, jobExecutor });
     runtime.onApplicationBootstrap();
 
-    const execution = await repository.createExecutionAtomic(
-      jobDef.id,
-      'partition-invariant::k1',
-      { nonce: 'k1' },
-    );
+    const execution = await repository.createExecutionAtomic(jobDef.id, 'partition-invariant::k1', {
+      nonce: 'k1',
+    });
 
     // Producer side: enqueue 4 messages, one per partition.
     const payloads = await captureProducedPayloads(runtime, jobDef, execution);
@@ -577,8 +564,7 @@ describe('Kafka partition orchestration — T-AC-3 second half (invariant)', () 
             kind: RefKind.BuilderLambda,
             fn: () => ({
               write: async (items: number[]) => {
-                partitionWriteCounts[0] =
-                  (partitionWriteCounts[0] ?? 0) + items.length;
+                partitionWriteCounts[0] = (partitionWriteCounts[0] ?? 0) + items.length;
                 totalCommitCount.value += items.length;
               },
             }),
@@ -595,14 +581,12 @@ describe('Kafka partition orchestration — T-AC-3 second half (invariant)', () 
     };
     registry.register(jobDef);
 
-    const runtime = buildRuntimeService({ registry, repository, jobExecutor });
+    const runtime = buildRuntime({ registry, repository, jobExecutor });
     runtime.onApplicationBootstrap();
 
-    const execution = await repository.createExecutionAtomic(
-      jobDef.id,
-      'single-partition::k1',
-      { nonce: 'k1' },
-    );
+    const execution = await repository.createExecutionAtomic(jobDef.id, 'single-partition::k1', {
+      nonce: 'k1',
+    });
 
     const payloads = await captureProducedPayloads(runtime, jobDef, execution);
 

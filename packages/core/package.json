@@ -76,5 +76,8 @@
     "reflect-metadata": "^0.2.2",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "cron": "^4.4.0"
   }
 }

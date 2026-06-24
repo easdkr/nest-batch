@@ -30,7 +30,7 @@ export interface KafkaConnectionOptions {
  * Resolved Kafka connection settings, with all defaults filled in.
  *
  * `KafkaAdapter.forRoot()` returns a frozen copy of this object
- * under its module-options token; `KafkaRuntimeService` reads it
+ * under its module-options token; `KafkaRuntime` reads it
  * to build the `Kafka` client instance.
  */
 export interface KafkaResolvedConnection {

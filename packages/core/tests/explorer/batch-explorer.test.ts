@@ -228,9 +228,7 @@ class ThirdJob {
  * Build a `ProviderLike[]` from a list of `{ class, instance? }` objects.
  * The returned shape is what `DiscoveryService.getProviders()` produces.
  */
-function providersOf(
-  entries: Array<{ classRef: Function; instance?: unknown }>,
-): ProviderLike[] {
+function providersOf(entries: Array<{ classRef: Function; instance?: unknown }>): ProviderLike[] {
   return entries.map((e) => ({ metatype: e.classRef, instance: e.instance }));
 }
 
@@ -312,11 +310,7 @@ describe('BatchExplorer — discoverFromProviders (pure)', () => {
     ]);
     const out = explorer.discoverFromProviders(providers);
     expect(out).toHaveLength(3);
-    expect(out.map((j) => j.jobOptions.id)).toEqual([
-      'simple-job',
-      'second-job',
-      'third-job',
-    ]);
+    expect(out.map((j) => j.jobOptions.id)).toEqual(['simple-job', 'second-job', 'third-job']);
   });
 });
 
@@ -436,6 +430,7 @@ describe('BatchExplorer — listener discovery (all 7 kinds)', () => {
     method: string;
     kind: ListenerKind;
     phase: ListenerPhase;
+    skipKind?: 'read' | 'process' | 'write';
   }> = [
     { method: 'beforeJob', kind: 'job', phase: 'before' },
     { method: 'afterJob', kind: 'job', phase: 'after' },
@@ -453,9 +448,9 @@ describe('BatchExplorer — listener discovery (all 7 kinds)', () => {
     { method: 'beforeWrite', kind: 'item-write', phase: 'before' },
     { method: 'afterWrite', kind: 'item-write', phase: 'after' },
     { method: 'onWriteError', kind: 'item-write', phase: 'on-error' },
-    { method: 'onSkipRead', kind: 'skip', phase: 'after' },
-    { method: 'onSkipProcess', kind: 'skip', phase: 'after' },
-    { method: 'onSkipWrite', kind: 'skip', phase: 'after' },
+    { method: 'onSkipRead', kind: 'skip', phase: 'after', skipKind: 'read' },
+    { method: 'onSkipProcess', kind: 'skip', phase: 'after', skipKind: 'process' },
+    { method: 'onSkipWrite', kind: 'skip', phase: 'after', skipKind: 'write' },
   ];
 
   it('collects all 19 listener methods (covers all 7 kinds)', () => {
@@ -469,6 +464,7 @@ describe('BatchExplorer — listener discovery (all 7 kinds)', () => {
       expect(found, `listener method "${expected.method}" should be discovered`).toBeDefined();
       expect(found!.kind).toBe(expected.kind);
       expect(found!.phase).toBe(expected.phase);
+      expect(found!.skipKind).toBe(expected.skipKind);
     }
   });
 

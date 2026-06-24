@@ -9,11 +9,12 @@ const __dirname = dirname(__filename);
 const SRC_ROOT = join(__dirname, '..', '..', '..', 'src');
 
 /**
- * Packages that must NEVER be imported from @nest-batch/core source.
+ * Integration packages that must NEVER be imported from @nest-batch/core source.
  *
- * Adding any of these to `src/**` would drag heavy integrations (queue runtimes,
- * ORMs, cron engines) into the dependency-light core package. They belong in
- * sibling packages that core does not know about.
+ * Adding any of these to `src/**` would drag heavy queue runtimes or ORMs into
+ * the dependency-light core package. They belong in sibling packages that core
+ * does not know about. The small `cron` package is allowed because
+ * `InProcessSchedule` is core's built-in no-queue scheduler bridge.
  *
  * Each entry matches:
  *  - the bare package name (e.g. "bullmq")
@@ -27,7 +28,6 @@ const FORBIDDEN_PACKAGES: readonly string[] = [
   'typeorm',
   'drizzle-orm',
   'drizzle',
-  'cron',
 ];
 
 /**
@@ -40,8 +40,7 @@ const FORBIDDEN_PACKAGES: readonly string[] = [
  *  - `await import('pkg')`         (dynamic)
  *  - `require('pkg')`
  */
-const IMPORT_SPEC_RE =
-  /(?:from\s+|require\s*\(\s*|import\s*\(\s*|import\s+)['"]([^'"]+)['"]/g;
+const IMPORT_SPEC_RE = /(?:from\s+|require\s*\(\s*|import\s*\(\s*|import\s+)['"]([^'"]+)['"]/g;
 
 function isForbiddenSpecifier(specifier: string): string | null {
   for (const pkg of FORBIDDEN_PACKAGES) {
@@ -92,7 +91,7 @@ describe('dependency boundary: @nest-batch/core must not import forbidden packag
     expect(scannedFiles.length).toBeGreaterThan(0);
   });
 
-  it('contains no imports of bullmq, mikro-orm, typeorm, drizzle, or cron', () => {
+  it('contains no imports of bullmq, mikro-orm, typeorm, or drizzle', () => {
     if (violations.length > 0) {
       const detail = violations
         .map((v) => `  - ${v.file}: imports "${v.specifier}" (matched: ${v.matchedPackage})`)
@@ -105,11 +104,12 @@ describe('dependency boundary: @nest-batch/core must not import forbidden packag
     expect(violations).toEqual([]);
   });
 
-  it('the forbidden package list explicitly covers bullmq, mikro-orm, typeorm, drizzle, and cron', () => {
+  it('the forbidden package list explicitly covers bullmq, mikro-orm, typeorm, and drizzle', () => {
     // Guardrail so a future edit cannot silently drop a package from the
     // watchlist.
     expect(FORBIDDEN_PACKAGES).toEqual(
-      expect.arrayContaining(['bullmq', 'mikro-orm', 'typeorm', 'drizzle-orm', 'drizzle', 'cron']),
+      expect.arrayContaining(['bullmq', 'mikro-orm', 'typeorm', 'drizzle-orm', 'drizzle']),
     );
+    expect(FORBIDDEN_PACKAGES).not.toContain('cron');
   });
 });

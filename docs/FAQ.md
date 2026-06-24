@@ -33,14 +33,17 @@ for the principle.
 
 By design. Core is the batch engine; it should be installable into
 any project that already has NestJS, regardless of database or
-queue choice. The dependency surface is exactly three packages:
-`@nestjs/common`, `@nestjs/core`, and `reflect-metadata`.
+queue choice. The framework peer dependency surface is
+`@nestjs/common`, `@nestjs/core`, and `reflect-metadata`; core also
+depends on the small `cron` package for the built-in in-process
+schedule bridge.
 
 A boundary test in
 `packages/core/tests/core/boundary/no-forbidden-imports.test.ts`
 fails the build if any of `bullmq`, `mikro-orm`, `typeorm`,
-`drizzle-orm`, or `cron` shows up as an import inside core's `src/`.
-That test is the canary.
+or `drizzle-orm` shows up as an import inside core's `src/`. That
+test is the canary for keeping transport and ORM integrations out of
+core.
 
 ### Where does the canonical `JobExecution` state live?
 
@@ -195,10 +198,20 @@ own retry policy; a crash counts as one attempt.
 
 ### Does `@BatchScheduled` actually run a cron loop?
 
-Yes — `BullmqScheduleService` installs a BullMQ
-`upsertJobScheduler` for every non-inert `@BatchScheduled` entry
-(see
-[`packages/bullmq/src/bullmq-schedule.service.ts:184-188`](../../packages/bullmq/src/bullmq-schedule.service.ts)).
+Yes. `@BatchScheduled` itself only declares metadata; the configured
+transport owns the real trigger-to-launch bridge.
+
+With `InProcessAdapter`, `InProcessSchedule` runs a cron loop in the
+same server process and calls `JobLauncher.launch(jobId, params)` on
+each fire. With BullMQ, `BullmqSchedule` installs a BullMQ
+`upsertJobScheduler` for every non-inert entry and, when configured
+with `autoStartWorker: true`, starts the schedule-queue worker that
+consumes schedule fires and calls `JobLauncher.launch(jobId, params)`.
+
+The in-process path is single-process only: if the same app runs on
+multiple replicas, every replica has its own timer unless the host adds
+a leader election or distributed lock.
+
 Set `BATCH_SCHEDULED_DISABLE=1` to put cron-scheduled jobs into
 inert mode for tests.
 
@@ -218,7 +231,7 @@ support. The package's `DrizzleJobRepository` and
 Yes, [`@nest-batch/kafka`](../../packages/kafka/README.md) `0.2.0`.
 It is partition-aware (see
 [`docs/RELEASE-0.2.0.md`](../RELEASE-0.2.0.md) §6). Its
-`KafkaScheduleService` ships a hand-rolled `*/N * * * *` parser;
+`KafkaSchedule` ships a hand-rolled `*/N * * * *` parser;
 richer Quartz / Spring Batch cron syntax is on the 0.3.0 roadmap.
 
 ### Is there a Prisma adapter?

@@ -218,7 +218,7 @@ every sub-module.
 The adapter enqueues **one BullMQ job per step** (or, in a future
 enhancement, one job per partition for chunked steps). It does not
 enqueue one job per row, per chunk, or per item. The contract is
-enforced by the `BullmqRuntimeService.launch()` method, which
+enforced by the `BullmqRuntime.launch()` method, which
 takes the step's `id` from the `JobDefinition` and uses it as the
 BullMQ `name` discriminator. The chunk loop runs _inside_ the
 single BullMQ job, in the worker.
@@ -297,11 +297,12 @@ cannot poison the BullMQ event stream.
 - A batch engine. Step / chunk / tasklet semantics, skip, restart,
   checkpoint, and business retry live in
   [`@nest-batch/core`](../core). BullMQ is the courier.
-- A scheduler. Cron-style scheduling lives in
-  `@nest-batch/core`'s `@BatchScheduled` decorator, which stamps
-  metadata read by the `BatchScheduleRegistry`. A future package
-  (or a follow-up release of this one) will translate that metadata
-  into BullMQ `QueueScheduler` jobs.
+- A separate scheduler package. Cron-style scheduling starts with
+  `@nest-batch/core`'s `@BatchScheduled` decorator, and this BullMQ
+  adapter installs the non-inert entries with `upsertJobScheduler`.
+  When `autoStartWorker` is enabled, `BullmqSchedule` also
+  consumes the schedule queue and bridges each fire to
+  `JobLauncher.launch(jobId, params)`.
 - An admin UI, metrics backend, tracing backend, or webhook system.
   Hook a `BatchObserver` to ship events where you need them.
 - Alternative queue transports (Sidekiq, RabbitMQ, SQS, ...).

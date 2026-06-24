@@ -46,18 +46,18 @@ pnpm add @nest-batch/kafka
 
 Peer dependencies the host must already provide:
 
-| Package              | Range                |
-| -------------------- | -------------------- |
-| `@nest-batch/core`   | `workspace:*`        |
-| `@nestjs/common`     | `^10 \|\| ^11`       |
-| `@nestjs/core`       | `^10 \|\| ^11`       |
-| `kafkajs`            | `^2.2.4`             |
+| Package            | Range          |
+| ------------------ | -------------- |
+| `@nest-batch/core` | `workspace:*`  |
+| `@nestjs/common`   | `^10 \|\| ^11` |
+| `@nestjs/core`     | `^10 \|\| ^11` |
+| `kafkajs`          | `^2.2.4`       |
 
 `kafkajs` is hard-pinned to `^2.2.4` — the first KafkaJS line with
 the `baseOffset` field on producer results that the runtime
 service reads when the broker acks a send. The version range is
 the contract the test suite relies on; widening or narrowing it
-breaks the `KafkaRuntimeService.launch()` offset-resolution path.
+breaks the `KafkaRuntime.launch()` offset-resolution path.
 
 The adapter is otherwise peer-dep-light: it does not need a
 specific broker version, SSL/TLS library, or schema registry. TLS
@@ -134,7 +134,7 @@ need to re-import it in every sub-module.
 > **Cron-parser limitation — read this before configuring
 > `@BatchScheduled` against Kafka.** The hand-rolled
 > `*/N * * * *` parser in
-> [`packages/kafka/src/kafka-schedule.service.ts:228-250`](./src/kafka-schedule.service.ts)
+> [`packages/kafka/src/kafka-schedule.ts:228-250`](./src/kafka-schedule.ts)
 > is a **known 0.2.0 limitation**. Only the 5-field cron shape
 > `*/N * * * *` (a fixed minute interval, every other field
 > wildcard) is supported. Richer expressions — Quartz 6-field

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EntityManager, UniqueConstraintViolationException } from '@mikro-orm/core';
-import { ItemWriter, WriterResult } from '@nest-batch/core';
+import { ItemWriter, type ItemExecutionContext, WriterResult } from '@nest-batch/core';
 import { ProductEntity } from '../../../entities/product.entity';
 
 @Injectable()
@@ -9,7 +9,7 @@ export class ProductWriter implements ItemWriter<ProductEntity> {
 
   constructor(private readonly em: EntityManager) {}
 
-  async write(items: ProductEntity[]): Promise<WriterResult> {
+  async write(items: ProductEntity[], _ctx?: ItemExecutionContext): Promise<WriterResult> {
     if (items.length === 0) return { written: 0, skipped: 0 };
     const failedSkus: string[] = [];
     let written = 0;

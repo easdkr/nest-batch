@@ -120,7 +120,9 @@ pnpm --filter @nest-batch/core test:e2e
 
 The BullMQ e2e suite brings up a launcher + worker in the same
 process, then asserts the full enqueue → consume → DB-update cycle.
-It needs both services.
+With `BATCH_BULLMQ_AUTOSTART_WORKER=1`, that process also starts the
+schedule-queue bridge that turns `@BatchScheduled` fires into
+`JobLauncher.launch(jobId, params)`. It needs both services.
 
 ```bash
 docker compose up -d                    # postgres + redis
@@ -145,6 +147,20 @@ With Postgres + Redis up and the migrations applied:
 pnpm --filter @nest-batch/demo start
 ```
 
+For queue-backed cron execution, the `@BatchScheduled` decorator
+registers the schedule and the BullMQ schedule bridge turns each cron
+fire into `JobLauncher.launch('import-products', { scheduled: true,
+scheduleName, scheduledAt, ... })`. In the demo, start the BullMQ
+workers in the same process:
+
+```bash
+BATCH_BULLMQ_AUTOSTART_WORKER=1 pnpm --filter @nest-batch/demo start
+```
+
+Scheduled `import-products` launches use `IMPORT_FILE` when the cron
+trigger does not provide a `file` launch parameter. Manual/API launches
+should still pass `file` explicitly.
+
 Trigger a job from a second terminal. The body MUST include a `file`
 field; the controller returns `400 Missing "file"` otherwise:
 
@@ -165,6 +181,13 @@ curl -X POST http://localhost:3000/jobs/import-products \
   -d '{"file":"sample-data/products-valid.csv"}'
 ```
 
+In `in-process` mode, `InProcessSchedule` also consumes
+`@BatchScheduled` metadata and runs the cron loop inside that same
+server process. This is suitable for one running process. If multiple
+replicas start the same app, each replica has its own timer and can
+launch the same schedule unless the host adds a leader election or
+distributed lock.
+
 In `in-process` mode the launcher's response carries the terminal
 `status` (`COMPLETED` / `FAILED`). In `bullmq` mode the response is
 `STARTING` / `STARTED` — the worker drives the rest of the lifecycle
@@ -178,22 +201,22 @@ The full set the demo app reads. Defaults are baked into
 `apps/demo/src/app.module.ts`; `.env.example` is the documented
 shape.
 
-| Variable                        | Default                          | Read by                             | Purpose                                                                                                                            |
-| ------------------------------- | -------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                          | `3000`                           | `main.ts`                           | HTTP listen port for the demo REST controller.                                                                                     |
-| `DATABASE_HOST`                 | `localhost`                      | demo app, migration script          | PostgreSQL host. Matches `docker-compose.yml`.                                                                                     |
-| `DATABASE_PORT`                 | `5434`                           | demo app, migration script          | PostgreSQL host port.                                                                                                              |
-| `DATABASE_NAME`                 | `nest_batch_demo`                | demo app, migration script          | PostgreSQL database.                                                                                                               |
-| `DATABASE_USER`                 | `demo`                           | demo app, migration script          | PostgreSQL user.                                                                                                                   |
-| `DATABASE_PASSWORD`             | `demo`                           | demo app, migration script          | PostgreSQL password.                                                                                                               |
-| `BATCH_TRANSPORT`               | `bullmq`                         | `app.module.ts`                     | `bullmq` (default) or `in-process`. Anything other than the literal string `in-process` is treated as `bullmq`.                    |
-| `REDIS_HOST`                    | `127.0.0.1`                      | `@nest-batch/bullmq` (via demo app) | Redis host. Only used when `BATCH_TRANSPORT=bullmq`.                                                                               |
-| `REDIS_PORT`                    | `6379`                           | `@nest-batch/bullmq` (via demo app) | Redis port.                                                                                                                        |
-| `REDIS_KEY_PREFIX` (optional)   | `nest-batch:`                    | `@nest-batch/bullmq`                | BullMQ key namespace. Defaults to `nest-batch:` inside the adapter when unset. The e2e suite overrides it per-PID.                 |
-| `IMPORT_FILE`                   | `sample-data/products-valid.csv` | demo app (`AppModule`)              | Default CSV path the `import-products` job's reader opens. Per-launch overrides go in the REST request body.                       |
-| `BATCH_SCHEDULED_DISABLE`       | unset (`0`)                      | `@BatchScheduled` decorator         | Set to `1` to make `@BatchScheduled` stamp `inert: true` at decoration time. Test-only escape hatch.                               |
-| `BATCH_BULLMQ_AUTOSTART_WORKER` | unset (`false`)                  | demo app (`AppModule`)              | Set to `1` to start a BullMQ `Worker` in the demo process. Test-only; the demo is launcher-only by default.                        |
-| `BATCH_BULLMQ_KEY_PREFIX`       | unset                            | demo app (`AppModule`)              | Overrides the `REDIS_KEY_PREFIX` style namespace the BullMQ transport uses. Test-only; lets the e2e suite isolate concurrent runs. |
+| Variable                        | Default                          | Read by                             | Purpose                                                                                                                              |
+| ------------------------------- | -------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `PORT`                          | `3000`                           | `main.ts`                           | HTTP listen port for the demo REST controller.                                                                                       |
+| `DATABASE_HOST`                 | `localhost`                      | demo app, migration script          | PostgreSQL host. Matches `docker-compose.yml`.                                                                                       |
+| `DATABASE_PORT`                 | `5434`                           | demo app, migration script          | PostgreSQL host port.                                                                                                                |
+| `DATABASE_NAME`                 | `nest_batch_demo`                | demo app, migration script          | PostgreSQL database.                                                                                                                 |
+| `DATABASE_USER`                 | `demo`                           | demo app, migration script          | PostgreSQL user.                                                                                                                     |
+| `DATABASE_PASSWORD`             | `demo`                           | demo app, migration script          | PostgreSQL password.                                                                                                                 |
+| `BATCH_TRANSPORT`               | `bullmq`                         | `app.module.ts`                     | `bullmq` (default) or `in-process`. Anything other than the literal string `in-process` is treated as `bullmq`.                      |
+| `REDIS_HOST`                    | `127.0.0.1`                      | `@nest-batch/bullmq` (via demo app) | Redis host. Only used when `BATCH_TRANSPORT=bullmq`.                                                                                 |
+| `REDIS_PORT`                    | `6379`                           | `@nest-batch/bullmq` (via demo app) | Redis port.                                                                                                                          |
+| `REDIS_KEY_PREFIX` (optional)   | `nest-batch:`                    | `@nest-batch/bullmq`                | BullMQ key namespace. Defaults to `nest-batch:` inside the adapter when unset. The e2e suite overrides it per-PID.                   |
+| `IMPORT_FILE`                   | `sample-data/products-valid.csv` | `ImportProductsJob`                 | Fallback CSV path when launch params omit `file`. Production launches should pass `file` in the REST request body.                   |
+| `BATCH_SCHEDULED_DISABLE`       | unset (`0`)                      | `@BatchScheduled` decorator         | Set to `1` to make `@BatchScheduled` stamp `inert: true` at decoration time. Test-only escape hatch.                                 |
+| `BATCH_BULLMQ_AUTOSTART_WORKER` | unset (`false`)                  | demo app (`AppModule`)              | Set to `1` to start BullMQ runtime and schedule bridge workers in the demo process. Test-only; the demo is launcher-only by default. |
+| `BATCH_BULLMQ_KEY_PREFIX`       | unset                            | demo app (`AppModule`)              | Overrides the `REDIS_KEY_PREFIX` style namespace the BullMQ transport uses. Test-only; lets the e2e suite isolate concurrent runs.   |
 
 Set `BATCH_SCHEDULED_DISABLE=1` to put cron-scheduled jobs into inert
 mode for tests. The decorator captures this at decoration time, not

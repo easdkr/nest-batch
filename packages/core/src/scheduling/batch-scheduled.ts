@@ -12,11 +12,10 @@ export const BATCH_SCHEDULED_OPTIONS = SCHEDULED_KEY;
  * - `'queue'`    — buffer the new tick and start it after the current one ends.
  * - `'parallel'` — start the new tick alongside the current one.
  *
- * The runtime scheduler (the future `@nest-batch/bullmq` cron strategy)
- * reads this value off the stored metadata and applies the policy at
- * dispatch time. The decorator itself MUST NOT silently default the
- * policy to `'skip'` on the user's behalf — leaving it `undefined` here
- * is the contract: the runtime applies the default.
+ * The active scheduler adapter reads this value off the stored metadata
+ * and applies the policy at dispatch time. The decorator itself MUST NOT
+ * silently default the policy to `'skip'` on the user's behalf — leaving
+ * it `undefined` here is the contract: the runtime applies the default.
  */
 export type BatchOverlapPolicy = 'skip' | 'queue' | 'parallel';
 
@@ -45,9 +44,8 @@ export interface BatchScheduledOptions {
 
 /**
  * The shape stored under the `BATCH_SCHEDULED_OPTIONS` metadata key on
- * the decorated method function. The runtime scheduler (the future
- * `@nest-batch/bullmq` cron strategy) reads this verbatim to register
- * the job with the underlying scheduler.
+ * the decorated method function. Scheduler adapters read this verbatim
+ * to register the job with the underlying scheduler.
  *
  * Note: `inert` lives at the top level (not inside `options`) on
  * purpose. It is a *runtime* flag captured at decoration time from
@@ -70,25 +68,17 @@ export interface BatchScheduledMetadata {
  * to `descriptor.value`), so `Reflect.getMetadata(KEY, Job.prototype.run)`
  * returns the stored shape.
  *
- * This is the TDD-RED half of Task 13. It deliberately implements only
- * the metadata-storing contract — i.e. the 10 happy-path assertions in
- * `tests/scheduling/batch-scheduled.test.ts` (sections A + B). The
- * 7 negative-path assertions in sections C + D are the GREEN half
- * of the contract and land in the next task:
+ * The decorator validates cron/timezone inputs, stores metadata, and
+ * captures inert mode. `process.env.BATCH_SCHEDULED_DISABLE` is read at
+ * decoration time and stamped onto the stored shape. The decorator does
+ * NOT install any timer, interval, or scheduler registration at decoration
+ * time; runtime scheduler adapters honor the metadata when they later
+ * walk the `BatchScheduleRegistry`.
  *
- *   1. Cron expression shape validation (5/6 fields, no literal words).
- *   2. IANA timezone validation (rejects unknown / empty / whitespace).
- *
- * The inert-mode flag (section E) is wired up here because it is also
- * a pure metadata capture — `process.env.BATCH_SCHEDULED_DISABLE` is
- * read at decoration time and stamped onto the stored shape. The
- * decorator does NOT install any timer, interval, or scheduler
- * registration at decoration time; `inert` is a hint the future
- * runtime scheduler honors when it later walks the class.
- *
- * The decorator is metadata-only by design — it does NOT depend on
- * `cron` (the boundary test from Task 2 still passes — no `cron`
- * import appears in core).
+ * The decorator is metadata-only by design — it does NOT install
+ * timers or import the runtime cron engine. The in-process transport
+ * owns that dependency because it is the layer that turns metadata
+ * into actual launches.
  */
 // ---------------------------------------------------------------------------
 // Validation helpers
@@ -117,8 +107,8 @@ const CRON_MAX_FIELDS = 6;
  * a single whitespace run.
  *
  * This is a shape check, not a semantic one — `99 99 99 99 99` still
- * passes the regex. The runtime scheduler (in `@nest-batch/bullmq`)
- * is the layer that handles semantic validation via `cron-parser`.
+ * passes the regex. The active scheduler adapter is the layer that
+ * handles semantic validation with its scheduler backend.
  * The shape check exists so the decorator fails fast on
  * unambiguously-wrong input (empty string, too few / too many
  * fields, literal English words).
@@ -189,9 +179,9 @@ function assertValidTimezone(tz: string): void {
  * includes the invalid value and the failure reason so the error
  * is greppable in logs and pinned in test assertions.
  *
- * Exported from the module barrel so adapter packages (e.g. the
- * BullMQ runtime) can `instanceof`-check it without reaching into
- * the decorator's internal helper.
+ * Exported from the module barrel so adapter packages can
+ * `instanceof`-check it without reaching into the decorator's internal
+ * helper.
  */
 export class InvalidBatchScheduledCronError extends Error {
   readonly cron: string;

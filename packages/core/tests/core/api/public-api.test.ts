@@ -29,7 +29,10 @@ describe('public API of @nest-batch/core', () => {
   it('the BatchDecorators namespace is exported and every member is defined', () => {
     const bag = publicApi as unknown as ExportBag;
     const decorators = bag['BatchDecorators'];
-    expect(decorators, 'BatchDecorators namespace must be exported from package root').toBeDefined();
+    expect(
+      decorators,
+      'BatchDecorators namespace must be exported from package root',
+    ).toBeDefined();
 
     const members = decorators as ExportBag;
     const memberNames = Object.keys(members);
@@ -57,6 +60,9 @@ describe('public API of @nest-batch/core', () => {
       'EXECUTION_STRATEGY',
       'BatchScheduleRegistry',
       'DuplicateBatchScheduleError',
+      'BatchScheduled',
+      'InvalidBatchScheduledCronError',
+      'InvalidBatchScheduledTimezoneError',
       'NestBatchModule',
     ]) {
       expect(bag[name], `top-level export "${name}" must be defined`).toBeDefined();

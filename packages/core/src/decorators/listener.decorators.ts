@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { BATCH_LISTENER_METADATA } from './constants';
-import type { ListenerKind, ListenerPhase } from '../core/ir/listener-definition';
+import type { ListenerKind, ListenerPhase, SkipSubKind } from '../core/ir/listener-definition';
 
 /**
  * Stored under `BATCH_LISTENER_METADATA` for each listener method.
@@ -9,12 +9,13 @@ import type { ListenerKind, ListenerPhase } from '../core/ir/listener-definition
  *
  * The `skip` kind is special: it has no before/after/on-error phase,
  * it is a single fire-and-forget callback per skip event. We record
- * `phase: 'after'` as a placeholder so the metadata shape stays uniform;
- * the skip dispatch table is built in Task 25.
+ * `phase: 'after'` as a placeholder so the metadata shape stays uniform,
+ * plus `skipKind` so read/process/write skip events remain distinguishable.
  */
 export interface ListenerOptions {
   kind: ListenerKind;
   phase: ListenerPhase;
+  skipKind?: SkipSubKind;
   nonCritical?: boolean;
 }
 
@@ -37,12 +38,10 @@ function listenerDecorator(options: ListenerOptions): MethodDecorator {
 // ---------------------------------------------------------------------------
 
 /** Fires before a job execution starts. */
-export const BeforeJob = (): MethodDecorator =>
-  listenerDecorator({ kind: 'job', phase: 'before' });
+export const BeforeJob = (): MethodDecorator => listenerDecorator({ kind: 'job', phase: 'before' });
 
 /** Fires after a job execution finishes (regardless of status). */
-export const AfterJob = (): MethodDecorator =>
-  listenerDecorator({ kind: 'job', phase: 'after' });
+export const AfterJob = (): MethodDecorator => listenerDecorator({ kind: 'job', phase: 'after' });
 
 // ---------------------------------------------------------------------------
 // Step-level listeners (2)
@@ -53,8 +52,7 @@ export const BeforeStep = (): MethodDecorator =>
   listenerDecorator({ kind: 'step', phase: 'before' });
 
 /** Fires after a step execution finishes (regardless of status). */
-export const AfterStep = (): MethodDecorator =>
-  listenerDecorator({ kind: 'step', phase: 'after' });
+export const AfterStep = (): MethodDecorator => listenerDecorator({ kind: 'step', phase: 'after' });
 
 // ---------------------------------------------------------------------------
 // Chunk-level listeners (3)
@@ -126,17 +124,17 @@ export const OnWriteError = (): MethodDecorator =>
 // Skip listeners are not phase-based — each kind handles a distinct skip
 // event emitted by the corresponding read/process/write. We store them
 // under `kind: 'skip'` with `phase: 'after'` as a placeholder so the
-// metadata shape is uniform; the dispatch table is built in Task 25.
+// metadata shape is uniform, plus `skipKind` for runtime dispatch.
 // ---------------------------------------------------------------------------
 
 /** Fires when a read is skipped (after the skip policy decides to skip). */
 export const OnSkipRead = (): MethodDecorator =>
-  listenerDecorator({ kind: 'skip', phase: 'after' });
+  listenerDecorator({ kind: 'skip', phase: 'after', skipKind: 'read' });
 
 /** Fires when a processed item is skipped. */
 export const OnSkipProcess = (): MethodDecorator =>
-  listenerDecorator({ kind: 'skip', phase: 'after' });
+  listenerDecorator({ kind: 'skip', phase: 'after', skipKind: 'process' });
 
 /** Fires when a write is skipped. */
 export const OnSkipWrite = (): MethodDecorator =>
-  listenerDecorator({ kind: 'skip', phase: 'after' });
+  listenerDecorator({ kind: 'skip', phase: 'after', skipKind: 'write' });

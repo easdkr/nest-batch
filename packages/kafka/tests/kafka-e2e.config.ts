@@ -29,9 +29,7 @@ export interface KafkaFixture {
  * Default Kafka address used by the local docker-compose service.
  */
 export const KAFKA_E2E_HOST = process.env['KAFKA_E2E_HOST'] ?? '127.0.0.1';
-export const KAFKA_E2E_PORT = Number(
-  process.env['KAFKA_E2E_PORT'] ?? '9092',
-);
+export const KAFKA_E2E_PORT = Number(process.env['KAFKA_E2E_PORT'] ?? '9092');
 
 /**
  * Check whether the configured Kafka broker is reachable. Returns
@@ -46,7 +44,7 @@ export const KAFKA_E2E_PORT = Number(
  *      producer with the EXACT connection options the runtime
  *      service uses, connect, send a probe message, then
  *      disconnect. This is the only check that actually
- *      exercises the `KafkaRuntimeService` → producer path.
+ *      exercises the `KafkaRuntime` → producer path.
  */
 export async function isKafkaReachable(
   host: string = KAFKA_E2E_HOST,
@@ -212,7 +210,7 @@ export async function buildKafkaE2EModule(options: {
 
   // Wait for the producer to be connected before returning.
   const kafkaSrc = await import('../src');
-  const runtime = app.get(kafkaSrc.KafkaRuntimeService) as unknown as {
+  const runtime = app.get(kafkaSrc.KafkaRuntime) as unknown as {
     producer: import('kafkajs').Producer | null;
     options: { topic: string };
   };
@@ -304,9 +302,7 @@ export function getKafkaAvailability(): { available: boolean; reason: string } {
  */
 const _tracked: Array<() => Promise<void>> = [];
 
-export function trackKafkaE2EModule(
-  moduleRef: import('@nestjs/core').TestingModule,
-): void {
+export function trackKafkaE2EModule(moduleRef: import('@nestjs/core').TestingModule): void {
   _tracked.push(() => moduleRef.close());
 }
 
@@ -328,16 +324,12 @@ afterEach(async () => {
  * Mint a unique client id prefix that includes a per-test nonce.
  */
 export function makeClientId(suiteName: string): string {
-  return `e2e:${suiteName}:${process.pid}:${Date.now()}:${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
+  return `e2e:${suiteName}:${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
  * Mint a unique topic name that includes a per-test nonce.
  */
 export function makeTopic(suiteName: string): string {
-  return `e2e-${suiteName}-${process.pid}-${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
+  return `e2e-${suiteName}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }

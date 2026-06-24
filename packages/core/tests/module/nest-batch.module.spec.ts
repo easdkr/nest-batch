@@ -10,6 +10,7 @@ import { DefinitionCompiler } from '../../src/compiler/definition-compiler';
 import { BatchWorkerRunner } from '../../src/execution/batch-worker-runner';
 import { JobExplorer } from '../../src/execution/job-explorer';
 import { JobOperator } from '../../src/execution/job-operator';
+import { InProcessSchedule } from '../../src/execution/in-process-schedule';
 import { JobRepository } from '../../src/core/repository/job-repository';
 import type {
   JobInstance,
@@ -22,7 +23,10 @@ import type {
   ExecutionScope,
 } from '../../src/core/repository/types';
 import { TransactionManager } from '../../src/core/transaction/transaction-manager';
-import { NestBatchModule, type NestBatchModuleAsyncOptions } from '../../src/module/nest-batch.module';
+import {
+  NestBatchModule,
+  type NestBatchModuleAsyncOptions,
+} from '../../src/module/nest-batch.module';
 import { InProcessAdapter } from '../../src/adapters/in-process.adapter';
 import { BatchScheduleRegistry } from '../../src/module/batch-schedule-registry';
 import type { BatchAdapter, BatchAdaptersConfig } from '../../src/module/adapter';
@@ -49,10 +53,7 @@ class StubRepository extends JobRepository {
   async getOrCreateJobInstance(_name: string, _jobKey: string): Promise<JobInstance> {
     throw new Error('not implemented');
   }
-  async createJobExecution(
-    _jobInstanceId: string,
-    _params: JobParameters,
-  ): Promise<JobExecution> {
+  async createJobExecution(_jobInstanceId: string, _params: JobParameters): Promise<JobExecution> {
     throw new Error('not implemented');
   }
   async createExecutionAtomic(
@@ -62,10 +63,7 @@ class StubRepository extends JobRepository {
   ): Promise<JobExecution> {
     throw new Error('not implemented');
   }
-  async updateJobExecution(
-    _executionId: string,
-    _patch: JobExecutionPatch,
-  ): Promise<void> {
+  async updateJobExecution(_executionId: string, _patch: JobExecutionPatch): Promise<void> {
     throw new Error('not implemented');
   }
   async getJobExecution(_executionId: string): Promise<JobExecution | null> {
@@ -74,16 +72,10 @@ class StubRepository extends JobRepository {
   async getRunningJobExecution(_jobInstanceId: string): Promise<JobExecution | null> {
     return null;
   }
-  async createStepExecution(
-    _jobExecutionId: string,
-    _stepName: string,
-  ): Promise<StepExecution> {
+  async createStepExecution(_jobExecutionId: string, _stepName: string): Promise<StepExecution> {
     throw new Error('not implemented');
   }
-  async updateStepExecution(
-    _stepExecutionId: string,
-    _patch: StepExecutionPatch,
-  ): Promise<void> {
+  async updateStepExecution(_stepExecutionId: string, _patch: StepExecutionPatch): Promise<void> {
     throw new Error('not implemented');
   }
   async getStepExecution(_stepExecutionId: string): Promise<StepExecution | null> {
@@ -208,6 +200,17 @@ describe('NestBatchModule.forRoot()', () => {
     expect(moduleRef.get(JobExplorer)).toBeInstanceOf(JobExplorer);
     expect(moduleRef.get(JobOperator)).toBeInstanceOf(JobOperator);
     expect(moduleRef.get(BatchWorkerRunner)).toBeInstanceOf(BatchWorkerRunner);
+
+    await moduleRef.close();
+  });
+
+  it('registers the in-process schedule bridge when InProcessAdapter is selected', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [NestBatchModule.forRoot({ adapters: stubAdapters })],
+    }).compile();
+
+    await moduleRef.init();
+    expect(moduleRef.get(InProcessSchedule)).toBeInstanceOf(InProcessSchedule);
 
     await moduleRef.close();
   });
@@ -404,10 +407,7 @@ class AliasFakeJobRepository extends JobRepository {
   async getOrCreateJobInstance(_name: string, _jobKey: string): Promise<JobInstance> {
     throw new Error('not implemented');
   }
-  async createJobExecution(
-    _jobInstanceId: string,
-    _params: JobParameters,
-  ): Promise<JobExecution> {
+  async createJobExecution(_jobInstanceId: string, _params: JobParameters): Promise<JobExecution> {
     throw new Error('not implemented');
   }
   async createExecutionAtomic(
@@ -417,10 +417,7 @@ class AliasFakeJobRepository extends JobRepository {
   ): Promise<JobExecution> {
     throw new Error('not implemented');
   }
-  async updateJobExecution(
-    _executionId: string,
-    _patch: JobExecutionPatch,
-  ): Promise<void> {
+  async updateJobExecution(_executionId: string, _patch: JobExecutionPatch): Promise<void> {
     throw new Error('not implemented');
   }
   async getJobExecution(_executionId: string): Promise<JobExecution | null> {
@@ -429,16 +426,10 @@ class AliasFakeJobRepository extends JobRepository {
   async getRunningJobExecution(_jobInstanceId: string): Promise<JobExecution | null> {
     return null;
   }
-  async createStepExecution(
-    _jobExecutionId: string,
-    _stepName: string,
-  ): Promise<StepExecution> {
+  async createStepExecution(_jobExecutionId: string, _stepName: string): Promise<StepExecution> {
     throw new Error('not implemented');
   }
-  async updateStepExecution(
-    _stepExecutionId: string,
-    _patch: StepExecutionPatch,
-  ): Promise<void> {
+  async updateStepExecution(_stepExecutionId: string, _patch: StepExecutionPatch): Promise<void> {
     throw new Error('not implemented');
   }
   async getStepExecution(_stepExecutionId: string): Promise<StepExecution | null> {

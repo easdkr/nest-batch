@@ -27,12 +27,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 
 import { afterAll, beforeAll, beforeEach, describe, expect } from 'vitest';
 
-import {
-  JobLauncher,
-  JobRepository,
-  JobStatus,
-  type JobDefinition,
-} from '@nest-batch/core';
+import { JobLauncher, JobRepository, JobStatus, type JobDefinition } from '@nest-batch/core';
 import { RefKind } from '@nest-batch/core';
 
 import {
@@ -188,7 +183,7 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
     // that require a live Redis. The probe runs four checks in
     // sequence: TCP connect, RESP PING, RESP INFO, and a real
     // BullMQ `add()` round-trip. The last step is what actually
-    // exercises the `BullmqRuntimeService → Queue.add()` path,
+    // exercises the `BullmqRuntime → Queue.add()` path,
     // so a "Redis is up but cannot serve BullMQ traffic" env
     // is correctly classified as unavailable and the suite
     // skips cleanly with a clear reason in CI output.
@@ -241,11 +236,13 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
       // Register the chunk job and launch it.
       const jobId = 'no-row-jobs';
       const jobDef = makeChunkJob(jobId, rowCount, chunkSize);
-      moduleRef.get<{ register(j: JobDefinition): void }>(
-        // The symbol is provided by `@nest-batch/core` via NestBatchModule
-        // — import it dynamically to keep the source close to the assertion.
-        (await import('@nest-batch/core')).JobRegistry,
-      ).register(jobDef);
+      moduleRef
+        .get<{ register(j: JobDefinition): void }>(
+          // The symbol is provided by `@nest-batch/core` via NestBatchModule
+          // — import it dynamically to keep the source close to the assertion.
+          (await import('@nest-batch/core')).JobRegistry,
+        )
+        .register(jobDef);
 
       const execution = await launcher.launch(jobId, { nonce: 'no-row' });
       expect(execution).toBeDefined();
@@ -253,10 +250,13 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
       // Wait for the worker to process the job. The bridge returns
       // `{ kind: 'enqueued' }` immediately, so we have to poll the
       // repository for terminal state.
-      await waitFor(() => repository.getJobExecution(execution.id), async (e) => {
-        const cur = await e;
-        return cur?.status === JobStatus.COMPLETED || cur?.status === JobStatus.FAILED;
-      });
+      await waitFor(
+        () => repository.getJobExecution(execution.id),
+        async (e) => {
+          const cur = await e;
+          return cur?.status === JobStatus.COMPLETED || cur?.status === JobStatus.FAILED;
+        },
+      );
 
       const finalExec = await repository.getJobExecution(execution.id);
       expect(finalExec).not.toBeNull();
@@ -292,9 +292,9 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
 
       const jobId = 'db-first';
       const jobDef = makeTaskletJob(jobId);
-      moduleRef.get<{ register(j: JobDefinition): void }>(
-        (await import('@nest-batch/core')).JobRegistry,
-      ).register(jobDef);
+      moduleRef
+        .get<{ register(j: JobDefinition): void }>((await import('@nest-batch/core')).JobRegistry)
+        .register(jobDef);
 
       // Pre-condition: no execution row exists for this job.
       const preCount = (await readQueueWaitLength(redis)) ?? 0;
@@ -316,10 +316,14 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
       expect([JobStatus.STARTING, JobStatus.STARTED]).toContain(execution.status);
 
       // Wait for terminal state.
-      await waitFor(() => repository.getJobExecution(execution.id), async (e) => {
-        const cur = await e;
-        return cur?.status === JobStatus.COMPLETED || cur?.status === JobStatus.FAILED;
-      }, 15_000);
+      await waitFor(
+        () => repository.getJobExecution(execution.id),
+        async (e) => {
+          const cur = await e;
+          return cur?.status === JobStatus.COMPLETED || cur?.status === JobStatus.FAILED;
+        },
+        15_000,
+      );
 
       const final = await repository.getJobExecution(execution.id);
       expect(final).not.toBeNull();
@@ -364,18 +368,22 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
           written.push(items.slice());
         },
       });
-      moduleRef.get<{ register(j: JobDefinition): void }>(
-        (await import('@nest-batch/core')).JobRegistry,
-      ).register(jobDef);
+      moduleRef
+        .get<{ register(j: JobDefinition): void }>((await import('@nest-batch/core')).JobRegistry)
+        .register(jobDef);
 
       const execution = await launcher.launch(jobId, { nonce: 'business-skip' });
       expect(execution.id).toBeDefined();
 
       // Wait for terminal state.
-      await waitFor(() => repository.getJobExecution(execution.id), async (e) => {
-        const cur = await e;
-        return cur?.status === JobStatus.COMPLETED || cur?.status === JobStatus.FAILED;
-      }, 15_000);
+      await waitFor(
+        () => repository.getJobExecution(execution.id),
+        async (e) => {
+          const cur = await e;
+          return cur?.status === JobStatus.COMPLETED || cur?.status === JobStatus.FAILED;
+        },
+        15_000,
+      );
 
       const final = await repository.getJobExecution(execution.id);
       expect(final).not.toBeNull();
@@ -444,9 +452,9 @@ describe('BullMQ runtime bridge e2e (T18)', () => {
       const launcher = moduleRef.get(JobLauncher);
       const jobId = 'redis-down';
       const jobDef = makeTaskletJob(jobId);
-      moduleRef.get<{ register(j: JobDefinition): void }>(
-        (await import('@nest-batch/core')).JobRegistry,
-      ).register(jobDef);
+      moduleRef
+        .get<{ register(j: JobDefinition): void }>((await import('@nest-batch/core')).JobRegistry)
+        .register(jobDef);
 
       const start = Date.now();
       let caught: unknown = null;

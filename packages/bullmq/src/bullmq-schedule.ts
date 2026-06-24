@@ -5,9 +5,14 @@ import {
   OnApplicationBootstrap,
   OnApplicationShutdown,
 } from '@nestjs/common';
-import { Queue, type JobsOptions } from 'bullmq';
+import { Queue, Worker, type Job, type JobsOptions } from 'bullmq';
 
-import { BATCH_SCHEDULE_REGISTRY, BatchScheduleRegistry, type BatchScheduleEntry } from '@nest-batch/core';
+import {
+  BatchScheduleRegistry,
+  JobLauncher,
+  type BatchScheduleEntry,
+  type JobParameters,
+} from '@nest-batch/core';
 
 import { BULLMQ_MODULE_OPTIONS, type ResolvedBullMqModuleOptions } from './module-options';
 
@@ -26,8 +31,14 @@ import { BULLMQ_MODULE_OPTIONS, type ResolvedBullMqModuleOptions } from './modul
  */
 export const BULLMQ_SCHEDULE_QUEUE_NAME = 'nest-batch-schedule';
 
+export interface BullmqSchedulePayload {
+  readonly jobId: string;
+  readonly scheduleName: string;
+  readonly methodName: string;
+}
+
 /**
- * `BullmqScheduleService` — the runtime scheduler for
+ * `BullmqSchedule` — the runtime scheduler for
  * `@BatchScheduled` entries.
  *
  * Lifecycle:
@@ -39,35 +50,39 @@ export const BULLMQ_SCHEDULE_QUEUE_NAME = 'nest-batch-schedule';
  *   2. BullMQ's `upsertJobScheduler` internally fires the
  *      schedule at the configured cron time. Each fire enqueues a
  *      job into the schedule queue (named after the schedule
- *      entry's method). A separate `Worker` (the one owned by
- *      `BullmqRuntimeService` if `autoStartWorker` is `true`)
- *      processes the jobs.
+ *      entry's method). When `autoStartWorker` is `true`, this
+ *      service also starts a schedule-queue worker that bridges
+ *      `{ jobId, scheduleName, methodName }` into
+ *      `JobLauncher.launch(jobId, params)`.
  *   3. `OnApplicationShutdown` removes every installed scheduler
  *      (via `queue.removeJobScheduler`) and closes the queue.
  *      Removal is best-effort: a partial failure logs a warning
  *      but does not block the rest of the shutdown.
  *
- * Why a dedicated service (not a method on `BullmqRuntimeService`)?
+ * Why a dedicated service (not a method on `BullmqRuntime`)?
  *   - The runtime service is `IExecutionStrategy`-facing; it
  *     knows about `JobExecution`, the in-process launch contract,
  *     and the worker bridge. Mixing scheduler concerns in would
  *     bloat its surface and couple two lifecycles that happen to
  *     share a Redis client but are otherwise independent.
- *   - The scheduler does NOT need a `Worker`; the runtime service
- *     does. A separate service can run with `autoStartWorker:
- *     false` cleanly (a launcher-only deployment that still wants
- *     cron schedules to fire).
+ *   - The schedule queue needs a different worker contract from
+ *     the runtime work queue: schedule payloads identify a job to
+ *     launch, while work payloads identify an already-created
+ *     execution/step. Keeping the bridge here avoids teaching
+ *     `BullmqRuntime` a second payload shape.
  *   - The schedule service owns its own `Queue` (the schedule
  *     queue) so cron jobs are not interleaved with manually-launched
  *     jobs. They share the same `keyPrefix` so the host's Redis
  *     namespace policy still applies.
  */
 @Injectable()
-export class BullmqScheduleService implements OnApplicationBootstrap, OnApplicationShutdown {
-  private readonly logger = new Logger(BullmqScheduleService.name);
+export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShutdown {
+  private readonly logger = new Logger(BullmqSchedule.name);
 
   /** BullMQ queue for the scheduler (producer side only). */
   private scheduleQueue: Queue | null = null;
+  /** BullMQ worker that turns schedule fires into real batch launches. */
+  private scheduleWorker: Worker<BullmqSchedulePayload> | null = null;
 
   /**
    * Every schedule key installed during `onApplicationBootstrap`.
@@ -84,6 +99,7 @@ export class BullmqScheduleService implements OnApplicationBootstrap, OnApplicat
     private readonly scheduleRegistry: BatchScheduleRegistry,
     @Inject(BULLMQ_MODULE_OPTIONS)
     private readonly options: ResolvedBullMqModuleOptions,
+    private readonly launcher: JobLauncher,
   ) {}
 
   /**
@@ -101,21 +117,25 @@ export class BullmqScheduleService implements OnApplicationBootstrap, OnApplicat
    */
   onApplicationBootstrap(): void {
     this.scheduleQueue = this.buildScheduleQueue();
+    if (this.options.autoStartWorker) {
+      this.scheduleWorker = this.buildScheduleWorker();
+    }
     const entries = this.scheduleRegistry.getAll();
     for (const entry of entries) {
       try {
         this.installSchedule(entry);
       } catch (err) {
         this.logger.warn(
-          `Failed to install schedule for "${entry.jobId}::${entry.methodName}": ` +
+          `Failed to install schedule for "${entry.jobId}::${entry.scheduleName}": ` +
             `${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
     this.logger.log(
-      `BullmqScheduleService started: queue="${BULLMQ_SCHEDULE_QUEUE_NAME}" ` +
+      `BullmqSchedule started: queue="${BULLMQ_SCHEDULE_QUEUE_NAME}" ` +
         `schedules=${this.installedKeys.size}/${entries.length} ` +
-        `(skipped=${entries.length - this.installedKeys.size} inert)`,
+        `(skipped=${entries.length - this.installedKeys.size} inert) ` +
+        `worker=${this.options.autoStartWorker ? 'auto' : 'manual'}`,
     );
   }
 
@@ -154,7 +174,7 @@ export class BullmqScheduleService implements OnApplicationBootstrap, OnApplicat
   private installSchedule(entry: BatchScheduleEntry): void {
     if (entry.inert) {
       this.logger.log(
-        `Skipping inert schedule: ${entry.jobId}::${entry.methodName} ` +
+        `Skipping inert schedule: ${entry.jobId}::${entry.scheduleName} ` +
           `(cron="${entry.cron}", tz="${entry.timezone}")`,
       );
       return;
@@ -164,16 +184,20 @@ export class BullmqScheduleService implements OnApplicationBootstrap, OnApplicat
       // builds the queue before iterating entries, but a future
       // refactor that calls `installSchedule` from elsewhere
       // should fail loudly.
-      throw new Error('[BullmqScheduleService] scheduleQueue is null');
+      throw new Error('[BullmqSchedule] scheduleQueue is null');
     }
-    const schedulerKey = `${entry.jobId}::${entry.methodName}`;
+    const schedulerKey = `${entry.jobId}::${entry.scheduleName}`;
     const template: {
       name: string;
-      data: Record<string, unknown>;
+      data: BullmqSchedulePayload;
       opts: JobsOptions;
     } = {
-      name: entry.methodName,
-      data: { jobId: entry.jobId, methodName: entry.methodName },
+      name: entry.scheduleName,
+      data: {
+        jobId: entry.jobId,
+        scheduleName: entry.scheduleName,
+        methodName: entry.methodName,
+      },
       opts: {
         attempts: 3,
         backoff: { type: 'exponential', delay: 100, jitter: 0.5 },
@@ -221,6 +245,47 @@ export class BullmqScheduleService implements OnApplicationBootstrap, OnApplicat
     });
   }
 
+  private buildScheduleWorker(): Worker<BullmqSchedulePayload> {
+    return new Worker<BullmqSchedulePayload>(
+      BULLMQ_SCHEDULE_QUEUE_NAME,
+      async (job) => this.processScheduleFire(job),
+      {
+        connection: this.workerConnectionOptions(),
+        prefix: this.options.connection.keyPrefix,
+        concurrency: 1,
+      },
+    );
+  }
+
+  private async processScheduleFire(job: Job<BullmqSchedulePayload>): Promise<void> {
+    const { jobId, scheduleName, methodName } = job.data;
+    if (typeof jobId !== 'string' || jobId.length === 0) {
+      throw new Error('[BullmqSchedule] schedule payload is missing jobId');
+    }
+    if (typeof scheduleName !== 'string' || scheduleName.length === 0) {
+      throw new Error('[BullmqSchedule] schedule payload is missing scheduleName');
+    }
+    if (typeof methodName !== 'string' || methodName.length === 0) {
+      throw new Error('[BullmqSchedule] schedule payload is missing methodName');
+    }
+
+    const scheduledAt =
+      typeof job.timestamp === 'number' && Number.isFinite(job.timestamp)
+        ? new Date(job.timestamp).toISOString()
+        : new Date().toISOString();
+    const params: JobParameters = {
+      scheduled: true,
+      scheduleName,
+      scheduledAt,
+      scheduleQueueJobId: String(job.id ?? ''),
+    };
+    const execution = await this.launcher.launch(jobId, params);
+    this.logger.log(
+      `Fired schedule ${jobId}::${scheduleName} ` +
+        `(method=${methodName}) -> execution=${execution.id} status=${execution.status}`,
+    );
+  }
+
   private producerConnectionOptions(): Record<string, unknown> {
     return {
       host: this.options.connection.host,
@@ -231,6 +296,19 @@ export class BullmqScheduleService implements OnApplicationBootstrap, OnApplicat
       ...(this.options.connection.tls ? { tls: true } : {}),
       enableOfflineQueue: false,
       maxRetriesPerRequest: 1,
+    };
+  }
+
+  private workerConnectionOptions(): Record<string, unknown> {
+    return {
+      host: this.options.connection.host,
+      port: this.options.connection.port,
+      password: this.options.connection.password,
+      username: this.options.connection.username,
+      db: this.options.connection.db,
+      ...(this.options.connection.tls ? { tls: true } : {}),
+      maxRetriesPerRequest: null,
+      enableReadyCheck: false,
     };
   }
 
@@ -246,6 +324,16 @@ export class BullmqScheduleService implements OnApplicationBootstrap, OnApplicat
    * others from being removed.
    */
   private async close(): Promise<void> {
+    if (this.scheduleWorker !== null) {
+      try {
+        await this.scheduleWorker.close();
+      } catch (err) {
+        this.logger.warn(
+          `Schedule worker close failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      this.scheduleWorker = null;
+    }
     if (this.scheduleQueue !== null) {
       for (const key of this.installedKeys) {
         try {

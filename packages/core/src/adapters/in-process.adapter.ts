@@ -6,6 +6,7 @@ import {
   IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
   InProcessExecutionStrategy,
 } from '../execution/in-process-execution-strategy';
+import { InProcessSchedule } from '../execution/in-process-schedule';
 
 /**
  * Empty Nest module class that owns the in-process execution-strategy
@@ -85,6 +86,16 @@ export class InProcessModule {}
  * some "config" into it, you almost certainly want a real transport
  * adapter instead.
  *
+ * ## Scheduling
+ *
+ * `InProcessSchedule` is registered as a transport global provider.
+ * It consumes `BatchScheduleRegistry` after discovery/bootstrap and
+ * turns non-inert `@BatchScheduled` cron ticks into
+ * `JobLauncher.launch(...)` calls in this same process. That gives
+ * single-process apps a real cron path without Redis or another
+ * queue. It is intentionally not a distributed lock: multiple app
+ * replicas will each run their own timer.
+ *
  * ## DI scope
  *
  * The module is `global: true` and exports both the strategy class
@@ -103,23 +114,16 @@ export class InProcessModule {}
  *      pattern uniform across the engine and its adapters — the host
  *      author only needs to learn one module-visibility model.
  *
- * ## Why `globalProviders` is omitted
+ * ## Why `globalProviders` is used
  *
  * The `BatchAdapter` interface allows a `globalProviders` field for
  * runtime classes (e.g. `JobExecutor`, `InProcessExecutionStrategy`)
  * that the adapter's *own* module needs to inject but that the host
- * should also be able to inject. The recommended path is to list
- * them in the adapter's own `DynamicModule.exports` — which is what
- * this adapter does. `JobLauncher` (registered by `NestBatchModule`,
- * not by this adapter) injects the strategy by the `EXECUTION_STRATEGY`
- * token, which is exported here, so the runtime resolution chain
- * works without the core module having to know which adapter is
- * active.
- *
- * If a future in-process feature needs to expose a new provider to
- * the host (e.g. an inline scheduler), prefer adding it to
- * `exports` and updating the `BatchAdapter.globalProviders` decision
- * — do not push it onto the host app's `providers` array.
+ * should also be able to inject. This adapter lists
+ * `InProcessExecutionStrategy`, `InProcessSchedule`, and the
+ * `EXECUTION_STRATEGY` binding there so `NestBatchModule` can merge
+ * them into the same provider graph as `JobLauncher`,
+ * `BatchScheduleRegistry`, and the executor subgraph.
  *
  * ## Concurrency
  *
@@ -150,6 +154,7 @@ export class InProcessAdapter {
       module: buildInProcessDynamicModule(),
       globalProviders: [
         InProcessExecutionStrategy,
+        InProcessSchedule,
         IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
       ],
     };

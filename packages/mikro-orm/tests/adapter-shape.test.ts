@@ -21,7 +21,7 @@
  *       `[]`) — the adapter is binding-only and does not bootstrap
  *       a `MikroOrmModule.forRoot()` call
  *     - the provider / export / `globalProviders` arrays have the
- *       exact counts expected (4 / 2 / 2)
+ *       exact counts expected (5 / 3 / 3)
  *
  *   A regression on any of these would slip past the contract
  *   suite (which compiles the module and exercises behavior) and
@@ -33,12 +33,11 @@
  * not here.
  */
 import { describe, expect, it } from 'vitest';
-import {
-  JOB_REPOSITORY_TOKEN,
-  TRANSACTION_MANAGER_TOKEN,
-} from '@nest-batch/core';
+import { JOB_REPOSITORY_TOKEN, TRANSACTION_MANAGER_TOKEN } from '@nest-batch/core';
+import { EntityManager } from '@mikro-orm/core';
 
 import { MikroOrmAdapter, MikroOrmAdapterModule } from '../src/adapters';
+import { MikroOrmDriverProvider } from '../src/mikro-orm.driver-provider';
 import { MikroORMJobRepository } from '../src/mikroorm-job-repository';
 import { MikroORMTransactionManager } from '../src/mikroorm-transaction-manager';
 
@@ -98,9 +97,9 @@ describe('MikroOrmAdapter — shape (Task 12)', () => {
     expect(adapter.module.global).toBe(true);
   });
 
-  it('declares exactly 4 providers: the two classes plus the two useExisting token bindings', () => {
+  it('declares exactly 5 providers: the two classes plus three useExisting token bindings', () => {
     expect(Array.isArray(adapter.module.providers)).toBe(true);
-    expect(adapter.module.providers).toHaveLength(4);
+    expect(adapter.module.providers).toHaveLength(5);
 
     // Pull the class refs and the `provide` tokens out of the
     // mixed array (Nest's `Provider` is a union of class refs and
@@ -109,13 +108,8 @@ describe('MikroOrmAdapter — shape (Task 12)', () => {
     // class providers are load-bearing because Nest uses them as
     // DI tokens for the classes themselves.
     const providers = adapter.module.providers as Array<unknown>;
-    const classProviders = providers.filter(
-      (p) => typeof p === 'function',
-    );
-    expect(classProviders).toEqual([
-      MikroORMJobRepository,
-      MikroORMTransactionManager,
-    ]);
+    const classProviders = providers.filter((p) => typeof p === 'function');
+    expect(classProviders).toEqual([MikroORMJobRepository, MikroORMTransactionManager]);
 
     const useExistingProviders = providers.filter(
       (p): p is { provide: any; useExisting: any } =>
@@ -126,7 +120,11 @@ describe('MikroOrmAdapter — shape (Task 12)', () => {
         !('useFactory' in p) &&
         !('useValue' in p),
     );
-    expect(useExistingProviders).toHaveLength(2);
+    expect(useExistingProviders).toHaveLength(3);
+    expect(useExistingProviders).toContainEqual({
+      provide: MikroOrmDriverProvider,
+      useExisting: EntityManager,
+    });
     expect(useExistingProviders).toContainEqual({
       provide: JOB_REPOSITORY_TOKEN,
       useExisting: MikroORMJobRepository,
@@ -137,16 +135,17 @@ describe('MikroOrmAdapter — shape (Task 12)', () => {
     });
   });
 
-  it('exports exactly 2 tokens: JOB_REPOSITORY_TOKEN and TRANSACTION_MANAGER_TOKEN', () => {
+  it('exports exactly 3 tokens: MikroOrmDriverProvider, JOB_REPOSITORY_TOKEN, and TRANSACTION_MANAGER_TOKEN', () => {
     expect(Array.isArray(adapter.module.exports)).toBe(true);
-    expect(adapter.module.exports).toHaveLength(2);
+    expect(adapter.module.exports).toHaveLength(3);
     expect(adapter.module.exports).toEqual([
+      MikroOrmDriverProvider,
       JOB_REPOSITORY_TOKEN,
       TRANSACTION_MANAGER_TOKEN,
     ]);
   });
 
-  it('exposes a `globalProviders` array of length 2 (the load-bearing host-visible bindings)', () => {
+  it('exposes a `globalProviders` array of length 3 (the load-bearing host-visible bindings)', () => {
     // `globalProviders` is the *only* way the host app can inject
     // `JOB_REPOSITORY_TOKEN` / `TRANSACTION_MANAGER_TOKEN` from
     // outside the adapter's module. The `useClass` (not
@@ -156,7 +155,23 @@ describe('MikroOrmAdapter — shape (Task 12)', () => {
     // 0, the host's `moduleRef.get(JOB_REPOSITORY_TOKEN)` calls
     // start throwing at boot.
     expect(Array.isArray(adapter.globalProviders)).toBe(true);
-    expect(adapter.globalProviders).toHaveLength(2);
+    expect(adapter.globalProviders).toHaveLength(3);
+
+    const globalUseExistingProviders = (adapter.globalProviders as Array<unknown>).filter(
+      (p): p is { provide: any; useExisting: any } =>
+        typeof p === 'object' &&
+        p !== null &&
+        'useExisting' in p &&
+        !('useClass' in p) &&
+        !('useFactory' in p) &&
+        !('useValue' in p),
+    );
+    expect(globalUseExistingProviders).toEqual([
+      {
+        provide: MikroOrmDriverProvider,
+        useExisting: EntityManager,
+      },
+    ]);
 
     const useClassProviders = (adapter.globalProviders as Array<unknown>).filter(
       (p): p is { provide: any; useClass: any } =>
@@ -205,8 +220,6 @@ describe('MikroOrmAdapter — shape (Task 12)', () => {
     //      value to `[]` (which would still be a regression even
     //      though it would pass the first assertion).
     expect(adapter.module.imports).toBeUndefined();
-    expect(Object.prototype.hasOwnProperty.call(adapter.module, 'imports')).toBe(
-      false,
-    );
+    expect(Object.prototype.hasOwnProperty.call(adapter.module, 'imports')).toBe(false);
   });
 });

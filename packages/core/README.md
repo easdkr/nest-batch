@@ -306,7 +306,8 @@ The barrel re-exports:
 - `./execution` — `JobLauncher`, `JobExecutor`, `InProcessExecutionStrategy`, `IExecutionStrategy`, `EXECUTION_STRATEGY`, `ChunkStepExecutor`, `TaskletStepExecutor`, `ListenerInvoker`, `RefResolver`.
 - `./transaction` — `TransactionManager` token and contract.
 - `./repository` — `JobRepository` token, contract, in-memory reference, ID generators.
-- `./decorators` — under the `BatchDecorators` namespace (`@Jobable`, `@ItemReader`, `@ItemProcessor`, `@ItemWriter`, `@Tasklet`, listener decorators, `@BatchScheduled`).
+- `./decorators` — under the `BatchDecorators` namespace (`@Jobable`, `@ItemReader`, `@ItemProcessor`, `@ItemWriter`, `@Tasklet`, listener decorators).
+- `./scheduling/batch-scheduled` — `@BatchScheduled` and its schedule option/error types are also re-exported directly from the package root.
 - `./module` — `NestBatchModule`, tokens, options.
 - `./builder` — fluent `BatchBuilder`, `JobBuilder`, `StepBuilder`, `FlowBuilder`.
 - `./explorer` — `BatchExplorer` (the metadata scanner).
@@ -364,5 +365,6 @@ pnpm --filter @nest-batch/core typecheck  # tsc --noEmit
 
 The boundary test (`tests/core/boundary/no-forbidden-imports.test.ts`)
 guards core's dependency-light promise. It fails the build if any
-forbidden package (`bullmq`, `mikro-orm`, `typeorm`, `drizzle-orm`,
-`cron`) shows up as a core import.
+forbidden integration package (`bullmq`, `mikro-orm`, `typeorm`,
+`drizzle-orm`) shows up as a core import. The small `cron` dependency
+is intentionally allowed for the built-in in-process scheduler bridge.

@@ -4,7 +4,7 @@
  * This module is the single source of truth for partition validation
  * and the default partition-range shape. It is deliberately
  * dependency-light: no `@nest-batch/bullmq`, no `@nest-batch/kafka`,
- * no ORMs, no cron — verified by
+ * no ORMs — verified by
  * `packages/core/tests/core/boundary/no-forbidden-imports.test.ts`.
  *
  * The helpers are consumed by:
@@ -14,10 +14,10 @@
  *     (cross-checks the resolved `JobDefinition`),
  *   - `packages/core/src/execution/in-process-execution-strategy.ts`
  *     (the in-process adapter's partition guard),
- *   - `packages/bullmq/src/bullmq-runtime.service.ts` (the BullMQ
+ *   - `packages/bullmq/src/bullmq-runtime.ts` (the BullMQ
  *     strategy's enqueue fan-out + the worker's `partitionIndex`
  *     enforcement),
- *   - `packages/kafka/src/kafka-runtime.service.ts` (the Kafka
+ *   - `packages/kafka/src/kafka-runtime.ts` (the Kafka
  *     mirror — T9).
  *
  * Pinned by:
@@ -48,7 +48,10 @@ export const INVALID_PARTITION_INDEX = 'INVALID_PARTITION_INDEX';
  */
 export class InvalidPartitionsError extends Error {
   readonly code: string;
-  constructor(message: string, public readonly details?: unknown) {
+  constructor(
+    message: string,
+    public readonly details?: unknown,
+  ) {
     super(message);
     this.name = 'InvalidPartitionsError';
     this.code = 'INVALID_PARTITIONS';
@@ -109,10 +112,10 @@ export function defaultRange(
   total: number,
 ): readonly [from: number, to: number] {
   if (!Number.isInteger(i) || i < 0 || i >= n) {
-    throw new InvalidPartitionsError(
-      `defaultRange: partition index ${i} out of range [0, ${n})`,
-      { i, n },
-    );
+    throw new InvalidPartitionsError(`defaultRange: partition index ${i} out of range [0, ${n})`, {
+      i,
+      n,
+    });
   }
   if (!Number.isInteger(n) || n <= 0) {
     throw new InvalidPartitionsError(`defaultRange: count ${n} must be a positive integer`, { n });
@@ -140,21 +143,14 @@ export function defaultRange(
  * surfaces it as `FAILED` with the invariant violation in the
  * `exitMessage`).
  */
-export function enforcePartitionIndex(
-  partitionIndex: number | undefined,
-  count: number,
-): void {
+export function enforcePartitionIndex(partitionIndex: number | undefined, count: number): void {
   if (partitionIndex === undefined) {
     throw new InvalidPartitionsError(
       `partitionIndex is required for a partitioned step (count=${count})`,
       { count },
     );
   }
-  if (
-    !Number.isInteger(partitionIndex) ||
-    partitionIndex < 0 ||
-    partitionIndex >= count
-  ) {
+  if (!Number.isInteger(partitionIndex) || partitionIndex < 0 || partitionIndex >= count) {
     throw new InvalidPartitionsError(
       `partitionIndex ${partitionIndex} is out of range [0, ${count})`,
       { partitionIndex, count },

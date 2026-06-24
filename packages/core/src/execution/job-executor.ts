@@ -7,11 +7,7 @@ import { StepStatus, JobStatus, FlowExecutionStatus } from '../core/status';
 import { JobNotRestartableError } from '../core/errors';
 import { TaskletStepExecutor, type StepExecutionResult } from './tasklet-step-executor';
 import { ChunkStepExecutor, type ChunkExecutionResult } from './chunk-step-executor';
-import {
-  ListenerInvoker,
-  type ResolverMap,
-  type ListenerResolver,
-} from './listener-invoker';
+import { ListenerInvoker, type ResolverMap, type ListenerResolver } from './listener-invoker';
 import { FlowEvaluator } from '../flow/flow-evaluator';
 import {
   BATCH_EVENT,
@@ -137,6 +133,7 @@ export class JobExecutor {
     await this.listenerInvoker.invokeBefore(jobResolvers, 'job', {
       jobExecutionId: execution.id,
       stepExecutionId: '<job>',
+      jobParameters: execution.params,
     });
 
     // Cache the step order once. `Object.keys` returns insertion order
@@ -196,6 +193,9 @@ export class JobExecutor {
           if (step.kind === 'tasklet') {
             result = await this.taskletExecutor.execute(step, {
               jobExecutionId: execution.id,
+              stepExecutionId: stepExecution.id,
+              stepName: step.id,
+              jobParameters: execution.params,
               jobRepository: this.repository,
               transactionManager: this.transactionManager,
               listenerInvoker: this.listenerInvoker,
@@ -217,9 +217,12 @@ export class JobExecutor {
             result = await this.chunkExecutor.execute(step, {
               jobExecutionId: execution.id,
               stepExecutionId: stepExecution.id,
+              stepName: step.id,
+              jobParameters: execution.params,
               jobRepository: this.repository,
               transactionManager: this.transactionManager,
               listenerInvoker: this.listenerInvoker,
+              listenerResolvers: jobResolvers,
               jobExecutionId2: execution.id,
               resolvers: new Map(),
               ...(resumeFromChunkIndex !== undefined ? { resumeFromChunkIndex } : {}),
@@ -281,18 +284,14 @@ export class JobExecutor {
             : result.status === StepStatus.FAILED
               ? FlowExecutionStatus.FAILED
               : FlowExecutionStatus.UNKNOWN;
-        const deciderExitStatus = await this.resolveDeciderExitStatus(
-          jobDef,
-          currentStepId,
-          {
-            jobExecution: execution,
-            stepId: step.id,
-            stepExecutionId: stepExecution.id,
-            stepStatus: result.status,
-            exitCode: result.exitCode,
-            exitMessage: result.exitMessage,
-          },
-        );
+        const deciderExitStatus = await this.resolveDeciderExitStatus(jobDef, currentStepId, {
+          jobExecution: execution,
+          stepId: step.id,
+          stepExecutionId: stepExecution.id,
+          stepStatus: result.status,
+          exitCode: result.exitCode,
+          exitMessage: result.exitMessage,
+        });
         const flowExitStatus = deciderExitStatus ?? (result.exitCode || flowStatus);
 
         let evaluatorResult = await this.flowEvaluator.evaluate(
@@ -373,8 +372,12 @@ export class JobExecutor {
     await this.listenerInvoker.invokeAfter(
       jobResolvers,
       'job',
-      { jobExecutionId: execution.id, stepExecutionId: '<job>' },
-      [{ status: finalStatus }],
+      {
+        jobExecutionId: execution.id,
+        stepExecutionId: '<job>',
+        jobParameters: execution.params,
+      },
+      { status: finalStatus },
     );
 
     await this.emit({
@@ -423,7 +426,10 @@ export class JobExecutor {
       const name = this.resolveListenerName(def.ref, lambdaCounter);
       if (def.ref.kind === RefKind.BuilderLambda) lambdaCounter += 1;
 
-      const key = `${def.phase}:${def.kind}:${name}`;
+      const key =
+        def.kind === 'skip' && def.skipKind !== undefined
+          ? `on-skip:${def.skipKind}:${name}`
+          : `${def.phase}:${def.kind}:${name}`;
       resolvers.set(key, {
         fn,
         ...(def.nonCritical !== undefined ? { nonCritical: def.nonCritical } : {}),
@@ -497,7 +503,10 @@ export class JobExecutor {
       } else if (key.startsWith('after:step:')) {
         legacy.set(`after-step:${key.slice('after:step:'.length)}`, entry.fn as ListenerResolver);
       } else if (key.startsWith('on-error:step:')) {
-        legacy.set(`on-step-error:${key.slice('on-error:step:'.length)}`, entry.fn as ListenerResolver);
+        legacy.set(
+          `on-step-error:${key.slice('on-error:step:'.length)}`,
+          entry.fn as ListenerResolver,
+        );
       }
     }
     return legacy;
