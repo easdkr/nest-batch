@@ -88,9 +88,11 @@ jobs:
     # E2E job runs the testcontainer-based integration suites
     # (packages/{postgresql,mysql,drizzle,prisma,core}, etc.). Each
     # suite spins up a real Postgres / Redis / Prisma-engine container
-    # on demand, so the job needs a Docker daemon — we expose one
-    # via the `docker:dind` service container and route
-    # testcontainers-node at it via the DOCKER_HOST env var. The
+    # on demand. GitHub-hosted Ubuntu runners already provide a Docker
+    # daemon, and testcontainers-node can discover it from the default
+    # local Docker socket. Avoid overriding DOCKER_HOST here: a dind
+    # service defaults to TLS on 2376, which makes tcp://localhost:2375
+    # fail before the e2e suites start. The
     # job runs in parallel with `package-quality` (no `needs:` edge)
     # and uses its own concurrency group, so a stale push cancels
     # this predecessor without affecting the unit-test job.
@@ -99,14 +101,8 @@ jobs:
     permissions:
       packages: write
 
-    services:
-      docker:
-        image: docker:dind
-        options: --privileged
-
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-      DOCKER_HOST: tcp://localhost:2375
 
     concurrency:
       group: e2e-${{ github.ref }}
@@ -131,14 +127,6 @@ jobs:
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             pnpm-${{ runner.os }}-
-
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /var/lib/docker
-          key: docker-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            docker-${{ runner.os }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
