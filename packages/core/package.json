@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Batch processing engine for NestJS — jobs, steps, chunk-oriented processing, and the persistence/transport contracts the @nest-batch adapters implement.",
   "license": "MIT",
   "author": "easdkr",
