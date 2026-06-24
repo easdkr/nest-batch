@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * Creates the six batch meta-tables for PostgreSQL:
+ * Creates the 5 active batch meta-tables for PostgreSQL:
  *
  *   - batch_job_instance            (root, unique on (job_name, job_key))
  *   - batch_job_execution           (one per job run, indexed by instance)
@@ -9,7 +9,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *   - batch_job_execution_context   (JSON payload + version, keyed by exec)
  *   - batch_step_execution_context  (JSON payload + version, keyed by step)
  *
- * This is the consolidated 6-table Postgres DDL that the
+ * This is the consolidated 5-table Postgres DDL that the
  * `@nest-batch/postgresql` driver sibling ships. The
  * `@nest-batch/mikro-orm` and `@nest-batch/typeorm` slot packages
  * reference these column names from their slot-shaped repositories

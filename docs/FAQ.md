@@ -122,13 +122,13 @@ back in.
 
 ### Do the two adapter packages share the same schema?
 
-Yes. Both `@nest-batch/mikro-orm` and `@nest-batch/typeorm` own a
-copy of the same six Spring Batch-compatible batch meta-tables
-(`batch_job_instance`, `batch_job_execution`,
-`batch_job_execution_params`, `batch_step_execution`,
-`batch_job_execution_context`, `batch_step_execution_context`).
-The column names and shapes match; the entity decorators and
-migration scripts are adapter-specific.
+Yes. The active schema is the same 5-table shape across the ORM
+adapters and driver siblings: `batch_job_instance`,
+`batch_job_execution`, `batch_step_execution`,
+`batch_job_execution_context`, and `batch_step_execution_context`.
+For MikroORM, the entity classes live in `@nest-batch/mikro-orm`;
+driver siblings provide the matching dialect-specific DDL/schema
+carriers.
 
 A host can switch from one adapter to the other by running the
 target adapter's migration and rebinding the `JobRepository` /

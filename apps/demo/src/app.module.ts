@@ -1,8 +1,7 @@
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { PostgreSqlDriver } from '@mikro-orm/postgresql';
 import { InProcessAdapter, NestBatchModule } from '@nest-batch/core';
-import { MikroOrmAdapter } from '@nest-batch/mikro-orm';
-import { BATCH_META_ENTITIES } from '@nest-batch/postgresql';
+import { BATCH_META_ENTITIES, MikroOrmAdapter } from '@nest-batch/mikro-orm';
 import { BullmqAdapter } from '@nest-batch/bullmq';
 import { Module } from '@nestjs/common';
 

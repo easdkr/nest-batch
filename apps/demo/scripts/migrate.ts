@@ -7,7 +7,7 @@ import 'reflect-metadata';
 import { MikroORM } from '@mikro-orm/core';
 import { PostgreSqlDriver } from '@mikro-orm/postgresql';
 import { Migrator } from '@mikro-orm/migrations';
-import { JobInstanceEntity, JobExecutionEntity, JobExecutionParamsEntity, StepExecutionEntity, JobExecutionContextEntity, StepExecutionContextEntity } from '../src/entities/job-meta.entities';
+import { BATCH_META_ENTITIES } from '@nest-batch/mikro-orm';
 import { ProductEntity } from '../src/entities/product.entity';
 
 async function main() {
@@ -18,7 +18,7 @@ async function main() {
     port: Number(process.env.DATABASE_PORT ?? 5434),
     user: process.env.DATABASE_USER ?? 'demo',
     password: process.env.DATABASE_PASSWORD ?? 'demo',
-    entities: [JobInstanceEntity, JobExecutionEntity, JobExecutionParamsEntity, StepExecutionEntity, JobExecutionContextEntity, StepExecutionContextEntity, ProductEntity],
+    entities: [...BATCH_META_ENTITIES, ProductEntity],
     extensions: [Migrator],
     migrations: {
       path: './src/migrations',

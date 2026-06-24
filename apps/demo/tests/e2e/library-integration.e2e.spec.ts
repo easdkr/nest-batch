@@ -44,8 +44,6 @@ import {
   JobExecutionEntity,
   JobInstanceEntity,
   StepExecutionEntity,
-} from '@nest-batch/postgresql';
-import {
   MikroOrmAdapter,
   MikroORMJobRepository,
   MikroORMTransactionManager,
@@ -62,9 +60,7 @@ const PG_CONFIG = {
 
 function formatPostgresError(err: unknown): string {
   if (err instanceof AggregateError && err.errors.length > 0) {
-    return err.errors
-      .map((e) => (e instanceof Error ? e.message : String(e)))
-      .join(' | ');
+    return err.errors.map((e) => (e instanceof Error ? e.message : String(e))).join(' | ');
   }
   return err instanceof Error
     ? err.message || err.stack?.split('\n')[0] || err.toString()
@@ -123,11 +119,7 @@ describe('Task 48 — Library × PostgreSQL integration (live DB)', () => {
   let launcher: JobLauncher;
   let registry: JobRegistry;
 
-  function testIfPostgres(
-    name: string,
-    fn: () => Promise<void> | void,
-    timeout?: number,
-  ): void {
+  function testIfPostgres(name: string, fn: () => Promise<void> | void, timeout?: number): void {
     test(
       name,
       async (ctx) => {
@@ -174,7 +166,6 @@ describe('Task 48 — Library × PostgreSQL integration (live DB)', () => {
                        batch_step_execution_context,
                        batch_job_execution_context,
                        batch_step_execution,
-                       batch_job_execution_params,
                        batch_job_execution,
                        batch_job_instance
       RESTART IDENTITY CASCADE
@@ -214,44 +205,48 @@ describe('Task 48 — Library × PostgreSQL integration (live DB)', () => {
     em = forkedEm;
   });
 
-  testIfPostgres('1. Library + PostgreSQL: 1-step tasklet job runs to COMPLETED and persists execution state', async () => {
-    // Register a trivial 1-step job via the builder API
-    const jobConfig: JobBuilderConfig = {
-      id: 'smoke-tasklet',
-      restartable: false,
-      allowDuplicateInstances: false,
-      startStepId: 'noop',
-      steps: [
-        {
-          kind: 'tasklet',
-          id: 'noop',
-          tasklet: {
-            kind: RefKind.BuilderLambda,
-            fn: () => ({ execute: async () => 'ok' }),
-          },
-          listeners: [],
-        } satisfies StepDefinition,
-      ],
-      transitions: [],
-      listeners: [],
-    };
-    const compiler = moduleRef.get(DefinitionCompiler);
-    const def = compiler.compileFromBuilderConfig(jobConfig);
-    registry.register(def);
+  testIfPostgres(
+    '1. Library + PostgreSQL: 1-step tasklet job runs to COMPLETED and persists execution state',
+    async () => {
+      // Register a trivial 1-step job via the builder API
+      const jobConfig: JobBuilderConfig = {
+        id: 'smoke-tasklet',
+        restartable: false,
+        allowDuplicateInstances: false,
+        startStepId: 'noop',
+        steps: [
+          {
+            kind: 'tasklet',
+            id: 'noop',
+            tasklet: {
+              kind: RefKind.BuilderLambda,
+              fn: () => ({ execute: async () => 'ok' }),
+            },
+            listeners: [],
+          } satisfies StepDefinition,
+        ],
+        transitions: [],
+        listeners: [],
+      };
+      const compiler = moduleRef.get(DefinitionCompiler);
+      const def = compiler.compileFromBuilderConfig(jobConfig);
+      registry.register(def);
 
-    const execution = await launcher.launch('smoke-tasklet', { x: 1 });
-    expect(execution.status).toBe(JobStatus.COMPLETED);
+      const execution = await launcher.launch('smoke-tasklet', { x: 1 });
+      expect(execution.status).toBe(JobStatus.COMPLETED);
 
-    // Verify persistence: 1 JobInstance + 1 JobExecution + 1 StepExecution in DB
-    const instanceCount = await em.count(JobInstanceEntity, {});
-    const execCount = await em.count(JobExecutionEntity, {});
-    const stepCount = await em.count(StepExecutionEntity, {});
-    expect(instanceCount).toBe(1);
-    expect(execCount).toBe(1);
-    expect(stepCount).toBe(1);
+      // Verify persistence: 1 JobInstance + 1 JobExecution + 1 StepExecution in DB
+      const instanceCount = await em.count(JobInstanceEntity, {});
+      const execCount = await em.count(JobExecutionEntity, {});
+      const stepCount = await em.count(StepExecutionEntity, {});
+      expect(instanceCount).toBe(1);
+      expect(execCount).toBe(1);
+      expect(stepCount).toBe(1);
 
-    // Step execution should be COMPLETED
-    const steps = await em.find(StepExecutionEntity, {});
-    expect(steps[0]?.status).toBe(StepStatus.COMPLETED);
-  }, 15000);
+      // Step execution should be COMPLETED
+      const steps = await em.find(StepExecutionEntity, {});
+      expect(steps[0]?.status).toBe(StepStatus.COMPLETED);
+    },
+    15000,
+  );
 });

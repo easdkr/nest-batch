@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const coreSource = resolve(__dirname, '../core/src/index.ts');
 // The shared contract suite is shipped as CommonJS from the core
 // package (`.swcrc` builds with `module: { type: 'commonjs' }`).
 // Its transpiled output does `const _vitest = require("vitest")`,
@@ -14,10 +15,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // (matching `module: { type: 'es6' }` above). The ESM build keeps
 // the `import { describe, test, ... } from 'vitest'` statements as
 // real ESM imports, which vitest can load.
-const coreTestContractsSource = resolve(
-  __dirname,
-  '../core/tests/contracts/index.ts',
-);
+const coreTestContractsSource = resolve(__dirname, '../core/tests/contracts/index.ts');
 
 export default defineConfig({
   plugins: [
@@ -34,6 +32,10 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: '@nest-batch/core',
+        replacement: coreSource,
+      },
+      {
         find: '@nest-batch/core/test-contracts',
         replacement: coreTestContractsSource,
       },
@@ -45,18 +47,9 @@ export default defineConfig({
     fileParallelism: false,
     server: {
       deps: {
-        inline: [
-          '@nestjs/core',
-          '@nestjs/common',
-          '@nestjs/testing',
-          '@nest-batch/core',
-        ],
+        inline: ['@nestjs/core', '@nestjs/common', '@nestjs/testing', '@nest-batch/core'],
       },
     },
-    include: [
-      'tests/**/*.test.ts',
-      'tests/**/*.spec.ts',
-      'src/**/*.spec.ts',
-    ],
+    include: ['tests/**/*.test.ts', 'tests/**/*.spec.ts', 'src/**/*.spec.ts'],
   },
 });

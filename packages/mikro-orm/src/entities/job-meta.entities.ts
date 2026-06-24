@@ -59,38 +59,6 @@ export class JobExecutionEntity {
 }
 
 /**
- * `batch_job_execution_params` metadata row.
- *
- * Composite key (jobExecutionId, paramName). The four value columns
- * are mutually exclusive: exactly one is non-null, dictated by
- * `paramType`. `longValue` is serialized as a string for bigint
- * safety across JavaScript's 53-bit number boundary.
- */
-@Entity({ tableName: 'batch_job_execution_params' })
-export class JobExecutionParamsEntity {
-  @PrimaryKey()
-  jobExecutionId!: string;
-
-  @PrimaryKey()
-  paramName!: string;
-
-  @Property()
-  paramType!: 'STRING' | 'DATE' | 'LONG' | 'DOUBLE';
-
-  @Property({ nullable: true })
-  stringValue?: string;
-
-  @Property({ nullable: true })
-  dateValue?: Date;
-
-  @Property({ nullable: true, type: 'bigint' })
-  longValue?: string; // serialize as string for bigint safety
-
-  @Property({ nullable: true, type: 'double' })
-  doubleValue?: number;
-}
-
-/**
  * `batch_step_execution` metadata row.
  *
  * One row per step run. Counter columns default to 0 so the entity
@@ -132,6 +100,9 @@ export class StepExecutionEntity {
 
   @Property({ default: '' })
   exitMessage!: string;
+
+  @Property()
+  createdAt: Date = new Date();
 }
 
 /**
@@ -174,7 +145,7 @@ export class StepExecutionContextEntity {
 }
 
 /**
- * The list of batch meta-entities owned by `@nest-batch/mikro-orm`.
+ * The 5 active batch meta-entities owned by `@nest-batch/mikro-orm`.
  *
  * Apps that already configure `MikroOrmModule.forRoot()` with their
  * own user-domain entities should spread this list into their
@@ -190,17 +161,14 @@ export class StepExecutionContextEntity {
  *     // ...
  *   })
  *
- * The driver sibling packages (`@nest-batch/postgresql` /
- * `@nest-batch/mysql`) re-use these entity classes — the decorators
- * on the entity classes are from `@mikro-orm/core` and are
- * driver-agnostic, so the same class can be registered against a
- * `PostgreSqlDriver` or a `MySqlDriver`. Only the underlying
- * `EntityManager` differs; that's the slot pattern's job.
+ * The tuple intentionally omits the removed
+ * `batch_job_execution_params` table. Job parameters are stored as a
+ * serialized snapshot on `batch_job_execution.params`, matching the
+ * active Postgres/MySQL DDL shipped by the driver sibling packages.
  */
 export const BATCH_META_ENTITIES = [
   JobInstanceEntity,
   JobExecutionEntity,
-  JobExecutionParamsEntity,
   StepExecutionEntity,
   JobExecutionContextEntity,
   StepExecutionContextEntity,

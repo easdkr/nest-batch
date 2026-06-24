@@ -39,8 +39,8 @@ import {
   StepExecutionEntity,
   JobExecutionContextEntity,
   StepExecutionContextEntity,
-} from '@nest-batch/postgresql';
-import { MikroORMJobRepository } from '@nest-batch/mikro-orm';
+  MikroORMJobRepository,
+} from '@nest-batch/mikro-orm';
 
 // ---------------------------------------------------------------------------
 // Test configuration
@@ -58,7 +58,6 @@ const TRUNCATE_SQL = `
   TRUNCATE TABLE batch_step_execution_context,
                batch_job_execution_context,
                batch_step_execution,
-               batch_job_execution_params,
                batch_job_execution,
                batch_job_instance
   RESTART IDENTITY CASCADE
@@ -175,144 +174,126 @@ describe('MikroORMJobRepository.findLatestStepExecution (Task 6 — RED)', () =>
   // -------------------------------------------------------------------------
   // RED 1: latest matching step wins
   // -------------------------------------------------------------------------
-  test(
-    'RED: returns the latest StepExecution row for the given (jobExecutionId, stepName) when multiple exist',
-    async (ctx) => {
-      if (!pgReachable) {
-        console.warn(`[Task 6 RED] SKIP (no PG): ${skipReason}`);
-        return ctx.skip();
-      }
-      em = orm!.em.fork() as unknown as SqlEntityManager;
-      await em.execute(TRUNCATE_SQL);
+  test('RED: returns the latest StepExecution row for the given (jobExecutionId, stepName) when multiple exist', async (ctx) => {
+    if (!pgReachable) {
+      console.warn(`[Task 6 RED] SKIP (no PG): ${skipReason}`);
+      return ctx.skip();
+    }
+    em = orm!.em.fork() as unknown as SqlEntityManager;
+    await em.execute(TRUNCATE_SQL);
 
-      const repo = new MikroORMJobRepository(em);
-      const { jobExecutionId } = await seedJobExecution(
-        em,
-        'checkpoint-test',
-        `k-latest-${randomUUID()}`,
-      );
+    const repo = new MikroORMJobRepository(em);
+    const { jobExecutionId } = await seedJobExecution(
+      em,
+      'checkpoint-test',
+      `k-latest-${randomUUID()}`,
+    );
 
-      // Two rows, same (jobExecutionId, stepName), different
-      // insertion order. Production must return the second one
-      // (the "latest"). The stub returns null which is wrong
-      // → RED.
-      const olderId = await seedStepExecution(
-        em,
-        jobExecutionId,
-        'import-products',
-        StepStatus.FAILED,
-        10,
-      );
-      const newerId = await seedStepExecution(
-        em,
-        jobExecutionId,
-        'import-products',
-        StepStatus.COMPLETED,
-        20,
-      );
+    // Two rows, same (jobExecutionId, stepName), different
+    // insertion order. Production must return the second one
+    // (the "latest"). The stub returns null which is wrong
+    // → RED.
+    const olderId = await seedStepExecution(
+      em,
+      jobExecutionId,
+      'import-products',
+      StepStatus.FAILED,
+      10,
+    );
+    const newerId = await seedStepExecution(
+      em,
+      jobExecutionId,
+      'import-products',
+      StepStatus.COMPLETED,
+      20,
+    );
 
-      const latest = await repo.findLatestStepExecution(
-        jobExecutionId,
-        'import-products',
-      );
+    const latest = await repo.findLatestStepExecution(jobExecutionId, 'import-products');
 
-      expect(latest).not.toBeNull();
-      expect(latest!.id).toBe(newerId);
-      expect(latest!.id).not.toBe(olderId);
-      expect(latest!.status).toBe(StepStatus.COMPLETED);
-      expect(latest!.readCount).toBe(20);
-    },
-  );
+    expect(latest).not.toBeNull();
+    expect(latest!.id).toBe(newerId);
+    expect(latest!.id).not.toBe(olderId);
+    expect(latest!.status).toBe(StepStatus.COMPLETED);
+    expect(latest!.readCount).toBe(20);
+  });
 
   // -------------------------------------------------------------------------
   // Negative contract: no matching step → null
   // -------------------------------------------------------------------------
-  test(
-    'Negative contract: returns null when no StepExecution exists for the given (jobExecutionId, stepName)',
-    async (ctx) => {
-      if (!pgReachable) {
-        console.warn(`[Task 6 RED] SKIP (no PG): ${skipReason}`);
-        return ctx.skip();
-      }
-      em = orm!.em.fork() as unknown as SqlEntityManager;
-      await em.execute(TRUNCATE_SQL);
+  test('Negative contract: returns null when no StepExecution exists for the given (jobExecutionId, stepName)', async (ctx) => {
+    if (!pgReachable) {
+      console.warn(`[Task 6 RED] SKIP (no PG): ${skipReason}`);
+      return ctx.skip();
+    }
+    em = orm!.em.fork() as unknown as SqlEntityManager;
+    await em.execute(TRUNCATE_SQL);
 
-      const repo = new MikroORMJobRepository(em);
-      const { jobExecutionId } = await seedJobExecution(
-        em,
-        'checkpoint-test',
-        `k-nil-${randomUUID()}`,
-      );
+    const repo = new MikroORMJobRepository(em);
+    const { jobExecutionId } = await seedJobExecution(
+      em,
+      'checkpoint-test',
+      `k-nil-${randomUUID()}`,
+    );
 
-      // Insert a step with a DIFFERENT step name so the lookup for
-      // 'import-products' finds nothing. The stub returns null
-      // which happens to match the contract here — this case is a
-      // guard against the GREEN implementation accidentally
-      // returning a foreign row.
-      await seedStepExecution(em, jobExecutionId, 'validate-csv');
+    // Insert a step with a DIFFERENT step name so the lookup for
+    // 'import-products' finds nothing. The stub returns null
+    // which happens to match the contract here — this case is a
+    // guard against the GREEN implementation accidentally
+    // returning a foreign row.
+    await seedStepExecution(em, jobExecutionId, 'validate-csv');
 
-      const result = await repo.findLatestStepExecution(
-        jobExecutionId,
-        'import-products',
-      );
+    const result = await repo.findLatestStepExecution(jobExecutionId, 'import-products');
 
-      expect(result).toBeNull();
-    },
-  );
+    expect(result).toBeNull();
+  });
 
   // -------------------------------------------------------------------------
   // RED 2: previous failed execution is ignored
   // -------------------------------------------------------------------------
-  test(
-    "RED: only considers steps from the given jobExecutionId — a prior failed execution's step row is NOT picked up",
-    async (ctx) => {
-      if (!pgReachable) {
-        console.warn(`[Task 6 RED] SKIP (no PG): ${skipReason}`);
-        return ctx.skip();
-      }
-      em = orm!.em.fork() as unknown as SqlEntityManager;
-      await em.execute(TRUNCATE_SQL);
+  test("RED: only considers steps from the given jobExecutionId — a prior failed execution's step row is NOT picked up", async (ctx) => {
+    if (!pgReachable) {
+      console.warn(`[Task 6 RED] SKIP (no PG): ${skipReason}`);
+      return ctx.skip();
+    }
+    em = orm!.em.fork() as unknown as SqlEntityManager;
+    await em.execute(TRUNCATE_SQL);
 
-      const repo = new MikroORMJobRepository(em);
-      const { jobExecutionId: currentExecId } = await seedJobExecution(
-        em,
-        'checkpoint-test',
-        `k-current-${randomUUID()}`,
-      );
-      const { jobExecutionId: priorExecId } = await seedJobExecution(
-        em,
-        'checkpoint-test',
-        `k-prior-${randomUUID()}`,
-      );
+    const repo = new MikroORMJobRepository(em);
+    const { jobExecutionId: currentExecId } = await seedJobExecution(
+      em,
+      'checkpoint-test',
+      `k-current-${randomUUID()}`,
+    );
+    const { jobExecutionId: priorExecId } = await seedJobExecution(
+      em,
+      'checkpoint-test',
+      `k-prior-${randomUUID()}`,
+    );
 
-      // The "prior" execution had a FAILED 'import-products' step —
-      // the canonical restart scenario.
-      const priorFailedStepId = await seedStepExecution(
-        em,
-        priorExecId,
-        'import-products',
-        StepStatus.FAILED,
-        99,
-      );
-      // The "current" execution has a partial 'import-products'
-      // step (a fresh restart).
-      const currentStepId = await seedStepExecution(
-        em,
-        currentExecId,
-        'import-products',
-        StepStatus.STARTED,
-        5,
-      );
+    // The "prior" execution had a FAILED 'import-products' step —
+    // the canonical restart scenario.
+    const priorFailedStepId = await seedStepExecution(
+      em,
+      priorExecId,
+      'import-products',
+      StepStatus.FAILED,
+      99,
+    );
+    // The "current" execution has a partial 'import-products'
+    // step (a fresh restart).
+    const currentStepId = await seedStepExecution(
+      em,
+      currentExecId,
+      'import-products',
+      StepStatus.STARTED,
+      5,
+    );
 
-      const latest = await repo.findLatestStepExecution(
-        currentExecId,
-        'import-products',
-      );
+    const latest = await repo.findLatestStepExecution(currentExecId, 'import-products');
 
-      expect(latest).not.toBeNull();
-      expect(latest!.id).toBe(currentStepId);
-      expect(latest!.id).not.toBe(priorFailedStepId);
-      expect(latest!.jobExecutionId).toBe(currentExecId);
-    },
-  );
+    expect(latest).not.toBeNull();
+    expect(latest!.id).toBe(currentStepId);
+    expect(latest!.id).not.toBe(priorFailedStepId);
+    expect(latest!.jobExecutionId).toBe(currentExecId);
+  });
 });

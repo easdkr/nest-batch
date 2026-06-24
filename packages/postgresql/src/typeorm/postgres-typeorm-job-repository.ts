@@ -99,7 +99,11 @@ function mapJobExecution(r: JobExecutionRow): JobExecution {
     id: r.id,
     jobInstanceId: r.job_instance_id,
     status: r.status as JobStatus,
-    startTime: r.start_time ? (r.start_time instanceof Date ? r.start_time : new Date(r.start_time)) : null,
+    startTime: r.start_time
+      ? r.start_time instanceof Date
+        ? r.start_time
+        : new Date(r.start_time)
+      : null,
     endTime: r.end_time ? (r.end_time instanceof Date ? r.end_time : new Date(r.end_time)) : null,
     exitCode: r.exit_code,
     exitMessage: r.exit_message,
@@ -129,7 +133,7 @@ function mapStepExecution(r: StepExecutionRow): StepExecution {
  * Postgres-flavored `JobRepository` for the `@nest-batch/typeorm` slot.
  *
  * Mirrors the (refactored) `TypeOrmJobRepository` shape exactly:
- * raw SQL through `em.query(...)` against the 6-table Postgres meta
+ * raw SQL through `em.query(...)` against the 5-table Postgres meta
  * schema. Postgres 9.5+ supports `SELECT ... FOR UPDATE SKIP LOCKED`
  * natively. The repository is the durable source of truth for
  * execution state — see README §"DB-first semantics".
@@ -217,9 +221,7 @@ export class PostgresTypeOrmJobRepository extends JobRepository {
     return rows.length > 0 ? mapJobInstance(rows[0]!) : null;
   }
 
-  override async findJobInstances(
-    filter: JobInstanceFilter = {},
-  ): Promise<JobInstance[]> {
+  override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filter.jobName !== undefined) {
@@ -241,10 +243,7 @@ export class PostgresTypeOrmJobRepository extends JobRepository {
     return rows.map(mapJobInstance);
   }
 
-  async createJobExecution(
-    jobInstanceId: string,
-    params: JobParameters,
-  ): Promise<JobExecution> {
+  async createJobExecution(jobInstanceId: string, params: JobParameters): Promise<JobExecution> {
     const id = randomUUID();
     await this.em().query(
       `INSERT INTO "batch_job_execution"
@@ -371,9 +370,7 @@ export class PostgresTypeOrmJobRepository extends JobRepository {
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
-  override async findJobExecutions(
-    filter: JobExecutionFilter = {},
-  ): Promise<JobExecution[]> {
+  override async findJobExecutions(filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filter.jobInstanceId !== undefined) {
@@ -420,10 +417,7 @@ export class PostgresTypeOrmJobRepository extends JobRepository {
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
-  async createStepExecution(
-    jobExecutionId: string,
-    stepName: string,
-  ): Promise<StepExecution> {
+  async createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution> {
     const id = randomUUID();
     await this.em().query(
       `INSERT INTO "batch_step_execution"
@@ -448,10 +442,7 @@ export class PostgresTypeOrmJobRepository extends JobRepository {
     return mapStepExecution(rows[0]!);
   }
 
-  async updateStepExecution(
-    stepExecutionId: string,
-    patch: StepExecutionPatch,
-  ): Promise<void> {
+  async updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void> {
     const sets: string[] = [];
     const params: unknown[] = [];
     if (patch.status !== undefined) {

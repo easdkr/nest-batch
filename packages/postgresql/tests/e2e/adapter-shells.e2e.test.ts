@@ -18,7 +18,7 @@
 //      `POSTGRES_E2E_DATABASE_URL` is present, the harness uses
 //      that external database; otherwise it starts a
 //      `PostgreSqlContainer`.
-//   2. Applies the 6-table batch meta-schema DDL from
+//   2. Applies the 5-table batch meta-schema DDL from
 //      `packages/postgresql/migrations/0001-create-batch-meta.sql`
 //      ONCE against the live database (the file lists `CREATE INDEX`
 //      statements interleaved with their target tables, so we
@@ -73,13 +73,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { PrismaClient } from '@prisma/client';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  it,
-} from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   PostgreSqlDriver,
@@ -89,25 +83,9 @@ import { MikroORM } from '@mikro-orm/core';
 import { DataSource } from 'typeorm';
 
 import { runJobRepositoryContract } from '../../../core/tests/contracts/job-repository.contract';
-// The slot's `MikroORMJobRepository` (re-exported as
-// `PostgresMikroOrmJobRepository`) instantiates the slot's
-// `JobExecutionEntity` / `StepExecutionEntity` / etc. classes (via
-// `new JobExecutionEntity()` etc.). Those entity class identities
-// are the slot's, not the postgresql package's (the postgresql
-// package keeps its own copies of the same `@Entity({ tableName:
-// 'batch_job_instance' })` classes for its own
-// `job-meta-entities.postgres.ts` consumer surface, but the slot's
-// repo strictly uses the slot's classes). The F4 refactor moved
-// the slot's `BATCH_META_ENTITIES` out of the slot's barrel
-// (`packages/mikro-orm/src/index.ts` no longer re-exports it),
-// so we import the slot's `BATCH_META_ENTITIES` directly from its
-// source file. The TypeORM and Drizzle / Prisma shells do NOT
-// have this concern (they use raw SQL or the typed Drizzle schema
-// respectively, not the MikroORM entity classes).
-import { BATCH_META_ENTITIES as SLOT_BATCH_META_ENTITIES } from '../../../mikro-orm/src/entities/job-meta.entities';
+import { BATCH_META_ENTITIES } from '@nest-batch/mikro-orm';
 
 import {
-  BATCH_META_ENTITIES,
   PostgresMikroOrmJobRepository,
   PostgresMikroOrmTransactionManager,
   PostgresMikroOrmBatchModule,
@@ -133,24 +111,12 @@ const describeE2E = E2E_ENABLED ? describe : describe.skip;
 // is read from the filesystem (not bundled into the test source)
 // so a schema change to the migration only requires re-running
 // the e2e — no test source update.
-const MIGRATION_PATH = resolve(
-  __dirname,
-  '..',
-  '..',
-  'migrations',
-  '0001-create-batch-meta.sql',
-);
+const MIGRATION_PATH = resolve(__dirname, '..', '..', 'migrations', '0001-create-batch-meta.sql');
 
 // The Prisma schema bundled with the postgresql package. The
 // Prisma shell applies it via `prisma db push` against the live
 // database before the Prisma shell's describe block runs.
-const PRISMA_SCHEMA_PATH = resolve(
-  __dirname,
-  '..',
-  '..',
-  'prisma',
-  'schema.prisma',
-);
+const PRISMA_SCHEMA_PATH = resolve(__dirname, '..', '..', 'prisma', 'schema.prisma');
 
 interface PostgresConnectionDetails {
   readonly host: string;
@@ -160,9 +126,7 @@ interface PostgresConnectionDetails {
   readonly password: string;
 }
 
-function parsePostgresConnectionString(
-  connectionString: string,
-): PostgresConnectionDetails {
+function parsePostgresConnectionString(connectionString: string): PostgresConnectionDetails {
   const url = new URL(connectionString);
   const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
   if (!database) {
@@ -193,7 +157,7 @@ describeE2E(
       if (!existsSync(MIGRATION_PATH)) {
         throw new Error(
           `Postgres migration not found at ${MIGRATION_PATH}. ` +
-            'The e2e harness requires the 6-table batch meta ' +
+            'The e2e harness requires the 5-table batch meta ' +
             'migration at ' +
             '`packages/postgresql/migrations/0001-create-batch-meta.sql`.',
         );
@@ -212,7 +176,7 @@ describeE2E(
       }
       connection = parsePostgresConnectionString(dbUrl);
 
-      // The 6-table migration file lists `CREATE INDEX` statements
+      // The 5-table migration file lists `CREATE INDEX` statements
       // interleaved with their target `CREATE TABLE` blocks. Postgres
       // rejects index creation when the target table does not exist
       // yet, so we split the file into individual statements, run
@@ -225,12 +189,8 @@ describeE2E(
         .split(/;\s*(?=\n|$)/)
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
-      const tableStatements = rawStatements.filter((s) =>
-        /CREATE\s+TABLE\b/i.test(s),
-      );
-      const indexStatements = rawStatements.filter(
-        (s) => /CREATE\s+INDEX\b/i.test(s),
-      );
+      const tableStatements = rawStatements.filter((s) => /CREATE\s+TABLE\b/i.test(s));
+      const indexStatements = rawStatements.filter((s) => /CREATE\s+INDEX\b/i.test(s));
       const ordered = [...tableStatements, ...indexStatements];
 
       pool = new Pool({ connectionString: dbUrl });
@@ -250,14 +210,7 @@ describeE2E(
       if (existsSync(PRISMA_SCHEMA_PATH)) {
         execFileSync(
           'pnpm',
-          [
-            'prisma',
-            'db',
-            'push',
-            '--schema',
-            PRISMA_SCHEMA_PATH,
-            '--skip-generate',
-          ],
+          ['prisma', 'db', 'push', '--schema', PRISMA_SCHEMA_PATH, '--skip-generate'],
           {
             cwd: resolve(__dirname, '..', '..'),
             env: { ...process.env, DATABASE_URL: dbUrl },
@@ -314,13 +267,13 @@ describeE2E(
         // in its constructor. We construct the host's `MikroORM`
         // connection manually (`@nestjs/mikro-orm` is not a devDep
         // here; the postgresql package only declares the raw
-        // `@mikro-orm/postgresql` driver as a peer), pass the 6
+        // `@mikro-orm/postgresql` driver as a peer), pass the 5
         // batch meta entities, and bind the postgresql shell's
         // `PostgresMikroOrmBatchModule` carrier into a test Nest
         // module. The `useValue` providers below take the host's
         // `EntityManager` constructed just above.
         orm = await MikroORM.init({
-          entities: [...SLOT_BATCH_META_ENTITIES],
+          entities: [...BATCH_META_ENTITIES],
           driver: PostgreSqlDriver,
           dbName: connection.database,
           host: connection.host,
@@ -398,7 +351,7 @@ describeE2E(
           username: connection.user,
           password: connection.password,
           database: connection.database,
-          entities: [...BATCH_META_ENTITIES],
+          entities: [],
           synchronize: false,
           migrationsRun: false,
         });
