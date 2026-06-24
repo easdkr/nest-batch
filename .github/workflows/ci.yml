@@ -68,6 +68,9 @@ jobs:
       - name: Rebuild native modules
         run: pnpm rebuild better-sqlite3
 
+      - name: Generate Prisma Client
+        run: pnpm --filter @nest-batch/postgresql exec prisma generate --schema prisma/schema.prisma
+
       - name: Build
         run: pnpm build
 
@@ -142,6 +145,9 @@ jobs:
 
       - name: Rebuild native modules
         run: pnpm rebuild better-sqlite3
+
+      - name: Generate Prisma Client
+        run: pnpm --filter @nest-batch/postgresql exec prisma generate --schema prisma/schema.prisma
 
       - name: Build
         run: pnpm build

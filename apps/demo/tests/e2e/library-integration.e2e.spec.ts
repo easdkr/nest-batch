@@ -60,6 +60,17 @@ const PG_CONFIG = {
   dbName: process.env.DATABASE_NAME ?? 'nest_batch_demo',
 };
 
+function formatPostgresError(err: unknown): string {
+  if (err instanceof AggregateError && err.errors.length > 0) {
+    return err.errors
+      .map((e) => (e instanceof Error ? e.message : String(e)))
+      .join(' | ');
+  }
+  return err instanceof Error
+    ? err.message || err.stack?.split('\n')[0] || err.toString()
+    : String(err);
+}
+
 /**
  * Build a stub transport `BatchAdapter` for the e2e tests.
  *
@@ -104,18 +115,48 @@ function buildTestTransportAdapter(): BatchAdapter {
 }
 
 describe('Task 48 — Library × PostgreSQL integration (live DB)', () => {
-  let orm: MikroORM;
+  let orm: MikroORM | null = null;
+  let pgReachable = false;
+  let skipReason = '';
   let em: EntityManager;
   let moduleRef: TestingModule;
   let launcher: JobLauncher;
   let registry: JobRegistry;
 
+  function testIfPostgres(
+    name: string,
+    fn: () => Promise<void> | void,
+    timeout?: number,
+  ): void {
+    test(
+      name,
+      async (ctx) => {
+        if (!pgReachable) {
+          console.warn(`[Library PostgreSQL E2E] SKIP (no PG): ${skipReason}`);
+          return ctx.skip();
+        }
+        await fn();
+      },
+      timeout,
+    );
+  }
+
   beforeAll(async () => {
-    orm = await MikroORM.init({
-      driver: PostgreSqlDriver,
-      ...PG_CONFIG,
-      entities: [...BATCH_META_ENTITIES, ProductEntity],
-    });
+    try {
+      orm = await MikroORM.init({
+        driver: PostgreSqlDriver,
+        ...PG_CONFIG,
+        entities: [...BATCH_META_ENTITIES, ProductEntity],
+      });
+      pgReachable = true;
+    } catch (err) {
+      skipReason = formatPostgresError(err);
+      console.warn(
+        `[Library PostgreSQL E2E] PostgreSQL test DB unreachable on ` +
+          `${PG_CONFIG.host}:${PG_CONFIG.port} (db=${PG_CONFIG.dbName}) — ` +
+          `skipping live DB tests. Reason: ${skipReason}`,
+      );
+    }
   });
 
   afterAll(async () => {
@@ -123,6 +164,8 @@ describe('Task 48 — Library × PostgreSQL integration (live DB)', () => {
   });
 
   beforeEach(async () => {
+    if (!pgReachable || !orm) return;
+
     // The forked EM is bound to the PostgreSqlDriver, so the runtime
     // value IS a SqlEntityManager — we cast at the test boundary.
     const forkedEm = orm.em.fork() as unknown as SqlEntityManager;
@@ -171,7 +214,7 @@ describe('Task 48 — Library × PostgreSQL integration (live DB)', () => {
     em = forkedEm;
   });
 
-  test('1. Library + PostgreSQL: 1-step tasklet job runs to COMPLETED and persists execution state', async () => {
+  testIfPostgres('1. Library + PostgreSQL: 1-step tasklet job runs to COMPLETED and persists execution state', async () => {
     // Register a trivial 1-step job via the builder API
     const jobConfig: JobBuilderConfig = {
       id: 'smoke-tasklet',
