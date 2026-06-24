@@ -119,6 +119,7 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     registry.register({
       jobId: 'flush-cache',
       methodName: 'run',
+      scheduleName: 'run',
       cron: '*/5 * * * *',
       timezone: 'UTC',
       overlap: 'skip',
@@ -131,11 +132,12 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     expect(entry!.timezone).toBe('UTC');
   });
 
-  it('get() returns undefined for a missing (jobId, methodName) pair', () => {
+  it('get() returns undefined for a missing (jobId, scheduleName) pair', () => {
     expect(registry.get('does-not-exist', 'run')).toBeUndefined();
     registry.register({
       jobId: 'flush-cache',
       methodName: 'run',
+      scheduleName: 'run',
       cron: '* * * * *',
       timezone: 'UTC',
       inert: false,
@@ -143,11 +145,12 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     expect(registry.get('flush-cache', 'unknown')).toBeUndefined();
   });
 
-  it('has() returns true only when a (jobId, methodName) entry exists', () => {
+  it('has() returns true only when a (jobId, scheduleName) entry exists', () => {
     expect(registry.has('flush-cache', 'run')).toBe(false);
     registry.register({
       jobId: 'flush-cache',
       methodName: 'run',
+      scheduleName: 'run',
       cron: '* * * * *',
       timezone: 'UTC',
       inert: false,
@@ -156,10 +159,11 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     expect(registry.has('flush-cache', 'other')).toBe(false);
   });
 
-  it('register() rejects duplicate (jobId, methodName) registration deterministically', () => {
+  it('register() rejects duplicate (jobId, scheduleName) registration deterministically', () => {
     registry.register({
       jobId: 'j',
       methodName: 'run',
+      scheduleName: 'run',
       cron: '* * * * *',
       timezone: 'UTC',
       inert: false,
@@ -168,6 +172,7 @@ describe('BatchScheduleRegistry (Task 12)', () => {
       registry.register({
         jobId: 'j',
         methodName: 'run',
+        scheduleName: 'run',
         cron: '0 0 * * *',
         timezone: 'UTC',
         inert: false,
@@ -179,6 +184,7 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     registry.register({
       jobId: 'j1',
       methodName: 'run',
+      scheduleName: 'run',
       cron: '* * * * *',
       timezone: 'UTC',
       inert: false,
@@ -186,6 +192,7 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     registry.register({
       jobId: 'j2',
       methodName: 'run',
+      scheduleName: 'run',
       cron: '0 0 * * *',
       timezone: 'UTC',
       inert: false,
@@ -197,6 +204,7 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     registry.register({
       jobId: 'j',
       methodName: 'first',
+      scheduleName: 'first',
       cron: '* * * * *',
       timezone: 'UTC',
       inert: false,
@@ -204,6 +212,7 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     registry.register({
       jobId: 'j',
       methodName: 'second',
+      scheduleName: 'second',
       cron: '0 0 * * *',
       timezone: 'UTC',
       inert: false,
@@ -217,6 +226,7 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     registry.register({
       jobId: 'a',
       methodName: 'run',
+      scheduleName: 'run',
       cron: '* * * * *',
       timezone: 'UTC',
       inert: false,
@@ -224,6 +234,7 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     registry.register({
       jobId: 'b',
       methodName: 'run',
+      scheduleName: 'run',
       cron: '0 0 * * *',
       timezone: 'Asia/Seoul',
       overlap: 'queue',
@@ -242,6 +253,7 @@ describe('BatchScheduleRegistry (Task 12)', () => {
     registry.register({
       jobId: 'j',
       methodName: 'run',
+      scheduleName: 'run',
       cron: '* * * * *',
       timezone: 'UTC',
       inert: false,
@@ -333,8 +345,10 @@ describe('BatchExplorer populates BatchScheduleRegistry from @BatchScheduled met
     await moduleRef.init();
     const registry = moduleRef.get<BatchScheduleRegistry>(BATCH_SCHEDULE_REGISTRY);
     expect(registry.size()).toBe(1);
-    const entry = registry.get('flush-cache', 'run');
+    const entry = registry.get('flush-cache', 'flush-cache');
     expect(entry).toBeDefined();
+    expect(entry!.scheduleName).toBe('flush-cache');
+    expect(entry!.methodName).toBe('run');
     expect(entry!.cron).toBe('*/5 * * * *');
     expect(entry!.timezone).toBe('UTC');
     expect(entry!.inert).toBe(false);
@@ -366,8 +380,8 @@ describe('BatchExplorer populates BatchScheduleRegistry from @BatchScheduled met
     await moduleRef.init();
     const registry = moduleRef.get<BatchScheduleRegistry>(BATCH_SCHEDULE_REGISTRY);
     expect(registry.size()).toBe(2);
-    expect(registry.has('multi', 'first')).toBe(true);
-    expect(registry.has('multi', 'second')).toBe(true);
+    expect(registry.has('multi', 'multi-1')).toBe(true);
+    expect(registry.has('multi', 'multi-2')).toBe(true);
 
     await moduleRef.close();
   });
@@ -419,7 +433,7 @@ describe('BatchExplorer populates BatchScheduleRegistry from @BatchScheduled met
 
       await moduleRef.init();
       const registry = moduleRef.get<BatchScheduleRegistry>(BATCH_SCHEDULE_REGISTRY);
-      const entry = registry.get('inert-job', 'run');
+      const entry = registry.get('inert-job', 'inert-job');
       expect(entry).toBeDefined();
       expect(entry!.inert).toBe(true);
 

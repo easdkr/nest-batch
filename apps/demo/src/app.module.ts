@@ -9,9 +9,6 @@ import { AppConfigModule } from './config/config.module';
 import { BatchController } from './controller/batch.controller';
 import { ProductEntity } from './entities/product.entity';
 import { ImportProductsJob } from './jobs/import-products/import-products.job';
-import { ImportProductsJobRegistrar } from './jobs/import-products/import-products.registrar';
-import { SkipLoggerListener } from './jobs/import-products/listeners/skip-logger.listener';
-import { StepMetricsListener } from './jobs/import-products/listeners/step-metrics.listener';
 import { ProductProcessor } from './jobs/import-products/processor/product.processor';
 import { ProductWriter } from './jobs/import-products/writer/product.writer';
 
@@ -47,13 +44,6 @@ import { ProductWriter } from './jobs/import-products/writer/product.writer';
     }),
   ],
   controllers: [BatchController],
-  providers: [
-    ProductProcessor,
-    ProductWriter,
-    ImportProductsJob,
-    SkipLoggerListener,
-    StepMetricsListener,
-    ImportProductsJobRegistrar,
-  ],
+  providers: [ProductProcessor, ProductWriter, ImportProductsJob],
 })
 export class AppModule {}

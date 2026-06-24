@@ -13,6 +13,7 @@ import {
   type TransactionContext,
   TransactionManager,
 } from '../../src/core/transaction/transaction-manager';
+import type { JobParameters } from '../../src/core/repository';
 
 /**
  * Build a minimal TaskletExecutionContext wired up with the in-memory
@@ -21,10 +22,14 @@ import {
  */
 function makeContext(overrides: {
   listeners?: Map<string, ListenerResolver>;
+  jobParameters?: JobParameters;
   transactionManager?: TransactionManager;
 }): TaskletExecutionContext {
   return {
     jobExecutionId: 'job-exec-1',
+    stepExecutionId: 'step-exec-1',
+    stepName: 'tasklet-step-1',
+    ...(overrides.jobParameters ? { jobParameters: overrides.jobParameters } : {}),
     jobRepository: new InMemoryJobRepository(),
     transactionManager: overrides.transactionManager ?? new InMemoryTransactionManager(),
     listenerInvoker: new ListenerInvoker(),
@@ -58,6 +63,28 @@ describe('TaskletStepExecutor', () => {
     expect(result.readCount).toBe(0);
     expect(result.writeCount).toBe(0);
     expect(result.skipCount).toBe(0);
+  });
+
+  test('tasklet receives TaskletContext with launch jobParameters', async () => {
+    const seen: unknown[] = [];
+    const executor = new TaskletStepExecutor();
+    const step = makeTaskletStep((ctx) => {
+      seen.push(ctx);
+      return 'OK';
+    });
+
+    const result = await executor.execute(
+      step,
+      makeContext({ jobParameters: { file: 'launch-param.csv' } }),
+    );
+
+    expect(result.status).toBe(StepStatus.COMPLETED);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      jobExecutionId: 'job-exec-1',
+      stepExecutionId: 'step-exec-1',
+      jobParameters: { file: 'launch-param.csv' },
+    });
   });
 
   test('tasklet that returns undefined → status COMPLETED, exitMessage is empty string', async () => {
@@ -182,10 +209,7 @@ describe('TaskletStepExecutor', () => {
     const executor = new TaskletStepExecutor();
     const step = makeTaskletStep(async () => 'IN_TX');
 
-    const result = await executor.execute(
-      step,
-      makeContext({ transactionManager: tm }),
-    );
+    const result = await executor.execute(step, makeContext({ transactionManager: tm }));
 
     expect(tm.calls).toHaveLength(1);
     // The fn passed to withTransaction was invoked exactly once.
@@ -205,10 +229,7 @@ describe('TaskletStepExecutor', () => {
       throw boom;
     });
 
-    const result = await executor.execute(
-      step,
-      makeContext({ transactionManager: tm }),
-    );
+    const result = await executor.execute(step, makeContext({ transactionManager: tm }));
 
     expect(tm.calls).toHaveLength(1);
     expect(tm.calls[0]?.invoked).toBe(true);
@@ -229,9 +250,7 @@ describe('TaskletStepExecutor', () => {
     const result = await executor.execute(step, makeContext({}));
 
     expect(result.status).toBe(StepStatus.FAILED);
-    expect(result.exitMessage).toMatch(
-      /Tasklet resolution not supported for ref kind: method/,
-    );
+    expect(result.exitMessage).toMatch(/Tasklet resolution not supported for ref kind: method/);
   });
 
   test('executor returns synchronously resolvable (non-Promise) tasklet results', async () => {

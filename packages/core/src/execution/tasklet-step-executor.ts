@@ -7,6 +7,7 @@ import type {
   ExecutionContext,
   StepExecution,
   ExecutionScope,
+  JobParameters,
 } from '../core/repository';
 import type { TransactionManager } from '../core/transaction';
 import { StepStatus, JobStatus } from '../core/status';
@@ -19,6 +20,9 @@ import { resolveProviderToken, type ProviderResolvers } from './ref-resolver';
  */
 export interface TaskletExecutionContext {
   jobExecutionId: string;
+  stepExecutionId?: string;
+  stepName?: string;
+  jobParameters?: JobParameters;
   jobRepository: JobRepository;
   transactionManager: TransactionManager;
   listenerInvoker: ListenerInvoker;
@@ -76,26 +80,26 @@ export class TaskletStepExecutor {
   ): Promise<StepExecutionResult> {
     // Build the TaskletContext the tasklet will see.
     //
-    // `stepExecutionId` is a placeholder here — the JobExecutor knows the real
-    // ID (it created the StepExecution) and will patch this object before the
-    // tasklet uses it. The placeholder keeps the contract explicit.
-    //
-    // `getExecutionContext` / `saveExecutionContext` are also stubbed here;
-    // they become real once the JobExecutor wires the stepExecutionId in.
-    // (For Wave 3 tests we do not exercise these methods.)
+    const stepExecutionId = context.stepExecutionId ?? '<pending>';
+    const stepName = context.stepName ?? step.id;
+    const jobParameters = context.jobParameters ?? {};
     const taskletCtx: TaskletContext = {
       jobExecutionId: context.jobExecutionId,
-      stepExecutionId: '<pending>',
-      getExecutionContext: async () => ({ data: null, version: 0 }),
-      saveExecutionContext: async (_ctx: ExecutionContext) => {
-        // wired by JobExecutor (Task 20) once stepExecutionId is known
+      stepExecutionId,
+      jobParameters,
+      getExecutionContext: async () =>
+        context.jobRepository.getExecutionContext({ stepExecutionId }),
+      saveExecutionContext: async (ctx: ExecutionContext) => {
+        await context.jobRepository.saveExecutionContext({ stepExecutionId }, ctx);
       },
     };
 
     // 1. before-step listeners
     await context.listenerInvoker.invokeBeforeStep(context.listenerResolvers, {
       jobExecutionId: context.jobExecutionId,
-      stepExecutionId: taskletCtx.stepExecutionId,
+      stepExecutionId,
+      stepName,
+      jobParameters,
     });
 
     let result: StepExecutionResult;
@@ -117,7 +121,12 @@ export class TaskletStepExecutor {
       // 3. on-step-error listeners (best-effort: rethrow their failures too)
       await context.listenerInvoker.invokeOnErrorStep(
         context.listenerResolvers,
-        { jobExecutionId: context.jobExecutionId, stepExecutionId: taskletCtx.stepExecutionId },
+        {
+          jobExecutionId: context.jobExecutionId,
+          stepExecutionId,
+          stepName,
+          jobParameters,
+        },
         err,
       );
       result = {
@@ -136,7 +145,12 @@ export class TaskletStepExecutor {
     // different branch — transition evaluation runs AFTER this call.
     await context.listenerInvoker.invokeAfterStep(
       context.listenerResolvers,
-      { jobExecutionId: context.jobExecutionId, stepExecutionId: taskletCtx.stepExecutionId },
+      {
+        jobExecutionId: context.jobExecutionId,
+        stepExecutionId,
+        stepName,
+        jobParameters,
+      },
       result,
     );
 
@@ -156,7 +170,13 @@ export class TaskletStepExecutor {
    * `builder-lambda` ref before reaching this executor.
    */
   private resolveTasklet(
-    taskletRef: { kind: string; token?: string; fn?: ListenerResolver; classToken?: string; methodName?: string },
+    taskletRef: {
+      kind: string;
+      token?: string;
+      fn?: ListenerResolver;
+      classToken?: string;
+      methodName?: string;
+    },
     context: TaskletExecutionContext,
   ): Tasklet {
     if (taskletRef.kind === RefKind.BuilderLambda && taskletRef.fn) {
@@ -164,7 +184,11 @@ export class TaskletStepExecutor {
       if (typeof result === 'function') {
         return { execute: result as Tasklet['execute'] };
       }
-      if (result !== null && typeof result === 'object' && typeof (result as Tasklet).execute === 'function') {
+      if (
+        result !== null &&
+        typeof result === 'object' &&
+        typeof (result as Tasklet).execute === 'function'
+      ) {
         return result as Tasklet;
       }
       return { execute: taskletRef.fn as Tasklet['execute'] };

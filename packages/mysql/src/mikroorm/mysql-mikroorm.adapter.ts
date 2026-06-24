@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
+import { EntityManager } from '@mikro-orm/core';
 
 import {
   JOB_REPOSITORY_TOKEN,
   TRANSACTION_MANAGER_TOKEN,
   type BatchAdapter,
 } from '@nest-batch/core';
+import { MikroOrmDriverProvider } from '@nest-batch/mikro-orm';
 
 import { MysqlMikroOrmJobRepository } from './mysql-mikroorm-job-repository';
 import { MysqlMikroOrmTransactionManager } from './mysql-mikroorm-transaction-manager';
@@ -30,8 +32,9 @@ export class MysqlMikroOrmAdapter {
    * No options are accepted on purpose — the host already owns
    * the `MikroOrmModule.forRoot(...)` call. The adapter only
    * needs to declare its own provider / export / `globalProviders`
-   * surface; the `EntityManager` itself is the host's
-   * responsibility.
+   * surface. The host still owns `MikroOrmModule.forRoot(...)`; this
+   * shell only aliases the host `EntityManager` to the batch driver
+   * token.
    */
   static forRoot(): BatchAdapter {
     return {
@@ -43,6 +46,10 @@ export class MysqlMikroOrmAdapter {
           MysqlMikroOrmJobRepository,
           MysqlMikroOrmTransactionManager,
           {
+            provide: MikroOrmDriverProvider,
+            useExisting: EntityManager,
+          },
+          {
             provide: JOB_REPOSITORY_TOKEN,
             useExisting: MysqlMikroOrmJobRepository,
           },
@@ -51,9 +58,13 @@ export class MysqlMikroOrmAdapter {
             useExisting: MysqlMikroOrmTransactionManager,
           },
         ],
-        exports: [JOB_REPOSITORY_TOKEN, TRANSACTION_MANAGER_TOKEN],
+        exports: [MikroOrmDriverProvider, JOB_REPOSITORY_TOKEN, TRANSACTION_MANAGER_TOKEN],
       },
       globalProviders: [
+        {
+          provide: MikroOrmDriverProvider,
+          useExisting: EntityManager,
+        },
         { provide: JOB_REPOSITORY_TOKEN, useClass: MysqlMikroOrmJobRepository },
         {
           provide: TRANSACTION_MANAGER_TOKEN,

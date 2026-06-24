@@ -34,9 +34,7 @@ import { EXECUTION_STRATEGY } from '../execution/execution-strategy';
  * does NOT ship a default binding because the choice of persistence
  * backend is the host's decision.
  */
-export const JOB_REPOSITORY_TOKEN: symbol = Symbol.for(
-  '@nest-batch/core/JOB_REPOSITORY',
-);
+export const JOB_REPOSITORY_TOKEN: symbol = Symbol.for('@nest-batch/core/JOB_REPOSITORY');
 
 /**
  * Injection token for the `TransactionManager` implementation.
@@ -45,20 +43,17 @@ export const JOB_REPOSITORY_TOKEN: symbol = Symbol.for(
  * `JobRepository` implementation is expected to participate in the same
  * transaction (e.g. share the same `EntityManager` / `DataSource`).
  */
-export const TRANSACTION_MANAGER_TOKEN: symbol = Symbol.for(
-  '@nest-batch/core/TRANSACTION_MANAGER',
-);
+export const TRANSACTION_MANAGER_TOKEN: symbol = Symbol.for('@nest-batch/core/TRANSACTION_MANAGER');
 
 /**
  * Injection token for the `BatchScheduleRegistry` provider.
  *
  * The `BatchExplorer` populates this registry with `@BatchScheduled`
- * metadata it discovers on `@Jobable` classes. The future runtime
- * scheduler (the `@nest-batch/bullmq` cron strategy, or a sibling
- * scheduling package) reads from this registry to install the actual
- * timers. Keeping the registry as a stable token means adapters can
- * inject it (for introspection / health checks) without depending on
- * the explorer's internal state.
+ * metadata it discovers on `@Jobable` classes. Scheduler adapters read
+ * from this registry to install the actual timers or external schedules.
+ * Keeping the registry as a stable token means adapters can inject it
+ * (for introspection / health checks) without depending on the explorer's
+ * internal state.
  */
 export const BATCH_SCHEDULE_REGISTRY: symbol = Symbol.for(
   '@nest-batch/core/BATCH_SCHEDULE_REGISTRY',
@@ -78,9 +73,7 @@ export const BATCH_SCHEDULE_REGISTRY: symbol = Symbol.for(
  * T1 type-contract refactor — hosts that need the options bag should
  * inject `MODULE_OPTIONS_TOKEN` instead.
  */
-export const MODULE_OPTIONS_TOKEN: symbol = Symbol.for(
-  '@nest-batch/core/MODULE_OPTIONS',
-);
+export const MODULE_OPTIONS_TOKEN: symbol = Symbol.for('@nest-batch/core/MODULE_OPTIONS');
 
 /**
  * Polymorphic execution strategy token.

@@ -111,9 +111,11 @@ export class AppModule {}
 already owns the `MikroOrmModule.forRoot()` call; the adapter only
 declares its own provider and export surface. The
 `JOB_REPOSITORY_TOKEN` and `TRANSACTION_MANAGER_TOKEN` bindings are
-registered globally by the adapter, so you do **not** list
-`MikroORMJobRepository` / `MikroORMTransactionManager` in the
-`providers` array — they're already wired.
+registered globally by the adapter, and `MikroOrmDriverProvider` is
+aliased to the host `EntityManager`. You do **not** list
+`MikroORMJobRepository`, `MikroORMTransactionManager`, or a temporary
+`MikroOrmDriverProvider` binding in the `providers` array — they're
+already wired.
 
 `BATCH_META_ENTITIES` is the typed tuple of all 5 active batch meta
 entities. Spread it into your `entities` array once and forget about

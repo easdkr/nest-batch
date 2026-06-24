@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/mysql",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MySQL driver shells for @nest-batch/core. Provides 4 MySQL adapter shells (MikroORM MySQL, TypeORM MySQL, Drizzle MySQL, Prisma MySQL), the 6-table MySQL DDL migration, the bundled MySQL Prisma schema, and the shared test-contracts e2e harness against a real MySQL 8.x testcontainer.",
   "license": "MIT",
   "author": "easdkr",

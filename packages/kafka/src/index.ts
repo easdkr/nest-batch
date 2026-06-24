@@ -14,7 +14,7 @@
  */
 export * from './connection';
 export * from './module-options';
-export * from './kafka-runtime.service';
+export * from './kafka-runtime';
 export * from './kafka-execution-strategy';
-export * from './kafka-schedule.service';
+export * from './kafka-schedule';
 export * from './adapters';

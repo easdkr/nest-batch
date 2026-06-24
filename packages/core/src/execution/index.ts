@@ -11,3 +11,4 @@ export * from './job-key';
 export * from './execution-strategy';
 export * from './ref-resolver';
 export * from './in-process-execution-strategy';
+export * from './in-process-schedule';

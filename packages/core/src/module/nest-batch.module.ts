@@ -27,10 +27,7 @@ import {
 import { FlowEvaluator } from '../flow/flow-evaluator';
 import { BATCH_SCHEDULED_OPTIONS } from '../decorators/constants';
 import type { BatchScheduledMetadata } from '../scheduling/batch-scheduled';
-import {
-  BatchScheduleRegistry,
-  type BatchScheduleEntry,
-} from './batch-schedule-registry';
+import { BatchScheduleRegistry, type BatchScheduleEntry } from './batch-schedule-registry';
 import {
   BATCH_SCHEDULE_REGISTRY,
   JOB_REPOSITORY_TOKEN,
@@ -127,9 +124,7 @@ export interface NestBatchModuleOptions {
  */
 export interface NestBatchModuleAsyncOptions {
   imports?: DynamicModule['imports'];
-  useFactory: (
-    ...args: unknown[]
-  ) => Promise<BatchAdaptersConfig> | BatchAdaptersConfig;
+  useFactory: (...args: unknown[]) => Promise<BatchAdaptersConfig> | BatchAdaptersConfig;
   inject?: readonly unknown[];
 }
 
@@ -167,9 +162,10 @@ const OPTIONS_FACTORY: symbol = Symbol.for('@nest-batch/core/OPTIONS_FACTORY');
  *
  * The bootstrapper also walks every discovered job for
  * `@BatchScheduled` metadata and registers the corresponding entries
- * into the `BatchScheduleRegistry` so the (future) runtime scheduler
- * has a single, stable place to read them from. Today, the registry is
- * metadata-only — no timers are installed.
+ * into the `BatchScheduleRegistry` so scheduler adapters have a single,
+ * stable place to read them from. Core itself remains metadata-only —
+ * runtime adapters install timers and bridge schedule fires into job
+ * launches.
  */
 @Injectable()
 export class BatchBootstrapper implements OnApplicationBootstrap {
@@ -191,9 +187,7 @@ export class BatchBootstrapper implements OnApplicationBootstrap {
         this.registry.register(def);
         this.logger.log(`Registered job "${jobId}"`);
       } catch (err) {
-        this.logger.error(
-          `Failed to register job "${jobId}": ${(err as Error).message}`,
-        );
+        this.logger.error(`Failed to register job "${jobId}": ${(err as Error).message}`);
         throw err;
       }
     }
@@ -211,13 +205,13 @@ export class BatchBootstrapper implements OnApplicationBootstrap {
       for (const name of this.allMethodNames(prototype)) {
         const fn = prototype[name];
         if (typeof fn !== 'function') continue;
-        const meta = Reflect.getMetadata(
-          BATCH_SCHEDULED_OPTIONS,
-          fn,
-        ) as BatchScheduledMetadata | undefined;
+        const meta = Reflect.getMetadata(BATCH_SCHEDULED_OPTIONS, fn) as
+          | BatchScheduledMetadata
+          | undefined;
         if (!meta) continue;
         const entry: BatchScheduleEntry = {
           jobId,
+          scheduleName: meta.options.name,
           methodName: name,
           cron: meta.cron,
           timezone: meta.options.timezone,
@@ -229,11 +223,12 @@ export class BatchBootstrapper implements OnApplicationBootstrap {
         try {
           this.scheduleRegistry.register(entry);
           this.logger.log(
-            `Registered schedule for job "${jobId}"::${name} (cron="${meta.cron}", tz="${meta.options.timezone}")`,
+            `Registered schedule for job "${jobId}"::${meta.options.name} ` +
+              `(method="${name}", cron="${meta.cron}", tz="${meta.options.timezone}")`,
           );
         } catch (err) {
           this.logger.error(
-            `Failed to register schedule for job "${jobId}"::${name}: ${
+            `Failed to register schedule for job "${jobId}"::${meta.options.name}: ${
               (err as Error).message
             }`,
           );
@@ -303,19 +298,13 @@ export class NestBatchModule {
 
     const hasJobRepositoryToken = providers.some(
       (p) =>
-        typeof p === 'object' &&
-        p !== null &&
-        'provide' in p &&
-        p.provide === JOB_REPOSITORY_TOKEN,
+        typeof p === 'object' && p !== null && 'provide' in p && p.provide === JOB_REPOSITORY_TOKEN,
     );
 
     const hasJobRepositoryClass = providers.some(
       (p) =>
         p === JobRepository ||
-        (typeof p === 'object' &&
-          p !== null &&
-          'provide' in p &&
-          p.provide === JobRepository),
+        (typeof p === 'object' && p !== null && 'provide' in p && p.provide === JobRepository),
     );
 
     if (hasJobRepositoryToken && !hasJobRepositoryClass) {
@@ -336,10 +325,7 @@ export class NestBatchModule {
     const hasTransactionManagerClass = providers.some(
       (p) =>
         p === TransactionManager ||
-        (typeof p === 'object' &&
-          p !== null &&
-          'provide' in p &&
-          p.provide === TransactionManager),
+        (typeof p === 'object' && p !== null && 'provide' in p && p.provide === TransactionManager),
     );
 
     if (hasTransactionManagerToken && !hasTransactionManagerClass) {
@@ -449,11 +435,7 @@ export class NestBatchModule {
     return {
       module: NestBatchModule,
       global: true,
-      imports: [
-        adapters.persistence.module,
-        adapters.transport.module,
-        DiscoveryModule,
-      ],
+      imports: [adapters.persistence.module, adapters.transport.module, DiscoveryModule],
       providers: [
         // Core classes (discovery + compile + register).
         JobRegistry,
@@ -556,9 +538,7 @@ export class NestBatchModule {
     const factoryResult = useFactory(...injectValues);
 
     if (factoryResult instanceof Promise) {
-      return factoryResult.then((adapters) =>
-        NestBatchModule.buildAsyncModule(options, adapters),
-      );
+      return factoryResult.then((adapters) => NestBatchModule.buildAsyncModule(options, adapters));
     }
 
     return NestBatchModule.buildAsyncModule(options, factoryResult);
@@ -599,9 +579,8 @@ export class NestBatchModule {
     // read the resolved config by its stable symbol.
     const optionsProvider: Provider = {
       provide: MODULE_OPTIONS_TOKEN,
-      useFactory: (
-        fromFactory: BatchAdaptersConfig | undefined,
-      ): BatchAdaptersConfig | undefined => fromFactory,
+      useFactory: (fromFactory: BatchAdaptersConfig | undefined): BatchAdaptersConfig | undefined =>
+        fromFactory,
       inject: [OPTIONS_FACTORY],
     };
 

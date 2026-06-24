@@ -2,8 +2,8 @@ import { Module, type DynamicModule, type Provider } from '@nestjs/common';
 import { EXECUTION_STRATEGY, type BatchAdapter } from '@nest-batch/core';
 
 import { BullMqExecutionStrategy } from '../bullmq-execution-strategy';
-import { BullmqRuntimeService } from '../bullmq-runtime.service';
-import { BullmqScheduleService } from '../bullmq-schedule.service';
+import { BullmqRuntime } from '../bullmq-runtime';
+import { BullmqSchedule } from '../bullmq-schedule';
 import { resolveBullMqConnection } from '../connection';
 import {
   BULLMQ_MODULE_OPTIONS,
@@ -53,7 +53,7 @@ const OPTIONS_FACTORY: symbol = Symbol.for('@nest-batch/bullmq/OPTIONS_FACTORY')
  *
  * The set mirrors the legacy `BullmqBatchModule.forRoot()` exports
  * (the `forRootAsync()` legacy path was missing
- * `BullmqRuntimeService` from `exports` — that omission is fixed
+ * `BullmqRuntime` from `exports` — that omission is fixed
  * here, both paths now export the same five entries).
  *
  *   - `EXECUTION_STRATEGY` — the DI token, so host code (e.g. a
@@ -64,17 +64,19 @@ const OPTIONS_FACTORY: symbol = Symbol.for('@nest-batch/bullmq/OPTIONS_FACTORY')
  *     builders.
  *   - `BullMqExecutionStrategy` — the concrete class, for type-
  *     strict consumers that prefer class injection.
- *   - `BullmqRuntimeService` — the runtime that owns the
+ *   - `BullmqRuntime` — the runtime that owns the
  *     `Queue` / `Worker` / `QueueEvents` lifecycle.
- *   - `BullmqScheduleService` — the runtime that owns the
+ *   - `BullmqSchedule` — the runtime that owns the
  *     `@BatchScheduled` cron-to-BullMQ translation.
  */
-const ADAPTER_EXPORTS: ReadonlyArray<symbol | typeof BullMqExecutionStrategy | typeof BullmqRuntimeService | typeof BullmqScheduleService> = [
+const ADAPTER_EXPORTS: ReadonlyArray<
+  symbol | typeof BullMqExecutionStrategy | typeof BullmqRuntime | typeof BullmqSchedule
+> = [
   EXECUTION_STRATEGY,
   BULLMQ_MODULE_OPTIONS,
   BullMqExecutionStrategy,
-  BullmqRuntimeService,
-  BullmqScheduleService,
+  BullmqRuntime,
+  BullmqSchedule,
 ];
 
 /**
@@ -85,8 +87,8 @@ const ADAPTER_EXPORTS: ReadonlyArray<symbol | typeof BullMqExecutionStrategy | t
  * Overrides the default `EXECUTION_STRATEGY` token with a BullMQ-
  * backed `IExecutionStrategy` (`BullMqExecutionStrategy`) and wires
  * the runtime services that own the BullMQ client lifecycle
- * (`BullmqRuntimeService` for step enqueue + worker, plus
- * `BullmqScheduleService` for `@BatchScheduled` cron entries).
+ * (`BullmqRuntime` for step enqueue + worker, plus
+ * `BullmqSchedule` for `@BatchScheduled` cron entries).
  *
  * Two static methods:
  *
@@ -226,9 +228,7 @@ export class BullmqAdapter {
   static forRootAsync(asyncOptions: {
     imports?: DynamicModule['imports'];
     inject?: readonly unknown[];
-    useFactory: (
-      ...args: unknown[]
-    ) => Promise<BullMqModuleOptions> | BullMqModuleOptions;
+    useFactory: (...args: unknown[]) => Promise<BullMqModuleOptions> | BullMqModuleOptions;
   }): BatchAdapter {
     const factoryProvider: Provider = {
       provide: OPTIONS_FACTORY,
@@ -238,9 +238,7 @@ export class BullmqAdapter {
 
     const mergedOptionsProvider: Provider = {
       provide: BULLMQ_MODULE_OPTIONS,
-      useFactory: (
-        fromFactory: BullMqModuleOptions | undefined,
-      ): ResolvedBullMqModuleOptions => {
+      useFactory: (fromFactory: BullMqModuleOptions | undefined): ResolvedBullMqModuleOptions => {
         return Object.freeze({
           connection: resolveBullMqConnection(fromFactory?.connection),
           autoStartWorker: fromFactory?.autoStartWorker ?? false,
@@ -295,13 +293,11 @@ export class BullmqAdapter {
  * out of the returned array and replaces it with the factory
  * pair. Everything else is shared.
  */
-function buildStaticProviders(
-  resolved: ResolvedBullMqModuleOptions,
-): Provider[] {
+function buildStaticProviders(resolved: ResolvedBullMqModuleOptions): Provider[] {
   return [
     BullMqExecutionStrategy,
-    BullmqRuntimeService,
-    BullmqScheduleService,
+    BullmqRuntime,
+    BullmqSchedule,
     {
       provide: EXECUTION_STRATEGY,
       useExisting: BullMqExecutionStrategy,

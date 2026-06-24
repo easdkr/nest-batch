@@ -18,10 +18,8 @@ import {
 } from './module-options';
 
 @Injectable()
-export class EventBridgeSchedulerService
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
-  private readonly logger = new Logger(EventBridgeSchedulerService.name);
+export class EventBridgeScheduler implements OnApplicationBootstrap, OnApplicationShutdown {
+  private readonly logger = new Logger(EventBridgeScheduler.name);
   private readonly installedNames = new Set<string>();
 
   constructor(
@@ -35,7 +33,7 @@ export class EventBridgeSchedulerService
     const entries = this.scheduleRegistry.getAll();
     for (const entry of entries) {
       if (entry.inert) {
-        this.logger.log(`Skipping inert schedule: ${entry.jobId}::${entry.methodName}`);
+        this.logger.log(`Skipping inert schedule: ${entry.jobId}::${entry.scheduleName}`);
         continue;
       }
       const input = this.buildCreateScheduleInput(entry);
@@ -64,11 +62,13 @@ export class EventBridgeSchedulerService
 
   buildCreateScheduleInput(entry: BatchScheduleEntry): EventBridgeCreateScheduleInput {
     const scheduleExpression = toEventBridgeCron(entry.cron);
-    const input = this.options.target.input?.(entry) ?? JSON.stringify({
-      jobId: entry.jobId,
-      methodName: entry.methodName,
-      scheduleName: `${entry.jobId}::${entry.methodName}`,
-    });
+    const input =
+      this.options.target.input?.(entry) ??
+      JSON.stringify({
+        jobId: entry.jobId,
+        scheduleName: entry.scheduleName,
+        methodName: entry.methodName,
+      });
 
     return {
       Name: this.buildScheduleName(entry),
@@ -79,8 +79,7 @@ export class EventBridgeSchedulerService
         Mode: this.options.flexibleTimeWindow.mode,
         ...(this.options.flexibleTimeWindow.maximumWindowInMinutes !== undefined
           ? {
-              MaximumWindowInMinutes:
-                this.options.flexibleTimeWindow.maximumWindowInMinutes,
+              MaximumWindowInMinutes: this.options.flexibleTimeWindow.maximumWindowInMinutes,
             }
           : {}),
       },
@@ -102,7 +101,7 @@ export class EventBridgeSchedulerService
   }
 
   private buildScheduleName(entry: BatchScheduleEntry): string {
-    const raw = `${this.options.scheduleNamePrefix}-${entry.jobId}-${entry.methodName}`;
+    const raw = `${this.options.scheduleNamePrefix}-${entry.jobId}-${entry.scheduleName}`;
     return raw.replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 64);
   }
 }

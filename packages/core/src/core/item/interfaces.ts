@@ -1,4 +1,4 @@
-import type { ExecutionContext, ExecutionScope } from '../repository/types';
+import type { ExecutionContext, ExecutionScope, JobParameters } from '../repository/types';
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -6,8 +6,18 @@ type MaybePromise<T> = T | Promise<T>;
  * Reads one item at a time. Returns `null` to signal EOF.
  * For async iteration, use `AsyncIterable.read()` (not yet supported in MVP).
  */
+export interface ItemExecutionContext {
+  readonly jobExecutionId: string;
+  readonly stepExecutionId: string;
+  readonly stepName: string;
+  readonly jobParameters: JobParameters;
+  readonly chunkIndex?: number;
+  getExecutionContext(): Promise<ExecutionContext>;
+  saveExecutionContext(ctx: ExecutionContext): Promise<void>;
+}
+
 export interface ItemReader<T = unknown> {
-  read(): Promise<T | null>;
+  read(ctx?: ItemExecutionContext): Promise<T | null>;
 }
 
 /**
@@ -15,7 +25,7 @@ export interface ItemReader<T = unknown> {
  * Throws to indicate the item should be skipped (via SkipPolicy) or retried (via RetryPolicy).
  */
 export interface ItemProcessor<I = unknown, O = unknown> {
-  process(item: I): Promise<O | null | undefined>;
+  process(item: I, ctx?: ItemExecutionContext): Promise<O | null | undefined>;
 }
 
 /**
@@ -28,7 +38,7 @@ export interface ItemProcessor<I = unknown, O = unknown> {
  * count and assumes no per-item skips.
  */
 export interface ItemWriter<T = unknown> {
-  write(items: T[]): Promise<WriterResult | void>;
+  write(items: T[], ctx?: ItemExecutionContext): Promise<WriterResult | void>;
 }
 
 export interface WriterResult {
@@ -57,6 +67,7 @@ export interface ItemStream {
 export interface TaskletContext {
   readonly jobExecutionId: string;
   readonly stepExecutionId: string;
+  readonly jobParameters: JobParameters;
   getExecutionContext(): Promise<ExecutionContext>;
   saveExecutionContext(ctx: ExecutionContext): Promise<void>;
 }

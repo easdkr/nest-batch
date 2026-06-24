@@ -1,5 +1,5 @@
 /**
- * T-AC-4 acceptance test: BullmqScheduleService must call
+ * T-AC-4 acceptance test: BullmqSchedule must call
  * Queue.upsertJobScheduler with the pattern and tz carried on the
  * BatchScheduleEntry it reads from BatchScheduleRegistry.
  *
@@ -10,7 +10,7 @@
  *      onApplicationBootstrap. Assert the Queue constructor was
  *      called with the schedule queue name and a connection record,
  *      and that upsertJobScheduler was called exactly once with the
- *      composite key (jobId::methodName) and the entry cron/tz.
+ *      composite key (jobId::scheduleName) and the entry cron/tz.
  *
  *   2. Inert mode: with BATCH_SCHEDULED_DISABLE=1 and an entry
  *      stamped inert=true (matching what @BatchScheduled captures
@@ -24,7 +24,7 @@
  * and well under the 5s wall-clock budget.
  *
  * Pinned source:
- *   packages/bullmq/src/bullmq-schedule.service.ts lines 184-188
+ *   packages/bullmq/src/bullmq-schedule.ts lines 184-188
  *     the upsertJobScheduler call
  *   packages/core/src/module/batch-schedule-registry.ts
  *     BatchScheduleRegistry and BatchScheduleEntry
@@ -34,9 +34,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { BatchScheduleRegistry } from '@nest-batch/core';
+import { BatchScheduleRegistry, type JobLauncher } from '@nest-batch/core';
 
-import { BULLMQ_SCHEDULE_QUEUE_NAME, BullmqScheduleService } from '../src/bullmq-schedule.service';
+import { BULLMQ_SCHEDULE_QUEUE_NAME, BullmqSchedule } from '../src/bullmq-schedule';
 import type { ResolvedBullMqModuleOptions } from '../src/module-options';
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ import type { ResolvedBullMqModuleOptions } from '../src/module-options';
 //
 // `vi.mock` factory bodies run at hoist time, so we use `vi.hoisted` to
 // share the spied `upsertJobScheduler` across the mock factory and the
-// test body. The fake `Queue` exposes the same surface `BullmqScheduleService`
+// test body. The fake `Queue` exposes the same surface `BullmqSchedule`
 // touches: a constructor (spied for name + connection assertion),
 // `upsertJobScheduler` (the call under test), `removeJobScheduler`,
 // and `close` (used by the shutdown path, which the test does not
@@ -54,17 +54,32 @@ import type { ResolvedBullMqModuleOptions } from '../src/module-options';
 const bullmqMock = vi.hoisted(() => {
   const upsertJobScheduler = vi.fn(async () => undefined);
   const removeJobScheduler = vi.fn(async () => undefined);
-  const close = vi.fn(async () => undefined);
+  const queueClose = vi.fn(async () => undefined);
+  const workerClose = vi.fn(async () => undefined);
+  let workerProcessor: ((job: unknown) => Promise<unknown>) | null = null;
   const Queue = vi.fn().mockImplementation(() => ({
     upsertJobScheduler,
     removeJobScheduler,
-    close,
+    close: queueClose,
   }));
-  return { upsertJobScheduler, removeJobScheduler, close, Queue };
+  const Worker = vi.fn().mockImplementation((_name, processor) => {
+    workerProcessor = processor as (job: unknown) => Promise<unknown>;
+    return { close: workerClose };
+  });
+  return {
+    upsertJobScheduler,
+    removeJobScheduler,
+    queueClose,
+    workerClose,
+    Queue,
+    Worker,
+    getWorkerProcessor: () => workerProcessor,
+  };
 });
 
 vi.mock('bullmq', () => ({
   Queue: bullmqMock.Queue,
+  Worker: bullmqMock.Worker,
 }));
 
 // ---------------------------------------------------------------------------
@@ -89,6 +104,7 @@ function buildRegistry(cron: string, timezone: string, inert: boolean): BatchSch
   registry.register({
     jobId: 'jobA',
     methodName: 'method',
+    scheduleName: 'hourly',
     cron,
     timezone,
     inert,
@@ -96,16 +112,27 @@ function buildRegistry(cron: string, timezone: string, inert: boolean): BatchSch
   return registry;
 }
 
+function fakeLauncher(): JobLauncher {
+  return {
+    launch: vi.fn(async () => ({
+      id: 'execution-1',
+      status: 'STARTING',
+    })),
+  } as unknown as JobLauncher;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('BullmqScheduleService — T-AC-4 cron-firing acceptance', () => {
+describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
   beforeEach(() => {
     bullmqMock.Queue.mockClear();
+    bullmqMock.Worker.mockClear();
     bullmqMock.upsertJobScheduler.mockClear();
     bullmqMock.removeJobScheduler.mockClear();
-    bullmqMock.close.mockClear();
+    bullmqMock.queueClose.mockClear();
+    bullmqMock.workerClose.mockClear();
     // Determinism: the impl does not actually wait on any timer, but
     // the spec calls for fake timers so any future drift that adds
     // a setTimeout keeps the test fast.
@@ -117,12 +144,12 @@ describe('BullmqScheduleService — T-AC-4 cron-firing acceptance', () => {
     delete process.env.BATCH_SCHEDULED_DISABLE;
   });
 
-  it('installs an upsertJobScheduler with the entry\'s pattern + tz when inert=false', () => {
+  it("installs an upsertJobScheduler with the entry's pattern + tz when inert=false", () => {
     // Sanity: make sure the env is in the "active" state for this test.
     process.env.BATCH_SCHEDULED_DISABLE = '0';
 
     const registry = buildRegistry('*/1 * * * * *', 'UTC', /* inert */ false);
-    const service = new BullmqScheduleService(registry, baseOptions);
+    const service = new BullmqSchedule(registry, baseOptions, fakeLauncher());
 
     service.onApplicationBootstrap();
 
@@ -132,6 +159,7 @@ describe('BullmqScheduleService — T-AC-4 cron-firing acceptance', () => {
     //    `connection.keyPrefix` as the BullMQ top-level `prefix`
     //    option (BullMQ keeps `prefix` separate from `connection`).
     expect(bullmqMock.Queue).toHaveBeenCalledTimes(1);
+    expect(bullmqMock.Worker).not.toHaveBeenCalled();
     const [name, ctorOpts] = bullmqMock.Queue.mock.calls[0] ?? [];
     expect(name).toBe(BULLMQ_SCHEDULE_QUEUE_NAME);
     expect(ctorOpts).toBeDefined();
@@ -152,12 +180,12 @@ describe('BullmqScheduleService — T-AC-4 cron-firing acceptance', () => {
     //    backoff) does not break this test — only the cron / tz
     //    contract is what T-AC-4 is pinning.
     const [key, patternArg, templateArg] = bullmqMock.upsertJobScheduler.mock.calls[0] ?? [];
-    expect(key).toBe('jobA::method');
+    expect(key).toBe('jobA::hourly');
     expect(patternArg).toEqual({ pattern: '*/1 * * * * *', tz: 'UTC' });
     expect(templateArg).toEqual(
       expect.objectContaining({
-        name: 'method',
-        data: { jobId: 'jobA', methodName: 'method' },
+        name: 'hourly',
+        data: { jobId: 'jobA', scheduleName: 'hourly', methodName: 'method' },
         opts: expect.objectContaining({
           attempts: expect.any(Number),
           backoff: expect.objectContaining({ type: 'exponential' }),
@@ -166,7 +194,7 @@ describe('BullmqScheduleService — T-AC-4 cron-firing acceptance', () => {
     );
 
     // 4. The installed-keys diagnostic reflects the installation.
-    expect(service.installedSchedulerKeys()).toEqual(['jobA::method']);
+    expect(service.installedSchedulerKeys()).toEqual(['jobA::hourly']);
   });
 
   it('skips upsertJobScheduler when the entry is inert (BATCH_SCHEDULED_DISABLE=1)', () => {
@@ -178,7 +206,7 @@ describe('BullmqScheduleService — T-AC-4 cron-firing acceptance', () => {
     // rather than invoking the decorator so the test does not
     // depend on the decorator's own validation order.
     const registry = buildRegistry('*/1 * * * * *', 'UTC', /* inert */ true);
-    const service = new BullmqScheduleService(registry, baseOptions);
+    const service = new BullmqSchedule(registry, baseOptions, fakeLauncher());
 
     service.onApplicationBootstrap();
 
@@ -186,7 +214,46 @@ describe('BullmqScheduleService — T-AC-4 cron-firing acceptance', () => {
     // unconditionally before iterating the registry. What changes is
     // that nothing is installed into it.
     expect(bullmqMock.Queue).toHaveBeenCalledTimes(1);
+    expect(bullmqMock.Worker).not.toHaveBeenCalled();
     expect(bullmqMock.upsertJobScheduler).not.toHaveBeenCalled();
     expect(service.installedSchedulerKeys()).toEqual([]);
+  });
+
+  it('starts a schedule worker when autoStartWorker=true and bridges schedule fires to JobLauncher.launch', async () => {
+    const registry = buildRegistry('*/1 * * * * *', 'UTC', /* inert */ false);
+    const launcher = fakeLauncher();
+    const options: ResolvedBullMqModuleOptions = {
+      ...baseOptions,
+      autoStartWorker: true,
+    };
+    const service = new BullmqSchedule(registry, options, launcher);
+
+    service.onApplicationBootstrap();
+
+    expect(bullmqMock.Worker).toHaveBeenCalledTimes(1);
+    const [name, _processor, workerOpts] = bullmqMock.Worker.mock.calls[0] ?? [];
+    expect(name).toBe(BULLMQ_SCHEDULE_QUEUE_NAME);
+    expect(workerOpts).toEqual(
+      expect.objectContaining({
+        prefix: options.connection.keyPrefix,
+        concurrency: 1,
+      }),
+    );
+
+    const processor = bullmqMock.getWorkerProcessor();
+    expect(processor).toBeTypeOf('function');
+    await processor?.({
+      id: 'repeat:jobA::hourly:1',
+      timestamp: Date.UTC(2026, 0, 2, 3, 4, 5),
+      data: { jobId: 'jobA', scheduleName: 'hourly', methodName: 'method' },
+    });
+
+    expect(launcher.launch).toHaveBeenCalledTimes(1);
+    expect(launcher.launch).toHaveBeenCalledWith('jobA', {
+      scheduled: true,
+      scheduleName: 'hourly',
+      scheduledAt: '2026-01-02T03:04:05.000Z',
+      scheduleQueueJobId: 'repeat:jobA::hourly:1',
+    });
   });
 });

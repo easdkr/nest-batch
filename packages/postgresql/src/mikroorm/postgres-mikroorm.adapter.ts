@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
+import { EntityManager } from '@mikro-orm/core';
 
 import {
   JOB_REPOSITORY_TOKEN,
   TRANSACTION_MANAGER_TOKEN,
   type BatchAdapter,
 } from '@nest-batch/core';
+import { MikroOrmDriverProvider } from '@nest-batch/mikro-orm';
 
 import { PostgresMikroOrmJobRepository } from './postgres-mikroorm-job-repository';
 import { PostgresMikroOrmTransactionManager } from './postgres-mikroorm-transaction-manager';
@@ -29,9 +31,8 @@ import { PostgresMikroOrmBatchModule } from './postgres-mikroorm.module';
  * `PostgresMikroOrmJobRepository` and only adds a `PostgresEntityManager`-
  * typed wrapper around the transaction manager. The
  * `MikroOrmDriverProvider` token (`Symbol.for('@nest-batch/mikro-orm/MikroOrmDriverProvider')`)
- * is what the host binds in their own `MikroOrmModule.forRoot()` call —
- * the slot's repository class is `@Inject(MikroOrmDriverProvider)`
- * already, so no driver-specific injection happens here.
+ * is aliased here to the host `EntityManager`; the slot's repository
+ * class injects that token via `@Inject(MikroOrmDriverProvider)`.
  */
 export class PostgresMikroOrmAdapter {
   /**
@@ -42,8 +43,9 @@ export class PostgresMikroOrmAdapter {
    * No options are accepted on purpose — the host already owns
    * the `MikroOrmModule.forRoot(...)` call. The adapter only
    * needs to declare its own provider / export / `globalProviders`
-   * surface; the `EntityManager` itself is the host's
-   * responsibility.
+   * surface. The host still owns `MikroOrmModule.forRoot(...)`; this
+   * shell only aliases the host `EntityManager` to the batch driver
+   * token.
    */
   static forRoot(): BatchAdapter {
     return {
@@ -55,6 +57,10 @@ export class PostgresMikroOrmAdapter {
           PostgresMikroOrmJobRepository,
           PostgresMikroOrmTransactionManager,
           {
+            provide: MikroOrmDriverProvider,
+            useExisting: EntityManager,
+          },
+          {
             provide: JOB_REPOSITORY_TOKEN,
             useExisting: PostgresMikroOrmJobRepository,
           },
@@ -63,9 +69,13 @@ export class PostgresMikroOrmAdapter {
             useExisting: PostgresMikroOrmTransactionManager,
           },
         ],
-        exports: [JOB_REPOSITORY_TOKEN, TRANSACTION_MANAGER_TOKEN],
+        exports: [MikroOrmDriverProvider, JOB_REPOSITORY_TOKEN, TRANSACTION_MANAGER_TOKEN],
       },
       globalProviders: [
+        {
+          provide: MikroOrmDriverProvider,
+          useExisting: EntityManager,
+        },
         { provide: JOB_REPOSITORY_TOKEN, useClass: PostgresMikroOrmJobRepository },
         {
           provide: TRANSACTION_MANAGER_TOKEN,

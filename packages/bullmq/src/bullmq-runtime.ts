@@ -20,10 +20,7 @@ import {
 } from '@nest-batch/core';
 import { JobExecutor, JobRegistry, NoopBatchObserver, BATCH_EVENT } from '@nest-batch/core';
 
-import {
-  BULLMQ_MODULE_OPTIONS,
-  type ResolvedBullMqModuleOptions,
-} from './module-options';
+import { BULLMQ_MODULE_OPTIONS, type ResolvedBullMqModuleOptions } from './module-options';
 
 /**
  * Payload shape stored in a BullMQ job's `data` field.
@@ -118,7 +115,7 @@ export const BULLMQ_STRATEGY_NAME = 'bullmq';
  *     of truth and a single method (`close()`).
  */
 @Injectable()
-export class BullmqRuntimeService
+export class BullmqRuntime
   implements IExecutionStrategy, OnApplicationBootstrap, OnApplicationShutdown
 {
   /**
@@ -127,7 +124,7 @@ export class BullmqRuntimeService
    */
   readonly name = BULLMQ_STRATEGY_NAME;
 
-  private readonly logger = new Logger(BullmqRuntimeService.name);
+  private readonly logger = new Logger(BullmqRuntime.name);
 
   /** BullMQ queue (producer side). */
   private queue: Queue | null = null;
@@ -178,12 +175,12 @@ export class BullmqRuntimeService
     if (this.options.autoStartWorker) {
       this.worker = this.buildWorker();
       this.logger.log(
-        `BullmqRuntimeService started: queue="${BULLMQ_QUEUE_NAME}" ` +
+        `BullmqRuntime started: queue="${BULLMQ_QUEUE_NAME}" ` +
           `worker=auto, keyPrefix="${this.options.connection.keyPrefix}"`,
       );
     } else {
       this.logger.log(
-        `BullmqRuntimeService started: queue="${BULLMQ_QUEUE_NAME}" ` +
+        `BullmqRuntime started: queue="${BULLMQ_QUEUE_NAME}" ` +
           `worker=manual (autoStartWorker=false)`,
       );
     }
@@ -241,7 +238,7 @@ export class BullmqRuntimeService
   ): Promise<{ kind: 'enqueued'; queueJobId: string }> {
     if (this.queue === null) {
       throw new Error(
-        `[BullmqRuntimeService] launch() called before onApplicationBootstrap — ` +
+        `[BullmqRuntime] launch() called before onApplicationBootstrap — ` +
           'module is not initialized. Did you forget to import BullmqBatchModule?',
       );
     }
@@ -284,9 +281,7 @@ export class BullmqRuntimeService
         // (which is disabled by `enableOfflineQueue: false`) is
         // not available. Surface this as a hard error so the
         // launcher propagates the failure.
-        throw new Error(
-          `[BullmqRuntimeService] enqueue returned undefined job id (Redis down?)`,
-        );
+        throw new Error(`[BullmqRuntime] enqueue returned undefined job id (Redis down?)`);
       }
       const qid = String(enqueued.id);
       lastQueueJobId = qid;
@@ -301,7 +296,7 @@ export class BullmqRuntimeService
       // (partitionOrdinals has length >= 1), so this branch is
       // unreachable in practice. Keep the explicit throw so a
       // future refactor cannot quietly enqueue zero jobs.
-      throw new Error(`[BullmqRuntimeService] enqueued zero jobs for execution ${ctx.executionId}`);
+      throw new Error(`[BullmqRuntime] enqueued zero jobs for execution ${ctx.executionId}`);
     }
     return { kind: 'enqueued', queueJobId: lastQueueJobId };
   }
@@ -423,7 +418,7 @@ export class BullmqRuntimeService
       // Surface as a BullMQ-level failure so the technical
       // retry / dead-letter path handles it.
       throw new Error(
-        `[BullmqRuntimeService] JobExecution ${payload.executionId} not found in repository`,
+        `[BullmqRuntime] JobExecution ${payload.executionId} not found in repository`,
       );
     }
     const jobDef = this.registry.get(payload.jobId);
@@ -530,9 +525,7 @@ export class BullmqRuntimeService
       try {
         await this.queue.close();
       } catch (err) {
-        this.logger.warn(
-          `Queue close failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        this.logger.warn(`Queue close failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       this.queue = null;
     }

@@ -26,7 +26,8 @@
  * Registration order is preserved (Map iteration is insertion-ordered in JS).
  */
 import { Injectable, Logger } from '@nestjs/common';
-import type { ExecutionContext } from '../core/repository';
+import type { ExecutionContext, JobParameters } from '../core/repository';
+import type { SkipSubKind } from '../core/ir/listener-definition';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -122,8 +123,6 @@ export type OnErrorKind = 'job' | 'step' | 'chunk';
  * Sub-kinds for the `on-skip` phase. The resolver key looks like
  * `on-skip:${SkipSubKind}:${name}` — for example `on-skip:read:MySkipListener`.
  */
-export type SkipSubKind = 'read' | 'process' | 'write';
-
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
@@ -140,11 +139,10 @@ export class ListenerInvoker {
    * Invoke every `before:<kind>:<name>` resolver, in registration order.
    *
    * Listener signature depends on `<kind>`:
-   *   - `job` / `chunk`   — `fn(ctx)`
-   *   - `step`            — `fn(ctx, result)` (the optional `args` is the result)
-   *   - `item-read` / `item-process` / `item-write` — `fn(item, ctx)` (the
-   *     optional `args` is the item, placed in the first position by
-   *     convention)
+   *   - `job` / `step` / `chunk` — `fn(ctx, result?)`
+   *   - `item-read` / `item-process` / `item-write` — `fn(item, ctx)` for the
+   *     legacy generic path. Prefer the explicit item helpers below for exact
+   *     read/process/write signatures.
    */
   async invokeBefore(
     resolvers: ResolverMap,
@@ -183,30 +181,115 @@ export class ListenerInvoker {
     await this.invokeMatching(resolvers, `${LISTENER_PHASE.OnError}:${kind}:`, [ctx, err]);
   }
 
-  /** Invoke every `on-skip:read:<name>` resolver. Listener signature: `fn(err, item)`. */
-  async invokeOnSkipRead(
+  /** Invoke every `before:item-read:<name>` resolver. Listener signature: `fn(ctx)`. */
+  async invokeBeforeRead(resolvers: ResolverMap, ctx: ListenerContext): Promise<void> {
+    await this.invokeMatching(resolvers, `${LISTENER_PHASE.Before}:item-read:`, [ctx]);
+  }
+
+  /** Invoke every `after:item-read:<name>` resolver. Listener signature: `fn(item, ctx)`. */
+  async invokeAfterRead(
+    resolvers: ResolverMap,
+    item: unknown,
+    ctx: ListenerContext,
+  ): Promise<void> {
+    await this.invokeMatching(resolvers, `${LISTENER_PHASE.After}:item-read:`, [item, ctx]);
+  }
+
+  /** Invoke every `on-error:item-read:<name>` resolver. Listener signature: `fn(err, ctx)`. */
+  async invokeOnReadError(
     resolvers: ResolverMap,
     err: unknown,
-    item: unknown,
+    ctx: ListenerContext,
   ): Promise<void> {
+    await this.invokeMatching(resolvers, `${LISTENER_PHASE.OnError}:item-read:`, [err, ctx]);
+  }
+
+  /** Invoke every `before:item-process:<name>` resolver. Listener signature: `fn(item, ctx)`. */
+  async invokeBeforeProcess(
+    resolvers: ResolverMap,
+    item: unknown,
+    ctx: ListenerContext,
+  ): Promise<void> {
+    await this.invokeMatching(resolvers, `${LISTENER_PHASE.Before}:item-process:`, [item, ctx]);
+  }
+
+  /** Invoke every `after:item-process:<name>` resolver. Listener signature: `fn(item, result, ctx)`. */
+  async invokeAfterProcess(
+    resolvers: ResolverMap,
+    item: unknown,
+    result: unknown,
+    ctx: ListenerContext,
+  ): Promise<void> {
+    await this.invokeMatching(resolvers, `${LISTENER_PHASE.After}:item-process:`, [
+      item,
+      result,
+      ctx,
+    ]);
+  }
+
+  /** Invoke every `on-error:item-process:<name>` resolver. Listener signature: `fn(item, err, ctx)`. */
+  async invokeOnProcessError(
+    resolvers: ResolverMap,
+    item: unknown,
+    err: unknown,
+    ctx: ListenerContext,
+  ): Promise<void> {
+    await this.invokeMatching(resolvers, `${LISTENER_PHASE.OnError}:item-process:`, [
+      item,
+      err,
+      ctx,
+    ]);
+  }
+
+  /** Invoke every `before:item-write:<name>` resolver. Listener signature: `fn(items, ctx)`. */
+  async invokeBeforeWrite(
+    resolvers: ResolverMap,
+    items: unknown[],
+    ctx: ListenerContext,
+  ): Promise<void> {
+    await this.invokeMatching(resolvers, `${LISTENER_PHASE.Before}:item-write:`, [items, ctx]);
+  }
+
+  /** Invoke every `after:item-write:<name>` resolver. Listener signature: `fn(items, result, ctx)`. */
+  async invokeAfterWrite(
+    resolvers: ResolverMap,
+    items: unknown[],
+    result: unknown,
+    ctx: ListenerContext,
+  ): Promise<void> {
+    await this.invokeMatching(resolvers, `${LISTENER_PHASE.After}:item-write:`, [
+      items,
+      result,
+      ctx,
+    ]);
+  }
+
+  /** Invoke every `on-error:item-write:<name>` resolver. Listener signature: `fn(items, err, ctx)`. */
+  async invokeOnWriteError(
+    resolvers: ResolverMap,
+    items: unknown[],
+    err: unknown,
+    ctx: ListenerContext,
+  ): Promise<void> {
+    await this.invokeMatching(resolvers, `${LISTENER_PHASE.OnError}:item-write:`, [
+      items,
+      err,
+      ctx,
+    ]);
+  }
+
+  /** Invoke every `on-skip:read:<name>` resolver. Listener signature: `fn(err, item)`. */
+  async invokeOnSkipRead(resolvers: ResolverMap, err: unknown, item: unknown): Promise<void> {
     await this.invokeMatching(resolvers, `${LISTENER_PHASE.OnSkip}:read:`, [err, item]);
   }
 
   /** Invoke every `on-skip:process:<name>` resolver. Listener signature: `fn(item, err)`. */
-  async invokeOnSkipProcess(
-    resolvers: ResolverMap,
-    item: unknown,
-    err: unknown,
-  ): Promise<void> {
+  async invokeOnSkipProcess(resolvers: ResolverMap, item: unknown, err: unknown): Promise<void> {
     await this.invokeMatching(resolvers, `${LISTENER_PHASE.OnSkip}:process:`, [item, err]);
   }
 
   /** Invoke every `on-skip:write:<name>` resolver. Listener signature: `fn(items, err)`. */
-  async invokeOnSkipWrite(
-    resolvers: ResolverMap,
-    items: unknown[],
-    err: unknown,
-  ): Promise<void> {
+  async invokeOnSkipWrite(resolvers: ResolverMap, items: unknown[], err: unknown): Promise<void> {
     await this.invokeMatching(resolvers, `${LISTENER_PHASE.OnSkip}:write:`, [items, err]);
   }
 
@@ -309,27 +392,21 @@ export class ListenerInvoker {
    * Compute the positional argument list to forward to a before/after
    * listener, based on the listener's kind.
    *
-   * - `job` / `chunk`   → `[ctx]`
-   * - `step`            → `[ctx, args]`   (args is the result)
+   * - `job` / `step` / `chunk` → `[ctx]` or `[ctx, args]`
    * - `item-read` /
    *   `item-process` /
    *   `item-write`      → `[args, ctx]`   (args is the item, leading position)
    */
-  private buildCallArgs(
-    kind: LifecyclePhaseKind,
-    ctx: ListenerContext,
-    args: unknown,
-  ): unknown[] {
+  private buildCallArgs(kind: LifecyclePhaseKind, ctx: ListenerContext, args: unknown): unknown[] {
     switch (kind) {
       case 'item-read':
       case 'item-process':
       case 'item-write':
-        return [args, ctx];
-      case 'step':
-        return [ctx, args];
+        return args === undefined ? [ctx] : [args, ctx];
       case 'job':
+      case 'step':
       case 'chunk':
-        return [ctx];
+        return args === undefined ? [ctx] : [ctx, args];
       default: {
         // exhaustive guard
         const _exhaustive: never = kind;
@@ -380,6 +457,7 @@ export interface ListenerContext {
   jobExecutionId: string;
   stepExecutionId?: string;
   stepName?: string;
+  jobParameters?: JobParameters;
   /** Arbitrary, executor-supplied metadata (transaction context, etc.). */
   [extra: string]: unknown;
 }

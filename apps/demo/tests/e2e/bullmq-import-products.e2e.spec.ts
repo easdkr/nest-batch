@@ -526,13 +526,11 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
       const bigCsv = join(tempDir, 'big.csv');
       writeFileSync(bigCsv, makeBigCsv(rowCount), 'utf8');
 
-      // Re-register the `import-products` job with a per-launch
-      // file path. The demo's `ImportProductsJobRegistrar` already
-      // registered a default-file variant on bootstrap; the registry
-      // stores the last-registered definition per job id. Our
-      // re-registration uses `BuilderLambda`s that point at the new
-      // CSV — exactly the "per-launch file path" extension point
-      // documented in `import-products.job.ts`.
+      // Re-register a builder-defined big-file variant for this
+      // transport granularity assertion. The production demo job is
+      // decorator-discovered and reads its file from launch params;
+      // this local builder job keeps the test focused on BullMQ job
+      // count rather than product-import behavior.
       const { CsvProductReader } =
         await import('../../src/jobs/import-products/reader/csv-product.reader');
       const { ProductProcessor } =
@@ -658,11 +656,11 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
 
       // Graceful shutdown. `app.close()` triggers Nest's
       // `onApplicationShutdown` lifecycle, which calls
-      // `BullmqRuntimeService.onApplicationShutdown` → closes the
+      // `BullmqRuntime.onApplicationShutdown` → closes the
       // worker (waiting for in-flight jobs to drain or be returned
       // to the queue), then events, then queue. The active job is
       // allowed to complete during the close window — that is the
-      // "no orphan" guarantee from `bullmq-runtime.service.ts`.
+      // "no orphan" guarantee from `bullmq-runtime.ts`.
       await app.close();
       app = null as unknown as INestApplication; // suppress the afterEach close
 

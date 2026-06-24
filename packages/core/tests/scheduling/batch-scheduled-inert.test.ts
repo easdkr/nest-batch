@@ -24,28 +24,21 @@
  *   2. The decorator MUST NOT install any timer, interval, or
  *      scheduler registration at decoration time — `inert` is a
  *      pure metadata flag, nothing more.
- *   3. The runtime scheduler (the future `@nest-batch/bullmq`
- *      cron strategy, or a sibling scheduling package) honours
- *      the flag at scheduling time. That behaviour is verified
- *      in `packages/bullmq/tests/scheduling-runtime.test.ts`;
- *      this file asserts the *decorator* side of the contract
- *      (point 1 + 2 above) and the `BatchScheduleRegistry`
- *      entry it produces (point 3 from the registry's side).
+ *   3. Runtime scheduler adapters honour the flag at scheduling
+ *      time. Adapter-specific suites verify that runtime side; this
+ *      file asserts the *decorator* side of the contract (point 1 + 2
+ *      above) and the `BatchScheduleRegistry` entry it produces
+ *      (point 3 from the registry's side).
  *
- * The runtime-scheduler side of point 3 is tested in
- * `@nest-batch/bullmq` because the runtime lives in that
- * package; the contract intentionally keeps core dependency-free
- * of BullMQ.
+ * The runtime-scheduler side of point 3 belongs to adapter packages;
+ * the contract intentionally keeps core dependency-free of scheduler
+ * backends.
  */
 import 'reflect-metadata';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { Test } from '@nestjs/testing';
 
-import {
-  NestBatchModule,
-  BatchScheduleRegistry,
-  BATCH_SCHEDULE_REGISTRY,
-} from '../../src/module';
+import { NestBatchModule, BatchScheduleRegistry, BATCH_SCHEDULE_REGISTRY } from '../../src/module';
 import { InProcessAdapter } from '../../src/adapters/in-process.adapter';
 import type { BatchAdapter, BatchAdaptersConfig } from '../../src/module/adapter';
 import {
@@ -66,10 +59,7 @@ import type {
 } from '../../src/core/repository/types';
 import { TransactionManager } from '../../src/core/transaction/transaction-manager';
 import { Jobable, Stepable, Tasklet } from '../../src/decorators';
-import {
-  BATCH_SCHEDULED_OPTIONS,
-  BatchScheduled,
-} from '../../src/scheduling/batch-scheduled';
+import { BATCH_SCHEDULED_OPTIONS, BatchScheduled } from '../../src/scheduling/batch-scheduled';
 
 // --- Common fixtures -------------------------------------------------------
 
@@ -85,10 +75,7 @@ class StubRepo extends JobRepository {
   async getOrCreateJobInstance(_name: string, _jobKey: string): Promise<JobInstance> {
     throw new Error('not implemented');
   }
-  async createJobExecution(
-    _jobInstanceId: string,
-    _params: JobParameters,
-  ): Promise<JobExecution> {
+  async createJobExecution(_jobInstanceId: string, _params: JobParameters): Promise<JobExecution> {
     throw new Error('not implemented');
   }
   async createExecutionAtomic(
@@ -98,10 +85,7 @@ class StubRepo extends JobRepository {
   ): Promise<JobExecution> {
     throw new Error('not implemented');
   }
-  async updateJobExecution(
-    _executionId: string,
-    _patch: JobExecutionPatch,
-  ): Promise<void> {
+  async updateJobExecution(_executionId: string, _patch: JobExecutionPatch): Promise<void> {
     throw new Error('not implemented');
   }
   async getJobExecution(_executionId: string): Promise<JobExecution | null> {
@@ -110,16 +94,10 @@ class StubRepo extends JobRepository {
   async getRunningJobExecution(_jobInstanceId: string): Promise<JobExecution | null> {
     return null;
   }
-  async createStepExecution(
-    _jobExecutionId: string,
-    _stepName: string,
-  ): Promise<StepExecution> {
+  async createStepExecution(_jobExecutionId: string, _stepName: string): Promise<StepExecution> {
     throw new Error('not implemented');
   }
-  async updateStepExecution(
-    _stepExecutionId: string,
-    _patch: StepExecutionPatch,
-  ): Promise<void> {
+  async updateStepExecution(_stepExecutionId: string, _patch: StepExecutionPatch): Promise<void> {
     throw new Error('not implemented');
   }
   async getStepExecution(_stepExecutionId: string): Promise<StepExecution | null> {
@@ -278,9 +256,9 @@ describe('@BatchScheduled — inert mode: decorator is metadata-only', () => {
 
   it('does not call setTimeout / setInterval even when BATCH_SCHEDULED_DISABLE=0 (default mode)', () => {
     // The contract is broader: the decorator is metadata-only
-    // regardless of the inert flag. The runtime scheduler (in
-    // `@nest-batch/bullmq`) is the ONLY thing allowed to start
-    // timers, and it gates that on the inert flag.
+    // regardless of the inert flag. Runtime scheduler adapters are
+    // the ONLY thing allowed to start timers, and they gate that on
+    // the inert flag.
     process.env.BATCH_SCHEDULED_DISABLE = '0';
     class Job {
       @BatchScheduled(VALID_CRON, makeOptions())
@@ -330,8 +308,10 @@ describe('@BatchScheduled — inert mode: registry propagates the flag', () => {
     await moduleRef.init();
     try {
       const registry = moduleRef.get<BatchScheduleRegistry>(BATCH_SCHEDULE_REGISTRY);
-      const entry = registry.get('inert-registry-job', 'run');
+      const entry = registry.get('inert-registry-job', VALID_NAME);
       expect(entry).toBeDefined();
+      expect(entry!.scheduleName).toBe(VALID_NAME);
+      expect(entry!.methodName).toBe('run');
       expect(entry!.inert).toBe(true);
       expect(entry!.cron).toBe(VALID_CRON);
       expect(entry!.timezone).toBe(VALID_TIMEZONE);
@@ -362,7 +342,7 @@ describe('@BatchScheduled — inert mode: registry propagates the flag', () => {
     await moduleRef.init();
     try {
       const registry = moduleRef.get<BatchScheduleRegistry>(BATCH_SCHEDULE_REGISTRY);
-      const entry = registry.get('live-registry-job', 'run');
+      const entry = registry.get('live-registry-job', VALID_NAME);
       expect(entry).toBeDefined();
       expect(entry!.inert).toBe(false);
     } finally {

@@ -14,6 +14,7 @@ export * from './transaction';
 export * from './repository';
 export * as BatchDecorators from './decorators';
 export * from './module';
+export * from './scheduling/batch-scheduled';
 export * from './builder';
 export * from './explorer';
 export * from './listeners';

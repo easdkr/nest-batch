@@ -1,4 +1,8 @@
-import { BATCH_SCHEDULE_REGISTRY, BatchScheduleRegistry, type BatchScheduleEntry } from '@nest-batch/core';
+import {
+  BATCH_SCHEDULE_REGISTRY,
+  BatchScheduleRegistry,
+  type BatchScheduleEntry,
+} from '@nest-batch/core';
 import {
   Inject,
   Injectable,
@@ -8,11 +12,7 @@ import {
 } from '@nestjs/common';
 import { Kafka, Producer, type Message } from 'kafkajs';
 
-
-import {
-  KAFKA_MODULE_OPTIONS,
-  type ResolvedKafkaModuleOptions,
-} from './module-options';
+import { KAFKA_MODULE_OPTIONS, type ResolvedKafkaModuleOptions } from './module-options';
 
 /**
  * The single Kafka topic name used by the schedule service. We
@@ -25,7 +25,7 @@ import {
 export const KAFKA_SCHEDULE_TOPIC = 'nest-batch-schedule';
 
 /**
- * `KafkaScheduleService` — the runtime scheduler for
+ * `KafkaSchedule` — the runtime scheduler for
  * `@BatchScheduled` entries.
  *
  * Lifecycle:
@@ -35,12 +35,12 @@ export const KAFKA_SCHEDULE_TOPIC = 'nest-batch-schedule';
  *      to the schedule topic at the configured cron time.
  *   2. Each fire produces a message into the schedule topic.
  *      A separate `Consumer` (the one owned by
- *      `KafkaRuntimeService` if `autoStartConsumer` is `true`)
+ *      `KafkaRuntime` if `autoStartConsumer` is `true`)
  *      processes the messages.
  *   3. `OnApplicationShutdown` clears every installed interval
  *      and disconnects the schedule producer.
  *
- * Why a dedicated service (not a method on `KafkaRuntimeService`)?
+ * Why a dedicated service (not a method on `KafkaRuntime`)?
  *   - The runtime service is `IExecutionStrategy`-facing; it
  *     knows about `JobExecution`, the in-process launch contract,
  *     and the consumer bridge. Mixing scheduler concerns in would
@@ -55,8 +55,8 @@ export const KAFKA_SCHEDULE_TOPIC = 'nest-batch-schedule';
  *     launched jobs. They share the same Kafka cluster.
  */
 @Injectable()
-export class KafkaScheduleService implements OnApplicationBootstrap, OnApplicationShutdown {
-  private readonly logger = new Logger(KafkaScheduleService.name);
+export class KafkaSchedule implements OnApplicationBootstrap, OnApplicationShutdown {
+  private readonly logger = new Logger(KafkaSchedule.name);
 
   /** Kafka producer for the scheduler (producer side only). */
   private scheduleProducer: Producer | null = null;
@@ -109,13 +109,13 @@ export class KafkaScheduleService implements OnApplicationBootstrap, OnApplicati
         this.installSchedule(entry);
       } catch (err) {
         this.logger.warn(
-          `Failed to install schedule for "${entry.jobId}::${entry.methodName}": ` +
+          `Failed to install schedule for "${entry.jobId}::${entry.scheduleName}": ` +
             `${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
     this.logger.log(
-      `KafkaScheduleService started: topic="${KAFKA_SCHEDULE_TOPIC}" ` +
+      `KafkaSchedule started: topic="${KAFKA_SCHEDULE_TOPIC}" ` +
         `schedules=${this.intervalIds.size}/${entries.length} ` +
         `(skipped=${entries.length - this.intervalIds.size} inert)`,
     );
@@ -159,13 +159,13 @@ export class KafkaScheduleService implements OnApplicationBootstrap, OnApplicati
   private installSchedule(entry: BatchScheduleEntry): void {
     if (entry.inert) {
       this.logger.log(
-        `Skipping inert schedule: ${entry.jobId}::${entry.methodName} ` +
+        `Skipping inert schedule: ${entry.jobId}::${entry.scheduleName} ` +
           `(cron="${entry.cron}", tz="${entry.timezone}")`,
       );
       return;
     }
     if (this.scheduleProducer === null) {
-      throw new Error('[KafkaScheduleService] scheduleProducer is null');
+      throw new Error('[KafkaSchedule] scheduleProducer is null');
     }
 
     // Parse the cron expression into a millisecond interval.
@@ -173,12 +173,12 @@ export class KafkaScheduleService implements OnApplicationBootstrap, OnApplicati
     const intervalMs = this.parseCronToIntervalMs(entry.cron);
     if (intervalMs === null) {
       this.logger.warn(
-        `Unsupported cron pattern "${entry.cron}" for ${entry.jobId}::${entry.methodName}; skipping`,
+        `Unsupported cron pattern "${entry.cron}" for ${entry.jobId}::${entry.scheduleName}; skipping`,
       );
       return;
     }
 
-    const schedulerKey = `${entry.jobId}::${entry.methodName}`;
+    const schedulerKey = `${entry.jobId}::${entry.scheduleName}`;
     const intervalId = setInterval(() => {
       void this.fireSchedule(entry, schedulerKey);
     }, intervalMs);
@@ -192,16 +192,14 @@ export class KafkaScheduleService implements OnApplicationBootstrap, OnApplicati
   /**
    * Fire a single schedule: produce a message to the schedule topic.
    */
-  private async fireSchedule(
-    entry: BatchScheduleEntry,
-    schedulerKey: string,
-  ): Promise<void> {
+  private async fireSchedule(entry: BatchScheduleEntry, schedulerKey: string): Promise<void> {
     if (this.scheduleProducer === null) return;
 
     const message: Message = {
       key: schedulerKey,
       value: JSON.stringify({
         jobId: entry.jobId,
+        scheduleName: entry.scheduleName,
         methodName: entry.methodName,
         timestamp: Date.now(),
       }),

@@ -32,9 +32,7 @@ export interface RedisFixture {
  * re-typing the host/port pair.
  */
 export const BULLMQ_E2E_REDIS_HOST = process.env['BULLMQ_E2E_REDIS_HOST'] ?? '127.0.0.1';
-export const BULLMQ_E2E_REDIS_PORT = Number(
-  process.env['BULLMQ_E2E_REDIS_PORT'] ?? '6379',
-);
+export const BULLMQ_E2E_REDIS_PORT = Number(process.env['BULLMQ_E2E_REDIS_PORT'] ?? '6379');
 
 /**
  * Check whether the configured Redis is reachable. Returns a tuple of
@@ -59,7 +57,7 @@ export const BULLMQ_E2E_REDIS_PORT = Number(
  *      uses (incl. `skipWaitingForReady: true`), wait for the
  *      client to become `ready`, then enqueue a probe job. This
  *      is the only check that actually exercises the
- *      `BullmqRuntimeService` → `Queue.add()` path, which is
+ *      `BullmqRuntime` → `Queue.add()` path, which is
  *      where the live tests fail when the dev environment
  *      cannot serve BullMQ-shaped traffic.
  */
@@ -343,7 +341,7 @@ export async function buildBullmqE2EModule(options: {
 
   await app.init();
 
-  // BullmqRuntimeService constructs the Queue / Worker /
+  // BullmqRuntime constructs the Queue / Worker /
   // QueueEvents in `onApplicationBootstrap`, but the ioredis
   // client inside the Queue is in 'connecting' state at that
   // point (the connection is lazy). The service's
@@ -362,8 +360,8 @@ export async function buildBullmqE2EModule(options: {
   // The runtime service is imported directly from its module
   // file (it is NOT re-exported from the package barrel) so we
   // can resolve it by class.
-  const { BullmqRuntimeService } = await import('../src/bullmq-runtime.service');
-  const runtime = app.get(BullmqRuntimeService) as unknown as {
+  const { BullmqRuntime } = await import('../src/bullmq-runtime');
+  const runtime = app.get(BullmqRuntime) as unknown as {
     queue: import('bullmq').Queue | null;
   };
   if (runtime.queue) {
@@ -387,7 +385,7 @@ export async function buildBullmqE2EModule(options: {
 /**
  * Convenience: `it` wrapper that skips when Redis is unreachable.
  * Use instead of plain `it(...)` for any test that talks to the
- * `BullmqWorkerService` / `BullmqExecutionStrategy`.
+ * `BullmqRuntime` / `BullmqExecutionStrategy`.
  *
  * The test file's `beforeAll` must call `setRedisAvailability()`
  * first (this helper consults the cached result, so registration
@@ -474,9 +472,7 @@ const _tracked: Array<() => Promise<void>> = [];
  * current test. Mirrors the `afterEach` style in
  * `packages/core/tests/e2e/library-smoke.test.ts`.
  */
-export function trackBullmqE2EModule(
-  moduleRef: import('@nestjs/core').TestingModule,
-): void {
+export function trackBullmqE2EModule(moduleRef: import('@nestjs/core').TestingModule): void {
   _tracked.push(() => moduleRef.close());
 }
 
@@ -505,9 +501,7 @@ afterEach(async () => {
  * cleanup convenience.
  */
 export function makeKeyPrefix(suiteName: string): string {
-  return `e2e:${suiteName}:${process.pid}:${Date.now()}:${Math.random()
-    .toString(36)
-    .slice(2, 8)}:`;
+  return `e2e:${suiteName}:${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}:`;
 }
 
 // ---------------------------------------------------------------------------

@@ -22,26 +22,22 @@ const STALE_PHRASE_CHECKS: readonly PhraseCheck[] = [
   {
     phrase: 'Drizzle not in this release',
     files: ['MIGRATION.md', 'README.md', 'docs/FAQ.md', 'docs/ARCHITECTURE.md'],
-    note:
-      "stale 'Drizzle not in this release' phrase found in {file} — see docs/RELEASE-0.2.0.md §3.2 / §4 (Drizzle ships in 0.2.0 as @nest-batch/drizzle)",
+    note: "stale 'Drizzle not in this release' phrase found in {file} — see docs/RELEASE-0.2.0.md §3.2 / §4 (Drizzle ships in 0.2.0 as @nest-batch/drizzle)",
   },
   {
     phrase: "what's still on the roadmap is the optional scheduler",
     files: ['README.md'],
-    note:
-      "stale 'what\\'s still on the roadmap is the optional scheduler' phrase found in {file} — see docs/RELEASE-0.2.0.md §3.1 / §4 (BullmqScheduleService.upsertJobScheduler fires cron today)",
+    note: "stale 'what\\'s still on the roadmap is the optional scheduler' phrase found in {file} — see docs/RELEASE-0.2.0.md §3.1 / §4 (InProcessSchedule and BullmqSchedule fire cron today)",
   },
   {
     phrase: 'no Kafka transport',
     files: ['MIGRATION.md'],
-    note:
-      "stale 'no Kafka transport' clause found in {file} — see docs/RELEASE-0.2.0.md §3 (Kafka ships in 0.2.0 as @nest-batch/kafka)",
+    note: "stale 'no Kafka transport' clause found in {file} — see docs/RELEASE-0.2.0.md §3 (Kafka ships in 0.2.0 as @nest-batch/kafka)",
   },
   {
     phrase: 'Today the decorator is useful for declaring intent',
     files: ['docs/FAQ.md'],
-    note:
-      "stale 'Today the decorator is useful for declaring intent' phrase found in {file} — see docs/RELEASE-0.2.0.md §4 (BullmqScheduleService installs upsertJobScheduler for every non-inert @BatchScheduled)",
+    note: "stale 'Today the decorator is useful for declaring intent' phrase found in {file} — see docs/RELEASE-0.2.0.md §4 (InProcessSchedule and BullmqSchedule launch non-inert @BatchScheduled entries)",
   },
 ];
 
@@ -63,9 +59,7 @@ describe('T-AC-1 doc-currency (release-0.2.0)', () => {
           }
         }
         if (offenders.length > 0) {
-          throw new Error(
-            check.note.replace('{file}', offenders.join(', ')),
-          );
+          throw new Error(check.note.replace('{file}', offenders.join(', ')));
         }
         expect(offenders).toEqual([]);
       });
@@ -91,11 +85,7 @@ describe('T-AC-1 doc-currency (release-0.2.0)', () => {
   it('docs/RELEASE-0.2.0.md contains the 10-package list (3 new + 7 existing)', () => {
     const text = readDoc('docs/RELEASE-0.2.0.md');
     // 3 NEW packages from 0.2.0
-    for (const pkg of [
-      '@nest-batch/mysql',
-      '@nest-batch/webhook',
-      '@nest-batch/postgresql',
-    ]) {
+    for (const pkg of ['@nest-batch/mysql', '@nest-batch/webhook', '@nest-batch/postgresql']) {
       if (!text.includes(pkg)) {
         throw new Error(
           `docs/RELEASE-0.2.0.md is missing the NEW package "${pkg}" — see §2 (the 10 packages in 0.2.0)`,

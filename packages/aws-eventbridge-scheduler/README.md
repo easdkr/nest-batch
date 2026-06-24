@@ -17,7 +17,7 @@ Peer dependencies:
 ## What this package provides
 
 - `EventbridgeSchedulerModule`
-- `EventbridgeSchedulerService`
+- `EventBridgeScheduler`
 - EventBridge Scheduler module option types
 
 Use this package when scheduled batch definitions should be represented as AWS

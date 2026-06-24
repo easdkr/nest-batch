@@ -1,6 +1,6 @@
 import { Module, type DynamicModule, type Provider } from '@nestjs/common';
 
-import { EventBridgeSchedulerService } from './eventbridge-scheduler.service';
+import { EventBridgeScheduler } from './eventbridge-scheduler';
 import {
   EVENTBRIDGE_SCHEDULER_MODULE_OPTIONS,
   type EventBridgeSchedulerModuleOptions,
@@ -11,7 +11,7 @@ import {
 export class EventBridgeSchedulerModule {
   static forRoot(options: EventBridgeSchedulerModuleOptions): DynamicModule {
     const providers: Provider[] = [
-      EventBridgeSchedulerService,
+      EventBridgeScheduler,
       {
         provide: EVENTBRIDGE_SCHEDULER_MODULE_OPTIONS,
         useValue: resolveEventBridgeSchedulerOptions(options),
@@ -21,7 +21,7 @@ export class EventBridgeSchedulerModule {
       module: EventBridgeSchedulerModule,
       global: true,
       providers,
-      exports: [EventBridgeSchedulerService, EVENTBRIDGE_SCHEDULER_MODULE_OPTIONS],
+      exports: [EventBridgeScheduler, EVENTBRIDGE_SCHEDULER_MODULE_OPTIONS],
     };
   }
 }

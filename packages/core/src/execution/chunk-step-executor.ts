@@ -1,8 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import type { ChunkStepDefinition, ReaderRef, ProcessorRef, WriterRef } from '../core/ir';
 import { RefKind } from '../core/ir';
-import type { ItemReader, ItemProcessor, ItemStream, ItemWriter } from '../core/item';
-import type { ExecutionContext, JobRepository } from '../core/repository';
+import type {
+  ItemExecutionContext,
+  ItemReader,
+  ItemProcessor,
+  ItemStream,
+  ItemWriter,
+} from '../core/item';
+import type { ExecutionContext, JobParameters, JobRepository } from '../core/repository';
 import type { TransactionManager } from '../core/transaction';
 import { StepStatus } from '../core/status';
 import type { SkipPolicy, SkipContext } from '../policies/skip-policy';
@@ -20,9 +26,13 @@ export interface ChunkExecutionContext {
   /** Step execution id, used to scope the chunk-progress checkpoint in the
    *  step's ExecutionContext (saved as `{ lastChunkIndex }`). */
   stepExecutionId: string;
+  stepName?: string;
+  jobParameters?: JobParameters;
   jobRepository: JobRepository;
   transactionManager: TransactionManager;
   listenerInvoker: ListenerInvoker;
+  /** Full listener resolver map keyed by `${phase}:${kind}:${name}`. */
+  listenerResolvers?: ResolverMap;
   /** Map of resolved reader/processor/writer functions by name. */
   resolvers: Map<string, (...args: unknown[]) => unknown | Promise<unknown>>;
   jobExecutionId2: string; // unique key for listener resolver namespacing
@@ -90,7 +100,7 @@ type PhaseResult<T> = { kind: 'ok'; value: T } | { kind: 'skipped' };
  * live `skipCount` accumulator so the policy's budget check is consistent
  * with the accounting in the outer loop.
  */
-interface RunPhaseOptions {
+interface RunPhaseOptions<T = unknown> {
   phase: Phase;
   item: unknown;
   skipPolicy: SkipPolicy | null;
@@ -102,6 +112,9 @@ interface RunPhaseOptions {
   /** Invoked when an error is actually skipped (within budget). The caller
    *  is responsible for incrementing its own skipCount here. */
   onSkip: (err: unknown) => Promise<void>;
+  before?: () => Promise<void>;
+  after?: (value: T) => Promise<void>;
+  onError?: (err: unknown) => Promise<void>;
 }
 
 function isItemStream(value: unknown): value is ItemStream {
@@ -135,7 +148,8 @@ export class ChunkStepExecutor {
   ): Promise<ChunkExecutionResult> {
     const skipPolicy = step.skipPolicy ? compileSkipPolicy(step.skipPolicy) : null;
     const retryPolicy = step.retryPolicy ? compileRetryPolicy(step.retryPolicy) : null;
-    const skipResolvers: ResolverMap = context.skipListenerResolvers ?? new Map();
+    const listenerResolvers: ResolverMap = context.listenerResolvers ?? new Map();
+    const skipResolvers: ResolverMap = context.skipListenerResolvers ?? listenerResolvers;
 
     const skipLimit = step.skipPolicy?.limit ?? 0;
     const retryLimit = step.retryPolicy?.limit ?? 0;
@@ -190,6 +204,12 @@ export class ChunkStepExecutor {
     let openedStreams: ItemStream[] = [];
     let streamContext: ExecutionContext | null = null;
 
+    await context.listenerInvoker.invokeBefore(
+      listenerResolvers,
+      'step',
+      this.buildListenerContext(step, context),
+    );
+
     try {
       // Resolve inside the try block so a missing provider-token ref
       // surfaces as FAILED/{exitMessage: <err>}, matching the tasklet
@@ -233,8 +253,9 @@ export class ChunkStepExecutor {
               ? Math.max(0, partition.to - partition.from - readCount)
               : step.chunkSize;
           if (skipCap === 0) break;
+          const itemContext = this.buildItemContext(step, context, chunkIndex);
           for (let i = 0; i < skipCap; i++) {
-            const item = await reader.read();
+            const item = await reader.read(itemContext);
             if (item == null) break;
             drained += 1;
           }
@@ -255,7 +276,9 @@ export class ChunkStepExecutor {
         // remaining)` and `0` is a valid "no more items" cap (we
         // exit the outer loop on the next iteration).
         const remaining =
-          partition !== null ? Math.max(0, partition.to - partition.from - readCount) : step.chunkSize;
+          partition !== null
+            ? Math.max(0, partition.to - partition.from - readCount)
+            : step.chunkSize;
         if (remaining === 0) {
           // Partition is fully drained. Exit the outer loop so the
           // chunk executor returns COMPLETED with the partition's
@@ -263,9 +286,14 @@ export class ChunkStepExecutor {
           break;
         }
 
+        const itemContext = this.buildItemContext(step, context, chunkIndex);
+        const listenerContext = this.buildListenerContext(step, context, { chunkIndex });
+
+        await context.listenerInvoker.invokeBefore(listenerResolvers, 'chunk', listenerContext);
+
         // ---- READ PHASE: per-item retry+skip ----
         for (let i = 0; i < remaining && !eof; i++) {
-          const r = await this.runPhase<unknown>(() => reader.read(), {
+          const r = await this.runPhase<unknown>(() => reader.read(itemContext), {
             phase: 'read',
             item: null,
             skipPolicy,
@@ -277,6 +305,25 @@ export class ChunkStepExecutor {
               skipCount += 1;
               await context.listenerInvoker.invokeOnSkipRead(skipResolvers, err, null);
             },
+            before: async () => {
+              await context.listenerInvoker.invokeBeforeRead(listenerResolvers, listenerContext);
+            },
+            after: async (item) => {
+              if (item !== null && item !== undefined) {
+                await context.listenerInvoker.invokeAfterRead(
+                  listenerResolvers,
+                  item,
+                  listenerContext,
+                );
+              }
+            },
+            onError: async (err) => {
+              await context.listenerInvoker.invokeOnReadError(
+                listenerResolvers,
+                err,
+                listenerContext,
+              );
+            },
           });
           if (r.kind === 'skipped') continue;
           if (r.value == null) {
@@ -287,7 +334,16 @@ export class ChunkStepExecutor {
           items.push(r.value);
           readCount += 1;
         }
-        if (items.length === 0) break; // EOF (either before first read or after skips)
+        if (items.length === 0) {
+          await context.listenerInvoker.invokeAfter(listenerResolvers, 'chunk', listenerContext, {
+            status: StepStatus.COMPLETED,
+            readCount,
+            writeCount,
+            skipCount,
+            commitCount,
+          });
+          break; // EOF (either before first read or after skips)
+        }
 
         // ---- PROCESS PHASE: per-item retry+skip ----
         const processed: unknown[] = [];
@@ -296,7 +352,7 @@ export class ChunkStepExecutor {
             processed.push(item);
             continue;
           }
-          const r = await this.runPhase<unknown>(() => processor.process(item), {
+          const r = await this.runPhase<unknown>(() => processor.process(item, itemContext), {
             phase: 'process',
             item,
             skipPolicy,
@@ -307,6 +363,29 @@ export class ChunkStepExecutor {
             onSkip: async (err) => {
               skipCount += 1;
               await context.listenerInvoker.invokeOnSkipProcess(skipResolvers, item, err);
+            },
+            before: async () => {
+              await context.listenerInvoker.invokeBeforeProcess(
+                listenerResolvers,
+                item,
+                listenerContext,
+              );
+            },
+            after: async (value) => {
+              await context.listenerInvoker.invokeAfterProcess(
+                listenerResolvers,
+                item,
+                value,
+                listenerContext,
+              );
+            },
+            onError: async (err) => {
+              await context.listenerInvoker.invokeOnProcessError(
+                listenerResolvers,
+                item,
+                err,
+                listenerContext,
+              );
             },
           });
           if (r.kind === 'skipped') continue;
@@ -324,7 +403,7 @@ export class ChunkStepExecutor {
           const r = await this.runPhase<{ written: number; skipped: number } | void>(
             () =>
               context.transactionManager.withTransaction(async () => {
-                return writer.write(processed);
+                return writer.write(processed, itemContext);
               }),
             {
               phase: 'write',
@@ -337,6 +416,29 @@ export class ChunkStepExecutor {
               onSkip: async (err) => {
                 skipCount += 1;
                 await context.listenerInvoker.invokeOnSkipWrite(skipResolvers, processed, err);
+              },
+              before: async () => {
+                await context.listenerInvoker.invokeBeforeWrite(
+                  listenerResolvers,
+                  processed,
+                  listenerContext,
+                );
+              },
+              after: async (value) => {
+                await context.listenerInvoker.invokeAfterWrite(
+                  listenerResolvers,
+                  processed,
+                  value,
+                  listenerContext,
+                );
+              },
+              onError: async (err) => {
+                await context.listenerInvoker.invokeOnWriteError(
+                  listenerResolvers,
+                  processed,
+                  err,
+                  listenerContext,
+                );
               },
             },
           );
@@ -370,6 +472,14 @@ export class ChunkStepExecutor {
           stepExecutionId: context.stepExecutionId,
         });
 
+        await context.listenerInvoker.invokeAfter(listenerResolvers, 'chunk', listenerContext, {
+          status: StepStatus.COMPLETED,
+          readCount,
+          writeCount,
+          skipCount,
+          commitCount: commitCount + 1,
+        });
+
         commitCount += 1;
         chunkIndex += 1;
       }
@@ -378,7 +488,7 @@ export class ChunkStepExecutor {
       openedStreams = [];
       await this.closeStreams(streamsToClose);
 
-      return {
+      const result: ChunkExecutionResult = {
         status: StepStatus.COMPLETED,
         exitCode: 'COMPLETED',
         exitMessage: '',
@@ -387,6 +497,13 @@ export class ChunkStepExecutor {
         skipCount,
         commitCount,
       };
+      await context.listenerInvoker.invokeAfter(
+        listenerResolvers,
+        'step',
+        this.buildListenerContext(step, context),
+        result,
+      );
+      return result;
     } catch (err) {
       let finalError = err;
       const streamsToClose = openedStreams;
@@ -396,7 +513,13 @@ export class ChunkStepExecutor {
       } catch (closeErr) {
         finalError = closeErr;
       }
-      return {
+      await context.listenerInvoker.invokeOnError(
+        listenerResolvers,
+        'chunk',
+        this.buildListenerContext(step, context, { chunkIndex }),
+        finalError,
+      );
+      const result: ChunkExecutionResult = {
         status: StepStatus.FAILED,
         exitCode: 'FAILED',
         exitMessage: finalError instanceof Error ? finalError.message : String(finalError),
@@ -405,7 +528,62 @@ export class ChunkStepExecutor {
         skipCount,
         commitCount,
       };
+      await context.listenerInvoker.invokeOnError(
+        listenerResolvers,
+        'step',
+        this.buildListenerContext(step, context),
+        finalError,
+      );
+      await context.listenerInvoker.invokeAfter(
+        listenerResolvers,
+        'step',
+        this.buildListenerContext(step, context),
+        result,
+      );
+      return result;
     }
+  }
+
+  private buildListenerContext(
+    step: ChunkStepDefinition,
+    context: ChunkExecutionContext,
+    extra: Record<string, unknown> = {},
+  ): {
+    jobExecutionId: string;
+    stepExecutionId: string;
+    stepName: string;
+    jobParameters: JobParameters;
+    [extra: string]: unknown;
+  } {
+    return {
+      jobExecutionId: context.jobExecutionId,
+      stepExecutionId: context.stepExecutionId,
+      stepName: context.stepName ?? step.id,
+      jobParameters: context.jobParameters ?? {},
+      ...extra,
+    };
+  }
+
+  private buildItemContext(
+    step: ChunkStepDefinition,
+    context: ChunkExecutionContext,
+    chunkIndex: number,
+  ): ItemExecutionContext {
+    return {
+      jobExecutionId: context.jobExecutionId,
+      stepExecutionId: context.stepExecutionId,
+      stepName: context.stepName ?? step.id,
+      jobParameters: context.jobParameters ?? {},
+      chunkIndex,
+      getExecutionContext: async () =>
+        context.jobRepository.getExecutionContext({ stepExecutionId: context.stepExecutionId }),
+      saveExecutionContext: async (ctx: ExecutionContext) => {
+        await context.jobRepository.saveExecutionContext(
+          { stepExecutionId: context.stepExecutionId },
+          ctx,
+        );
+      },
+    };
   }
 
   private async updateStreams(
@@ -443,7 +621,7 @@ export class ChunkStepExecutor {
    */
   private async runPhase<T>(
     op: () => Promise<T>,
-    options: RunPhaseOptions,
+    options: RunPhaseOptions<T>,
   ): Promise<PhaseResult<T>> {
     let attempt = 1;
     // Outer safety cap: when a retry policy exists, allow many iterations;
@@ -452,10 +630,12 @@ export class ChunkStepExecutor {
     const outerCap = options.retryPolicy ? 999 : 1;
 
     while (attempt <= outerCap) {
+      if (options.before) await options.before();
+      let value: T;
       try {
-        const value = await op();
-        return { kind: 'ok', value };
+        value = await op();
       } catch (err) {
+        if (options.onError) await options.onError(err);
         // 1) Skip consultation: is this error skippable, and is there budget?
         if (options.skipPolicy) {
           // Use the policy's `shouldSkip` with `skipCount: 0` to get a pure
@@ -513,6 +693,8 @@ export class ChunkStepExecutor {
         // 3) Neither skippable nor retryable: re-throw the original error.
         throw err;
       }
+      if (options.after) await options.after(value);
+      return { kind: 'ok', value };
     }
 
     // Defensive: the outer cap should never be reached when a retry policy
@@ -529,7 +711,11 @@ export class ChunkStepExecutor {
       if (typeof result === 'function') {
         return { read: result as ItemReader['read'] };
       }
-      if (result !== null && typeof result === 'object' && typeof (result as ItemReader).read === 'function') {
+      if (
+        result !== null &&
+        typeof result === 'object' &&
+        typeof (result as ItemReader).read === 'function'
+      ) {
         return result as ItemReader;
       }
       return { read: ref.fn as ItemReader['read'] };
@@ -552,7 +738,11 @@ export class ChunkStepExecutor {
       if (typeof result === 'function') {
         return { process: result as ItemProcessor['process'] };
       }
-      if (result !== null && typeof result === 'object' && typeof (result as ItemProcessor).process === 'function') {
+      if (
+        result !== null &&
+        typeof result === 'object' &&
+        typeof (result as ItemProcessor).process === 'function'
+      ) {
         return result as ItemProcessor;
       }
       return { process: ref.fn as ItemProcessor['process'] };
@@ -575,7 +765,11 @@ export class ChunkStepExecutor {
       if (typeof result === 'function') {
         return { write: result as ItemWriter['write'] };
       }
-      if (result !== null && typeof result === 'object' && typeof (result as ItemWriter).write === 'function') {
+      if (
+        result !== null &&
+        typeof result === 'object' &&
+        typeof (result as ItemWriter).write === 'function'
+      ) {
         return result as ItemWriter;
       }
       return { write: ref.fn as ItemWriter['write'] };

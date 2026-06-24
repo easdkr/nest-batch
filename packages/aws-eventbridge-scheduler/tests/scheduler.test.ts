@@ -1,20 +1,18 @@
 import { describe, expect, test } from 'vitest';
 import type { BatchScheduleEntry, BatchScheduleRegistry } from '@nest-batch/core';
 
-import {
-  EventBridgeSchedulerService,
-  toEventBridgeCron,
-} from '../src/eventbridge-scheduler.service';
+import { EventBridgeScheduler, toEventBridgeCron } from '../src/eventbridge-scheduler';
 
 const entry: BatchScheduleEntry = {
   jobId: 'import-products',
   methodName: 'run',
+  scheduleName: 'nightly',
   cron: '*/5 * * * *',
   timezone: 'Asia/Seoul',
   inert: false,
 };
 
-describe('EventBridgeSchedulerService', () => {
+describe('EventBridgeScheduler', () => {
   test('converts a 5-field cron expression to EventBridge Scheduler cron', () => {
     expect(toEventBridgeCron('*/5 * * * *')).toBe('cron(*/5 * * * * *)');
   });
@@ -25,7 +23,7 @@ describe('EventBridgeSchedulerService', () => {
         return [entry];
       },
     } as unknown as BatchScheduleRegistry;
-    const service = new EventBridgeSchedulerService(registry, {
+    const service = new EventBridgeScheduler(registry, {
       client: {
         async createSchedule() {
           return {};
@@ -42,12 +40,13 @@ describe('EventBridgeSchedulerService', () => {
     });
 
     const input = service.buildCreateScheduleInput(entry);
-    expect(input.Name).toBe('batch-import-products-run');
+    expect(input.Name).toBe('batch-import-products-nightly');
     expect(input.ScheduleExpression).toBe('cron(*/5 * * * * *)');
     expect(input.ScheduleExpressionTimezone).toBe('Asia/Seoul');
     expect(input.Target.Arn).toBe('arn:aws:sqs:ap-northeast-2:123:batch');
     expect(JSON.parse(input.Target.Input ?? '{}')).toMatchObject({
       jobId: 'import-products',
+      scheduleName: 'nightly',
       methodName: 'run',
     });
   });

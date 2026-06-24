@@ -126,21 +126,17 @@ class Fixtures {
 
 describe('item decorator metadata (happy)', () => {
   it('@ItemReader() sets BATCH_ITEM_READER_METADATA on the method', () => {
-    expect(Reflect.getMetadata(BATCH_ITEM_READER_METADATA, Fixtures.prototype, 'read')).toBe(
-      true,
-    );
+    expect(Reflect.getMetadata(BATCH_ITEM_READER_METADATA, Fixtures.prototype, 'read')).toBe(true);
   });
 
   it('@ItemProcessor() sets BATCH_ITEM_PROCESSOR_METADATA on the method', () => {
-    expect(
-      Reflect.getMetadata(BATCH_ITEM_PROCESSOR_METADATA, Fixtures.prototype, 'process'),
-    ).toBe(true);
+    expect(Reflect.getMetadata(BATCH_ITEM_PROCESSOR_METADATA, Fixtures.prototype, 'process')).toBe(
+      true,
+    );
   });
 
   it('@ItemWriter() sets BATCH_ITEM_WRITER_METADATA on the method', () => {
-    expect(Reflect.getMetadata(BATCH_ITEM_WRITER_METADATA, Fixtures.prototype, 'write')).toBe(
-      true,
-    );
+    expect(Reflect.getMetadata(BATCH_ITEM_WRITER_METADATA, Fixtures.prototype, 'write')).toBe(true);
   });
 });
 
@@ -194,6 +190,7 @@ interface ExpectedListener {
   method: string;
   kind: ListenerKind;
   phase: ListenerPhase;
+  skipKind?: 'read' | 'process' | 'write';
 }
 
 const EXPECTED_LISTENERS: readonly ExpectedListener[] = [
@@ -220,16 +217,20 @@ const EXPECTED_LISTENERS: readonly ExpectedListener[] = [
   { method: 'afterWrite', kind: 'item-write', phase: 'after' },
   { method: 'onWriteError', kind: 'item-write', phase: 'on-error' },
   // Skip (phase 'after' is a placeholder; real implementation in Task 25)
-  { method: 'onSkipRead', kind: 'skip', phase: 'after' },
-  { method: 'onSkipProcess', kind: 'skip', phase: 'after' },
-  { method: 'onSkipWrite', kind: 'skip', phase: 'after' },
+  { method: 'onSkipRead', kind: 'skip', phase: 'after', skipKind: 'read' },
+  { method: 'onSkipProcess', kind: 'skip', phase: 'after', skipKind: 'process' },
+  { method: 'onSkipWrite', kind: 'skip', phase: 'after', skipKind: 'write' },
 ] as const;
 
 describe('listener decorator metadata (happy)', () => {
-  for (const { method, kind, phase } of EXPECTED_LISTENERS) {
+  for (const { method, kind, phase, skipKind } of EXPECTED_LISTENERS) {
     it(`@${method.replace(/^./, (c) => c.toUpperCase())}() → kind='${kind}', phase='${phase}'`, () => {
       const meta = Reflect.getMetadata(BATCH_LISTENER_METADATA, Fixtures.prototype, method);
-      expect(meta).toEqual({ kind, phase });
+      expect(meta).toEqual({
+        kind,
+        phase,
+        ...(skipKind !== undefined ? { skipKind } : {}),
+      });
     });
   }
 
@@ -258,7 +259,9 @@ describe('listener decorator metadata (failure / negative)', () => {
     class NoListeners {
       plain(): void {}
     }
-    expect(Reflect.getMetadata(BATCH_LISTENER_METADATA, NoListeners.prototype, 'plain')).toBeUndefined();
+    expect(
+      Reflect.getMetadata(BATCH_LISTENER_METADATA, NoListeners.prototype, 'plain'),
+    ).toBeUndefined();
   });
 
   it('listener metadata on one method does not leak to other methods', () => {

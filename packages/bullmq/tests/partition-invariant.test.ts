@@ -27,7 +27,7 @@
  * Pinned source:
  *   `packages/core/src/core/ir/step-definition.ts:6-16` — the
  *     `ChunkStepDefinition` shape (extended in T8 with `partitions`).
- *   `packages/bullmq/src/bullmq-runtime.service.ts:42-61` — the
+ *   `packages/bullmq/src/bullmq-runtime.ts:42-61` — the
  *     `BullmqJobPayload` with `partitionIndex?: number`.
  *   `packages/bullmq/src/bullmq-execution-strategy.ts:41-46` — the
  *     "one job per step" enforcement comment that T8 inverts.
@@ -53,10 +53,7 @@ import {
   type JobParameters,
 } from '@nest-batch/core';
 
-import {
-  BullmqRuntimeService,
-  type BullmqJobPayload,
-} from '../src/bullmq-runtime.service';
+import { BullmqRuntime, type BullmqJobPayload } from '../src/bullmq-runtime';
 import type { ResolvedBullMqModuleOptions } from '../src/module-options';
 
 // ---------------------------------------------------------------------------
@@ -87,16 +84,18 @@ const bullmqMock = vi.hoisted(() => {
   // simulate a BullMQ worker pulling a job off the queue.
   const workerClose = vi.fn(async () => undefined);
   let capturedProcessor: ((job: { data: BullmqJobPayload }) => Promise<void>) | null = null;
-  const Worker = vi.fn().mockImplementation(
-    (
-      _name: string,
-      processor: (job: { data: BullmqJobPayload }) => Promise<void>,
-      _opts: unknown,
-    ) => {
-      capturedProcessor = processor;
-      return { close: workerClose };
-    },
-  );
+  const Worker = vi
+    .fn()
+    .mockImplementation(
+      (
+        _name: string,
+        processor: (job: { data: BullmqJobPayload }) => Promise<void>,
+        _opts: unknown,
+      ) => {
+        capturedProcessor = processor;
+        return { close: workerClose };
+      },
+    );
 
   const queueEventsClose = vi.fn(async () => undefined);
   const QueueEvents = vi.fn().mockImplementation(() => ({
@@ -179,12 +178,14 @@ function makePartitionedChunkJob(args: {
   /** Optional explicit range resolver; defaults to even split. */
   range?: (i: number, n: number) => readonly [number, number];
 }): JobDefinition {
-  const range = args.range ?? ((i: number, n: number) => {
-    const total = args.rowCount;
-    const from = Math.floor((i * total) / n);
-    const to = Math.floor(((i + 1) * total) / n);
-    return [from, to] as const;
-  });
+  const range =
+    args.range ??
+    ((i: number, n: number) => {
+      const total = args.rowCount;
+      const from = Math.floor((i * total) / n);
+      const to = Math.floor(((i + 1) * total) / n);
+      return [from, to] as const;
+    });
 
   return {
     id: args.id,
@@ -224,8 +225,7 @@ function makePartitionedChunkJob(args: {
           fn: () => ({
             write: async (items: number[]) => {
               const idx = currentPartitionIndex;
-              args.partitionWriteCounts[idx] =
-                (args.partitionWriteCounts[idx] ?? 0) + items.length;
+              args.partitionWriteCounts[idx] = (args.partitionWriteCounts[idx] ?? 0) + items.length;
               args.totalCommitCount.value += items.length;
             },
           }),
@@ -252,21 +252,16 @@ function makePartitionedChunkJob(args: {
 // ---------------------------------------------------------------------------
 
 /**
- * Build a fully-wired `BullmqRuntimeService` against the in-memory
+ * Build a fully-wired `BullmqRuntime` against the in-memory
  * repository / tx manager / executor graph. Mirrors the production DI
  * graph minus the BullMQ clients (which are mocked).
  */
-function buildRuntimeService(args: {
+function buildRuntime(args: {
   registry: JobRegistry;
   repository: InMemoryJobRepository;
   jobExecutor: JobExecutor;
-}): BullmqRuntimeService {
-  return new BullmqRuntimeService(
-    baseOptions,
-    args.repository,
-    args.registry,
-    args.jobExecutor,
-  );
+}): BullmqRuntime {
+  return new BullmqRuntime(baseOptions, args.repository, args.registry, args.jobExecutor);
 }
 
 /**
@@ -296,7 +291,7 @@ function buildJobExecutor(repository: InMemoryJobRepository): JobExecutor {
  * payload. Returns the list of `BullmqJobPayload`s in enqueue order.
  */
 async function captureEnqueuedPayloads(
-  runtime: BullmqRuntimeService,
+  runtime: BullmqRuntime,
   jobDef: JobDefinition,
   execution: JobExecution,
 ): Promise<BullmqJobPayload[]> {
@@ -362,14 +357,12 @@ describe('BullMQ partition orchestration — T-AC-3 first half (invariant)', () 
     });
     registry.register(jobDef);
 
-    const runtime = buildRuntimeService({ registry, repository, jobExecutor });
+    const runtime = buildRuntime({ registry, repository, jobExecutor });
     runtime.onApplicationBootstrap();
 
-    const execution = await repository.createExecutionAtomic(
-      jobDef.id,
-      'partitioned-4::k1',
-      { nonce: 'k1' },
-    );
+    const execution = await repository.createExecutionAtomic(jobDef.id, 'partitioned-4::k1', {
+      nonce: 'k1',
+    });
 
     const payloads = await captureEnqueuedPayloads(runtime, jobDef, execution);
 
@@ -410,14 +403,12 @@ describe('BullMQ partition orchestration — T-AC-3 first half (invariant)', () 
     });
     registry.register(jobDef);
 
-    const runtime = buildRuntimeService({ registry, repository, jobExecutor });
+    const runtime = buildRuntime({ registry, repository, jobExecutor });
     runtime.onApplicationBootstrap();
 
-    const execution = await repository.createExecutionAtomic(
-      jobDef.id,
-      'partition-invariant::k1',
-      { nonce: 'k1' },
-    );
+    const execution = await repository.createExecutionAtomic(jobDef.id, 'partition-invariant::k1', {
+      nonce: 'k1',
+    });
 
     // Producer side: enqueue 4 jobs, one per partition.
     const payloads = await captureEnqueuedPayloads(runtime, jobDef, execution);

@@ -86,6 +86,7 @@ export class DefinitionCompiler {
     const listenerDefs: ListenerDefinition[] = discovered.listenerMethods.map((l) => ({
       kind: l.kind,
       phase: l.phase,
+      ...(l.skipKind !== undefined ? { skipKind: l.skipKind } : {}),
       nonCritical: l.nonCritical,
       ref: this.buildListenerRef(discovered, classToken, l.methodName),
     }));
@@ -252,7 +253,11 @@ export class DefinitionCompiler {
         throw new InvalidFlowGraphError(
           'INVALID_PARTITIONS',
           `Step "${step.options.id}" has invalid partitions: ${err.message}`,
-          { jobId: discovered.jobOptions.id, stepId: step.options.id, partitions: step.options.partitions },
+          {
+            jobId: discovered.jobOptions.id,
+            stepId: step.options.id,
+            partitions: step.options.partitions,
+          },
         );
       }
       throw err;
@@ -267,12 +272,14 @@ export class DefinitionCompiler {
       skipPolicy: step.options.skipPolicy,
       retryPolicy: step.options.retryPolicy,
       listeners: [],
-      ...(step.options.partitions !== undefined
-        ? { partitions: step.options.partitions }
-        : {}),
+      ...(step.options.partitions !== undefined ? { partitions: step.options.partitions } : {}),
       ...(processor
         ? {
-            processor: this.buildItemMethodRef(discovered, classToken, processor) satisfies ProcessorRef,
+            processor: this.buildItemMethodRef(
+              discovered,
+              classToken,
+              processor,
+            ) satisfies ProcessorRef,
           }
         : {}),
     };

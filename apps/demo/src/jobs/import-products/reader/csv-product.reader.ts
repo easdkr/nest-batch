@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ItemReader } from '@nest-batch/core';
+import { ItemReader, type ItemExecutionContext } from '@nest-batch/core';
 import { parse } from 'csv-parse';
 import { readFileSync, createReadStream } from 'fs';
 import { Readable } from 'stream';
@@ -35,7 +35,7 @@ export class CsvProductReader implements ItemReader<RawProductRow> {
     }
   }
 
-  async read(): Promise<RawProductRow | null> {
+  async read(_ctx?: ItemExecutionContext): Promise<RawProductRow | null> {
     if (this.finished) return null;
     if (!this.iterator) {
       const parser = createReadStream(this.filePath).pipe(

@@ -3,8 +3,8 @@ import { Module, type DynamicModule, type Provider } from '@nestjs/common';
 
 import { resolveKafkaConnection } from '../connection';
 import { KafkaExecutionStrategy } from '../kafka-execution-strategy';
-import { KafkaRuntimeService } from '../kafka-runtime.service';
-import { KafkaScheduleService } from '../kafka-schedule.service';
+import { KafkaRuntime } from '../kafka-runtime';
+import { KafkaSchedule } from '../kafka-schedule';
 import {
   KAFKA_MODULE_OPTIONS,
   type KafkaModuleOptions,
@@ -35,14 +35,8 @@ const OPTIONS_FACTORY: symbol = Symbol.for('@nest-batch/kafka/OPTIONS_FACTORY');
  * to the host application.
  */
 const ADAPTER_EXPORTS: ReadonlyArray<
-  symbol | typeof KafkaExecutionStrategy | typeof KafkaRuntimeService | typeof KafkaScheduleService
-> = [
-  EXECUTION_STRATEGY,
-  KAFKA_MODULE_OPTIONS,
-  KafkaExecutionStrategy,
-  KafkaRuntimeService,
-  KafkaScheduleService,
-];
+  symbol | typeof KafkaExecutionStrategy | typeof KafkaRuntime | typeof KafkaSchedule
+> = [EXECUTION_STRATEGY, KAFKA_MODULE_OPTIONS, KafkaExecutionStrategy, KafkaRuntime, KafkaSchedule];
 
 /**
  * `KafkaAdapter` — the transport adapter for `@nest-batch/kafka`
@@ -52,8 +46,8 @@ const ADAPTER_EXPORTS: ReadonlyArray<
  * Overrides the default `EXECUTION_STRATEGY` token with a Kafka-
  * backed `IExecutionStrategy` (`KafkaExecutionStrategy`) and wires
  * the runtime services that own the Kafka client lifecycle
- * (`KafkaRuntimeService` for step produce + consume, plus
- * `KafkaScheduleService` for `@BatchScheduled` cron entries).
+ * (`KafkaRuntime` for step produce + consume, plus
+ * `KafkaSchedule` for `@BatchScheduled` cron entries).
  *
  * Two static methods:
  *
@@ -120,9 +114,7 @@ export class KafkaAdapter {
   static forRootAsync(asyncOptions: {
     imports?: DynamicModule['imports'];
     inject?: readonly unknown[];
-    useFactory: (
-      ...args: unknown[]
-    ) => Promise<KafkaModuleOptions> | KafkaModuleOptions;
+    useFactory: (...args: unknown[]) => Promise<KafkaModuleOptions> | KafkaModuleOptions;
   }): BatchAdapter {
     const factoryProvider: Provider = {
       provide: OPTIONS_FACTORY,
@@ -132,9 +124,7 @@ export class KafkaAdapter {
 
     const mergedOptionsProvider: Provider = {
       provide: KAFKA_MODULE_OPTIONS,
-      useFactory: (
-        fromFactory: KafkaModuleOptions | undefined,
-      ): ResolvedKafkaModuleOptions => {
+      useFactory: (fromFactory: KafkaModuleOptions | undefined): ResolvedKafkaModuleOptions => {
         return Object.freeze({
           connection: resolveKafkaConnection(fromFactory?.connection),
           autoStartConsumer: fromFactory?.autoStartConsumer ?? false,
@@ -178,13 +168,11 @@ export class KafkaAdapter {
  * Build the static provider list shared by `forRoot()` and
  * `forRootAsync()`.
  */
-function buildStaticProviders(
-  resolved: ResolvedKafkaModuleOptions,
-): Provider[] {
+function buildStaticProviders(resolved: ResolvedKafkaModuleOptions): Provider[] {
   return [
     KafkaExecutionStrategy,
-    KafkaRuntimeService,
-    KafkaScheduleService,
+    KafkaRuntime,
+    KafkaSchedule,
     {
       provide: EXECUTION_STRATEGY,
       useExisting: KafkaExecutionStrategy,

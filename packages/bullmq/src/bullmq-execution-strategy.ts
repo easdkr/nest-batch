@@ -8,10 +8,7 @@ import {
   type LaunchResult,
 } from '@nest-batch/core';
 
-import {
-  BullmqRuntimeService,
-  BULLMQ_STRATEGY_NAME,
-} from './bullmq-runtime.service';
+import { BullmqRuntime, BULLMQ_STRATEGY_NAME } from './bullmq-runtime';
 
 /**
  * BullMQ execution strategy — the `@nest-batch/core`-facing
@@ -21,7 +18,7 @@ import {
  * Design (T18):
  *   - The actual BullMQ resource ownership (queue / worker /
  *     queue-events lifecycle, connection tuning, event bridge)
- *     lives in `BullmqRuntimeService`. This class is a thin
+ *     lives in `BullmqRuntime`. This class is a thin
  *     adapter that maps the `IExecutionStrategy` contract to
  *     the runtime service's `launch()` shape.
  *   - Splitting the two lets the runtime service be
@@ -51,7 +48,7 @@ export class BullMqExecutionStrategy implements IExecutionStrategy {
 
   private readonly logger = new Logger(BullMqExecutionStrategy.name);
 
-  constructor(private readonly runtime: BullmqRuntimeService) {}
+  constructor(private readonly runtime: BullmqRuntime) {}
 
   /**
    * Enqueue the work and return the BullMQ job id. The DB

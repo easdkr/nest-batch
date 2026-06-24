@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ItemProcessor } from '@nest-batch/core';
+import { ItemProcessor, type ItemExecutionContext } from '@nest-batch/core';
 import { ProductEntity } from '../../../entities/product.entity';
 import { isValidCategory, VALID_CATEGORIES } from '../../../constants/categories';
 import { InvalidProductError } from '../../../errors/invalid-product.error';
@@ -7,7 +7,7 @@ import type { RawProductRow } from '../reader/csv-product.reader';
 
 @Injectable()
 export class ProductProcessor implements ItemProcessor<RawProductRow, ProductEntity | null> {
-  async process(item: RawProductRow): Promise<ProductEntity | null> {
+  async process(item: RawProductRow, _ctx?: ItemExecutionContext): Promise<ProductEntity | null> {
     // Validate
     if (!item.name || item.name.trim() === '') {
       throw new InvalidProductError('name', item.name ?? '', 'Name is required');

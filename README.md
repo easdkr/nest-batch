@@ -272,41 +272,77 @@ export class AppModule {}
 `MikroOrmAdapter.forRoot()` takes no arguments on purpose. The host
 owns the `MikroOrmModule.forRoot()` call above, and the adapter
 only registers the `JOB_REPOSITORY_TOKEN` and
-`TRANSACTION_MANAGER_TOKEN` bindings globally. The `transport` slot
-picks the execution strategy: swap `BullmqAdapter.forRoot({...})`
-for `InProcessAdapter.forRoot()` (imported from `@nest-batch/core`)
-to drop BullMQ and run the job in-process for tests or local
-development. `JobLauncher.launch()` doesn't care which transport is
-wired, so the controller code is unchanged.
+`TRANSACTION_MANAGER_TOKEN` bindings globally. It also aliases
+`MikroOrmDriverProvider` to the host `EntityManager`, so consuming
+apps do not need to add their own temporary provider for the batch
+repository. The `transport` slot picks the execution strategy: swap
+`BullmqAdapter.forRoot({...})` for `InProcessAdapter.forRoot()`
+(imported from `@nest-batch/core`) to drop BullMQ and run the job
+in-process for tests or local development. `JobLauncher.launch()`
+doesn't care which transport is wired, so the controller code is
+unchanged.
 
 ### 3. Job
 
 ```ts
 // src/jobs/import-products.job.ts
 import { Injectable } from '@nestjs/common';
-import { Jobable, ItemReader, ItemProcessor, ItemWriter, BatchDecorators } from '@nest-batch/core';
+import {
+  BatchDecorators,
+  BatchScheduled,
+  type ItemExecutionContext,
+  type ListenerContext,
+} from '@nest-batch/core';
 
 @Injectable()
-@Jobable({ id: 'import-products' })
+@BatchDecorators.Jobable({ id: 'import-products' })
 export class ImportProductsJob {
+  @BatchScheduled('0 * * * *', { name: 'hourly-import', timezone: 'UTC' })
+  scheduledImport(): void {
+    // Marker method for schedule metadata.
+  }
+
+  @BatchDecorators.Stepable({ id: 'import-products', chunkSize: 100 })
+  importProducts(): void {
+    // Marker method for step metadata.
+  }
+
   @BatchDecorators.ItemReader()
-  async read(): Promise<ProductRow | null> {
-    // Read one row at a time from the input source.
+  async read(ctx?: ItemExecutionContext): Promise<ProductRow | null> {
+    const file = ctx?.jobParameters.file;
+    // Read one row at a time from the launch parameter's file.
   }
 
   @BatchDecorators.ItemProcessor()
-  async process(row: ProductRow): Promise<Product | null> {
+  async process(row: ProductRow, _ctx?: ItemExecutionContext): Promise<Product | null> {
     // Transform / validate / skip.
   }
 
   @BatchDecorators.ItemWriter()
-  async write(items: Product[]): Promise<void> {
+  async write(items: Product[], _ctx?: ItemExecutionContext): Promise<void> {
     // Persist a chunk.
+  }
+
+  @BatchDecorators.AfterStep()
+  afterStep(ctx: ListenerContext, result?: { status?: string }): void {
+    // Record metrics, cleanup per-step reader state, emit logs, etc.
   }
 }
 ```
 
 ### 4. Launch
+
+There are two launch paths, and both converge on the same runtime
+contract:
+
+- `@BatchScheduled(...)` declares the cron trigger. The selected
+  transport consumes that metadata and, on each fire, calls
+  `JobLauncher.launch(jobId, { scheduled: true, scheduleName,
+scheduledAt, ... })`. `InProcessAdapter` runs the cron loop inside
+  this server process; BullMQ installs a queue-backed scheduler bridge.
+- Application code can still call `JobLauncher.launch(jobId, params)`
+  for ad-hoc or API-driven runs. This is the same entry point the
+  scheduler bridge uses after the cron tick fires.
 
 ```ts
 // src/controller/batch.controller.ts
@@ -319,7 +355,7 @@ export class BatchController {
 
   @Post('import-products')
   async importProducts() {
-    return this.launcher.launch('import-products', { source: 'sample.csv' });
+    return this.launcher.launch('import-products', { file: 'sample.csv' });
   }
 }
 ```

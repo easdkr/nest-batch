@@ -18,11 +18,7 @@ import {
 } from '@nestjs/common';
 import { Kafka, Producer, Consumer, type Message } from 'kafkajs';
 
-
-import {
-  KAFKA_MODULE_OPTIONS,
-  type ResolvedKafkaModuleOptions,
-} from './module-options';
+import { KAFKA_MODULE_OPTIONS, type ResolvedKafkaModuleOptions } from './module-options';
 
 /**
  * Payload shape stored in a Kafka message's `value` field.
@@ -106,7 +102,7 @@ export const KAFKA_STRATEGY_NAME = 'kafka';
  *      so the chunk loop is bounded to the partition's range.
  */
 @Injectable()
-export class KafkaRuntimeService
+export class KafkaRuntime
   implements IExecutionStrategy, OnApplicationBootstrap, OnApplicationShutdown
 {
   /**
@@ -115,7 +111,7 @@ export class KafkaRuntimeService
    */
   readonly name = KAFKA_STRATEGY_NAME;
 
-  private readonly logger = new Logger(KafkaRuntimeService.name);
+  private readonly logger = new Logger(KafkaRuntime.name);
 
   /** Kafka producer (producer side). */
   private producer: Producer | null = null;
@@ -172,12 +168,12 @@ export class KafkaRuntimeService
         allowAutoTopicCreation: true,
       });
       this.logger.log(
-        `KafkaRuntimeService started: topic="${this.options.topic}" ` +
+        `KafkaRuntime started: topic="${this.options.topic}" ` +
           `consumer=auto, groupId="${this.options.consumerGroupId}"`,
       );
     } else {
       this.logger.log(
-        `KafkaRuntimeService started: topic="${this.options.topic}" ` +
+        `KafkaRuntime started: topic="${this.options.topic}" ` +
           `consumer=manual (autoStartConsumer=false)`,
       );
     }
@@ -272,7 +268,7 @@ export class KafkaRuntimeService
   ): Promise<{ kind: 'enqueued'; queueJobId: string }> {
     if (this.producer === null) {
       throw new Error(
-        `[KafkaRuntimeService] launch() called before onApplicationBootstrap — ` +
+        `[KafkaRuntime] launch() called before onApplicationBootstrap — ` +
           'module is not initialized. Did you forget to import KafkaAdapter?',
       );
     }
@@ -323,9 +319,7 @@ export class KafkaRuntimeService
 
       const first = result[0];
       if (result.length === 0 || first === undefined) {
-        throw new Error(
-          `[KafkaRuntimeService] send returned empty result (broker down?)`,
-        );
+        throw new Error(`[KafkaRuntime] send returned empty result (broker down?)`);
       }
 
       // KafkaJS v2 returns `baseOffset` instead of `offset` when the
@@ -333,9 +327,7 @@ export class KafkaRuntimeService
       // so the queueJobId is always populated.
       const offset = first.offset ?? (first as unknown as { baseOffset?: string }).baseOffset;
       if (offset === undefined) {
-        throw new Error(
-          `[KafkaRuntimeService] send returned undefined offset (broker down?)`,
-        );
+        throw new Error(`[KafkaRuntime] send returned undefined offset (broker down?)`);
       }
       lastQueueJobId = offset;
       this.logger.debug(
@@ -349,9 +341,7 @@ export class KafkaRuntimeService
       // (partitionOrdinals has length >= 1), so this branch is
       // unreachable in practice. Keep the explicit throw so a
       // future refactor cannot quietly produce zero messages.
-      throw new Error(
-        `[KafkaRuntimeService] produced zero messages for execution ${ctx.executionId}`,
-      );
+      throw new Error(`[KafkaRuntime] produced zero messages for execution ${ctx.executionId}`);
     }
     return { kind: 'enqueued', queueJobId: lastQueueJobId };
   }
@@ -421,9 +411,7 @@ export class KafkaRuntimeService
 
     const execution = await this.repository.getJobExecution(payload.executionId);
     if (execution === null) {
-      throw new Error(
-        `[KafkaRuntimeService] JobExecution ${payload.executionId} not found in repository`,
-      );
+      throw new Error(`[KafkaRuntime] JobExecution ${payload.executionId} not found in repository`);
     }
     const jobDef = this.registry.get(payload.jobId);
     // `JobRegistry.get` throws `JobNotFoundError` if the

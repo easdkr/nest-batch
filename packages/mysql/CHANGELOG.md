@@ -1,6 +1,6 @@
-# @nest-batch/postgresql
+# @nest-batch/mysql
 
-## 0.3.1
+## 0.2.1
 
 ### Patch Changes
 
@@ -11,9 +11,3 @@
   - @nest-batch/drizzle@0.2.0
   - @nest-batch/prisma@0.2.0
   - @nest-batch/typeorm@0.2.0
-
-## 0.3.0
-
-### Minor Changes
-
-- Move MikroORM batch meta entities back to `@nest-batch/mikro-orm` and remove the PostgreSQL entity re-exports.

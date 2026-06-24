@@ -91,6 +91,7 @@ describe('item interfaces', () => {
     const fakeCtx: TaskletContext = {
       jobExecutionId: 'job-1',
       stepExecutionId: 'step-1',
+      jobParameters: {},
       getExecutionContext: async () => ({ data: null, version: 0 }),
       saveExecutionContext: async () => undefined,
     };
@@ -103,14 +104,15 @@ describe('item interfaces', () => {
 });
 
 describe('item interfaces re-exported from core barrel (compile-time)', () => {
-  it('all 5 types are importable from @nest-batch/core', () => {
+  it('all 6 types are importable from @nest-batch/core', () => {
     const check: [
       import('../../../src/core').ItemReader<number> | undefined,
       import('../../../src/core').ItemProcessor<number, number> | undefined,
       import('../../../src/core').ItemWriter<number> | undefined,
+      import('../../../src/core').ItemExecutionContext | undefined,
       import('../../../src/core').Tasklet | undefined,
       import('../../../src/core').TaskletContext | undefined,
-    ] = [undefined, undefined, undefined, undefined, undefined];
+    ] = [undefined, undefined, undefined, undefined, undefined, undefined];
     expect(check.every((v) => v === undefined)).toBe(true);
   });
 });

@@ -22,13 +22,8 @@
  *     returns null), so the concurrency check in `JobLauncher.launch`
  *     (scenario 7) will not reject parallel launches against the
  *     PostgreSQL backend. Documented as expected failure.
- *   - Skip listeners and job-level listeners are not yet wired through
- *     `JobExecutor` for `BuilderLambda` refs, so scenario 2 verifies
- *     the `skipCount` on the StepExecution entity (the policy's
- *     accounting) rather than counting `onSkipInProcess` invocations.
- *   - Scenario 10 tests the `ListenerInvoker` non-critical suppression
- *     primitive directly, since the full pipeline does not yet wire
- *     step-level listener resolvers.
+ *   - The demo job is decorator-discovered in these tests, including
+ *     job/step/chunk/item/skip listener metadata.
  */
 import 'reflect-metadata';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -44,6 +39,7 @@ import {
   BATCH_SCHEDULE_REGISTRY,
   BatchBuilder,
   BatchScheduleRegistry,
+  BatchExplorer,
   ChunkStepExecutor,
   DefinitionCompiler,
   EXECUTION_STRATEGY,
@@ -67,7 +63,6 @@ import {
   type IExecutionStrategy,
   type JobDefinition,
   type ItemProcessor,
-  type ItemReader,
   type ItemWriter,
   type ListenerEntry,
   type ResolverMap,
@@ -196,10 +191,9 @@ function readCsv(file: string): string {
  *  `ProductWriter` bound to the per-test `EntityManager` so committed
  *  entities actually land in the database. */
 function buildImportJobDefinition(
-  filePath: string,
+  _filePath: string,
   em: EntityManager,
   overrides: {
-    reader?: () => ItemReader;
     processor?: () => ItemProcessor;
     writer?: () => ItemWriter;
   } = {},
@@ -207,47 +201,14 @@ function buildImportJobDefinition(
   const processor = overrides.processor ?? (() => new ProductProcessor());
   const writer = overrides.writer ?? (() => new ProductWriter(em));
   const job = new ImportProductsJob(processor() as ProductProcessor, writer() as ProductWriter);
-  job.configure(filePath);
-
-  if (overrides.reader) {
-    Object.defineProperty(job, 'reader', {
-      configurable: true,
-      value: overrides.reader(),
-    });
+  const explorer = new BatchExplorer({ getProviders: () => [] } as never);
+  const [discovered] = explorer.discoverFromProviders([
+    { metatype: ImportProductsJob, instance: job },
+  ]);
+  if (!discovered) {
+    throw new Error('ImportProductsJob decorator metadata was not discovered');
   }
-
-  return new DefinitionCompiler().compileFromDiscovered({
-    classRef: ImportProductsJob,
-    instance: job,
-    jobOptions: Reflect.getMetadata('nest-batch:job', ImportProductsJob),
-    stepMethods: [
-      {
-        methodName: 'validateCsv',
-        options: Reflect.getMetadata('nest-batch:step', ImportProductsJob.prototype, 'validateCsv'),
-        isTasklet: true,
-      },
-      {
-        methodName: 'importProducts',
-        options: Reflect.getMetadata(
-          'nest-batch:step',
-          ImportProductsJob.prototype,
-          'importProducts',
-        ),
-        isTasklet: false,
-      },
-    ],
-    listenerMethods: [],
-    transitionMethods: [
-      {
-        methodName: 'afterValidationCompleted',
-        ...Reflect.getMetadata(
-          'nest-batch:transition',
-          ImportProductsJob.prototype,
-          'afterValidationCompleted',
-        ),
-      },
-    ],
-  });
+  return new DefinitionCompiler().compileFromDiscovered(discovered);
 }
 
 /** Build a fully-wired JobLauncher (and friends) on top of the live
@@ -429,10 +390,7 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
       expect(skus).toEqual(['SKU-001', 'SKU-006']);
 
       // Step-level: 3 rows were skipped (id=2 dup SKU, id=3 zero price,
-      // id=4 bad category). Note: skip listeners are not yet wired
-      // through the executor for `BuilderLambda` refs, so the test
-      // verifies the policy's accounting (skipCount) rather than
-      // counting `onSkipInProcess` invocations.
+      // id=4 bad category).
       const stepExec = await em.findOne(StepExecutionEntity, {
         jobExecutionId: execution.id,
         stepName: 'import-products',
@@ -799,11 +757,8 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
   testIfPostgres(
     '10. Non-critical listener: throws on invoke but the surrounding step still completes',
     async () => {
-      // The library's full pipeline does not yet wire step-level listener
-      // resolvers for `BuilderLambda` refs (job-level listeners land in a
-      // follow-up task). We therefore exercise the `ListenerInvoker`
-      // primitive directly to prove the contract: a non-critical
-      // listener throwing is logged but does NOT abort the step.
+      // Exercise the primitive directly: a non-critical listener throwing is
+      // logged but does NOT abort the surrounding invocation.
 
       const loggerWarn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 

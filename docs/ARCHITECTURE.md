@@ -61,9 +61,10 @@ way the bullmq package does. The launcher code does not change.
 - The boundary test in
   `packages/core/tests/core/boundary/no-forbidden-imports.test.ts`
   fails the build if any of `bullmq`, `mikro-orm`, `typeorm`,
-  `drizzle-orm`, or `cron` shows up as an import inside
-  `@nest-batch/core`'s `src/`. The test is the canary — if it
-  fails, the principle is being violated.
+  or `drizzle-orm` shows up as an import inside `@nest-batch/core`'s
+  `src/`. The small `cron` package is allowed only for the built-in
+  in-process scheduler bridge. The test is the canary — if it fails,
+  the principle is being violated.
 - `@nest-batch/bullmq` cannot decide chunking semantics, cannot
   invent a new skip policy, cannot reach into the reader / processor
   / writer contract. It only enqueues, runs, and bridges BullMQ
@@ -141,7 +142,7 @@ The invariants that make this work:
 The BullMQ adapter enqueues **one BullMQ job per step** (or, in a
 future enhancement, one job per partition for chunked steps). It
 does not enqueue one job per row, per chunk, or per item. The
-contract is enforced by `BullmqRuntimeService.launch()`, which
+contract is enforced by `BullmqRuntime.launch()`, which
 takes the step's `id` from the `JobDefinition` and uses it as the
 BullMQ `name` discriminator. The chunk loop runs **inside** the
 single BullMQ job, in the worker.
@@ -246,7 +247,7 @@ paths are observably separate in the test suite
 ## How the principles show up in the test suite
 
 - **Boundary test.** `packages/core/tests/core/boundary/no-forbidden-imports.test.ts`
-  fails if `bullmq`, `mikro-orm`, `typeorm`, `drizzle-orm`, or `cron`
+  fails if `bullmq`, `mikro-orm`, `typeorm`, or `drizzle-orm`
   imports appear in core's `src/`. Principle 1.
 - **Contract suite.** `@nest-batch/core/test-contracts` exports
   `runJobRepositoryContract` and `runTransactionManagerContract`.
