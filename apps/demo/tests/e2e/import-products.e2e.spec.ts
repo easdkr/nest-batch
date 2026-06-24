@@ -31,16 +31,7 @@
  *     step-level listener resolvers.
  */
 import 'reflect-metadata';
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  test,
-  vi,
-} from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Logger } from '@nestjs/common';
 import { join } from 'path';
@@ -88,8 +79,6 @@ import {
   StepExecutionEntity,
   JobExecutionContextEntity,
   StepExecutionContextEntity,
-} from '@nest-batch/postgresql';
-import {
   MikroOrmAdapter,
   MikroORMJobRepository,
   MikroORMTransactionManager,
@@ -118,9 +107,7 @@ const PG_CONFIG = {
 
 function formatPostgresError(err: unknown): string {
   if (err instanceof AggregateError && err.errors.length > 0) {
-    return err.errors
-      .map((e) => (e instanceof Error ? e.message : String(e)))
-      .join(' | ');
+    return err.errors.map((e) => (e instanceof Error ? e.message : String(e))).join(' | ');
   }
   return err instanceof Error
     ? err.message || err.stack?.split('\n')[0] || err.toString()
@@ -137,7 +124,6 @@ const TRUNCATE_SQL = `
                    batch_step_execution_context,
                    batch_job_execution_context,
                    batch_step_execution,
-                   batch_job_execution_params,
                    batch_job_execution,
                    batch_job_instance
   RESTART IDENTITY CASCADE
@@ -235,14 +221,30 @@ function buildImportJobDefinition(
     instance: job,
     jobOptions: Reflect.getMetadata('nest-batch:job', ImportProductsJob),
     stepMethods: [
-      { methodName: 'validateCsv', options: Reflect.getMetadata('nest-batch:step', ImportProductsJob.prototype, 'validateCsv'), isTasklet: true },
-      { methodName: 'importProducts', options: Reflect.getMetadata('nest-batch:step', ImportProductsJob.prototype, 'importProducts'), isTasklet: false },
+      {
+        methodName: 'validateCsv',
+        options: Reflect.getMetadata('nest-batch:step', ImportProductsJob.prototype, 'validateCsv'),
+        isTasklet: true,
+      },
+      {
+        methodName: 'importProducts',
+        options: Reflect.getMetadata(
+          'nest-batch:step',
+          ImportProductsJob.prototype,
+          'importProducts',
+        ),
+        isTasklet: false,
+      },
     ],
     listenerMethods: [],
     transitionMethods: [
       {
         methodName: 'afterValidationCompleted',
-        ...Reflect.getMetadata('nest-batch:transition', ImportProductsJob.prototype, 'afterValidationCompleted'),
+        ...Reflect.getMetadata(
+          'nest-batch:transition',
+          ImportProductsJob.prototype,
+          'afterValidationCompleted',
+        ),
       },
     ],
   });
@@ -300,11 +302,7 @@ async function buildLauncher(orm: MikroORM): Promise<{
     listenerInvoker,
     flowEvaluator,
   );
-  const launcher = new JobLauncher(
-    registry,
-    repository,
-    jobExecutor,
-  );
+  const launcher = new JobLauncher(registry, repository, jobExecutor);
 
   return { moduleRef, launcher, registry, em };
 }
@@ -318,11 +316,7 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
   let pgReachable = false;
   let skipReason = '';
 
-  function testIfPostgres(
-    name: string,
-    fn: () => Promise<void> | void,
-    timeout?: number,
-  ): void {
+  function testIfPostgres(name: string, fn: () => Promise<void> | void, timeout?: number): void {
     test(
       name,
       async (ctx) => {
@@ -386,460 +380,485 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
   // -------------------------------------------------------------------------
   // 1. Happy path
   // -------------------------------------------------------------------------
-  testIfPostgres('1. Happy path: products-valid.csv → 3 products inserted, status COMPLETED', async () => {
-    const config = buildImportJobDefinition(VALID_CSV, em);
-    registry.register(config);
+  testIfPostgres(
+    '1. Happy path: products-valid.csv → 3 products inserted, status COMPLETED',
+    async () => {
+      const config = buildImportJobDefinition(VALID_CSV, em);
+      registry.register(config);
 
-    console.log('TEST: About to launch...');
-    const execution = await launcher.launch('import-products', { file: VALID_CSV });
-    console.log('TEST: Launch returned, status:', execution.status);
+      console.log('TEST: About to launch...');
+      const execution = await launcher.launch('import-products', { file: VALID_CSV });
+      console.log('TEST: Launch returned, status:', execution.status);
 
-    expect(execution.status).toBe(JobStatus.COMPLETED);
+      expect(execution.status).toBe(JobStatus.COMPLETED);
 
-    const products = await em.find(ProductEntity, {});
-    expect(products).toHaveLength(3);
-    const skus = products.map((p) => p.sku).sort();
-    expect(skus).toEqual(['SKU-001', 'SKU-002', 'SKU-003']);
+      const products = await em.find(ProductEntity, {});
+      expect(products).toHaveLength(3);
+      const skus = products.map((p) => p.sku).sort();
+      expect(skus).toEqual(['SKU-001', 'SKU-002', 'SKU-003']);
 
-    // Step-level check: import-products chunk step has zero skips
-    const stepExec = await em.findOne(StepExecutionEntity, {
-      jobExecutionId: execution.id,
-      stepName: 'import-products',
-    });
-    expect(stepExec?.status).toBe(StepStatus.COMPLETED);
-    expect(stepExec?.skipCount).toBe(0);
-    expect(stepExec?.readCount).toBe(3);
-    expect(stepExec?.writeCount).toBe(3);
-  });
+      // Step-level check: import-products chunk step has zero skips
+      const stepExec = await em.findOne(StepExecutionEntity, {
+        jobExecutionId: execution.id,
+        stepName: 'import-products',
+      });
+      expect(stepExec?.status).toBe(StepStatus.COMPLETED);
+      expect(stepExec?.skipCount).toBe(0);
+      expect(stepExec?.readCount).toBe(3);
+      expect(stepExec?.writeCount).toBe(3);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 2. Skip behavior
   // -------------------------------------------------------------------------
-  testIfPostgres('2. Skip behavior: products-with-errors.csv → 2 products inserted, 3 skips', async () => {
-    const config = buildImportJobDefinition(ERRORS_CSV, em);
-    registry.register(config);
+  testIfPostgres(
+    '2. Skip behavior: products-with-errors.csv → 2 products inserted, 3 skips',
+    async () => {
+      const config = buildImportJobDefinition(ERRORS_CSV, em);
+      registry.register(config);
 
-    const execution = await launcher.launch('import-products', { file: ERRORS_CSV });
+      const execution = await launcher.launch('import-products', { file: ERRORS_CSV });
 
-    expect(execution.status).toBe(JobStatus.COMPLETED);
+      expect(execution.status).toBe(JobStatus.COMPLETED);
 
-    const products = await em.find(ProductEntity, {});
-    // 2 valid rows: id=1 (Widget) and id=5 (GoodItem)
-    expect(products).toHaveLength(2);
-    const skus = products.map((p) => p.sku).sort();
-    expect(skus).toEqual(['SKU-001', 'SKU-006']);
+      const products = await em.find(ProductEntity, {});
+      // 2 valid rows: id=1 (Widget) and id=5 (GoodItem)
+      expect(products).toHaveLength(2);
+      const skus = products.map((p) => p.sku).sort();
+      expect(skus).toEqual(['SKU-001', 'SKU-006']);
 
-    // Step-level: 3 rows were skipped (id=2 dup SKU, id=3 zero price,
-    // id=4 bad category). Note: skip listeners are not yet wired
-    // through the executor for `BuilderLambda` refs, so the test
-    // verifies the policy's accounting (skipCount) rather than
-    // counting `onSkipInProcess` invocations.
-    const stepExec = await em.findOne(StepExecutionEntity, {
-      jobExecutionId: execution.id,
-      stepName: 'import-products',
-    });
-    expect(stepExec?.status).toBe(StepStatus.COMPLETED);
-    expect(stepExec?.skipCount).toBe(3);
-    expect(stepExec?.readCount).toBe(5);
-    expect(stepExec?.writeCount).toBe(2);
-  });
+      // Step-level: 3 rows were skipped (id=2 dup SKU, id=3 zero price,
+      // id=4 bad category). Note: skip listeners are not yet wired
+      // through the executor for `BuilderLambda` refs, so the test
+      // verifies the policy's accounting (skipCount) rather than
+      // counting `onSkipInProcess` invocations.
+      const stepExec = await em.findOne(StepExecutionEntity, {
+        jobExecutionId: execution.id,
+        stepName: 'import-products',
+      });
+      expect(stepExec?.status).toBe(StepStatus.COMPLETED);
+      expect(stepExec?.skipCount).toBe(3);
+      expect(stepExec?.readCount).toBe(5);
+      expect(stepExec?.writeCount).toBe(2);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 3. Skip limit exceeded
   // -------------------------------------------------------------------------
-  testIfPostgres('3. Skip limit exceeded: 101 invalid rows → status FAILED, SkipLimitExceededError', async () => {
-    // Build a CSV with 1 valid + 101 invalid rows. With skip limit=100,
-    // the 101st skip will trip SkipLimitExceededError.
-    const header = 'id,name,sku,price,category\n';
-    const valid = '1,Widget,SKU-001,9.99,electronics\n';
-    const invalid = (n: number): string =>
-      Array.from({ length: n })
-        .map(
-          (_, i) =>
-            `${i + 2},Item${i + 2},SKU-INV-${i + 2},0,bad-category\n`, // price=0 → InvalidProductError
+  testIfPostgres(
+    '3. Skip limit exceeded: 101 invalid rows → status FAILED, SkipLimitExceededError',
+    async () => {
+      // Build a CSV with 1 valid + 101 invalid rows. With skip limit=100,
+      // the 101st skip will trip SkipLimitExceededError.
+      const header = 'id,name,sku,price,category\n';
+      const valid = '1,Widget,SKU-001,9.99,electronics\n';
+      const invalid = (n: number): string =>
+        Array.from({ length: n })
+          .map(
+            (_, i) => `${i + 2},Item${i + 2},SKU-INV-${i + 2},0,bad-category\n`, // price=0 → InvalidProductError
+          )
+          .join('');
+      const filePath = makeTempCsv(header + valid + invalid(101));
+
+      // Build a custom config with a low skip limit (10) to keep the
+      // test fast — same code path, just smaller scale. We also need
+      // an explicit `skippable: [InvalidProductError]` since the demo
+      // job wires `InvalidProductError` + `DuplicateSkuError`.
+      const config = BatchBuilder.create()
+        .job('import-products')
+        .restartable(true)
+        .addStep((s) =>
+          s.tasklet('validate-csv', {
+            kind: RefKind.BuilderLambda,
+            fn: () => new ValidateCsvTasklet(filePath),
+          }),
         )
-        .join('');
-    const filePath = makeTempCsv(header + valid + invalid(101));
+        .addStep((s) =>
+          s.chunk('import-products', 10, {
+            reader: {
+              kind: RefKind.BuilderLambda,
+              fn: () => new CsvProductReader(filePath),
+            },
+            processor: {
+              kind: RefKind.BuilderLambda,
+              fn: () => new ProductProcessor(),
+            },
+            writer: {
+              kind: RefKind.BuilderLambda,
+              fn: () => new ProductWriter(em),
+            },
+            skipPolicy: { limit: 10, skippable: [InvalidProductError, DuplicateSkuError] },
+          }),
+        )
+        .from('validate-csv')
+        .on(FlowExecutionStatus.COMPLETED)
+        .to('import-products')
+        .build();
+      registry.register(moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(config));
 
-    // Build a custom config with a low skip limit (10) to keep the
-    // test fast — same code path, just smaller scale. We also need
-    // an explicit `skippable: [InvalidProductError]` since the demo
-    // job wires `InvalidProductError` + `DuplicateSkuError`.
-    const config = BatchBuilder.create()
-      .job('import-products')
-      .restartable(true)
-      .addStep((s) =>
-        s.tasklet('validate-csv', {
-          kind: RefKind.BuilderLambda,
-          fn: () => new ValidateCsvTasklet(filePath),
-        }),
-      )
-      .addStep((s) =>
-        s.chunk('import-products', 10, {
-          reader: {
-            kind: RefKind.BuilderLambda,
-            fn: () => new CsvProductReader(filePath),
-          },
-          processor: {
-            kind: RefKind.BuilderLambda,
-            fn: () => new ProductProcessor(),
-          },
-          writer: {
-            kind: RefKind.BuilderLambda,
-            fn: () => new ProductWriter(em),
-          },
-          skipPolicy: { limit: 10, skippable: [InvalidProductError, DuplicateSkuError] },
-        }),
-      )
-      .from('validate-csv')
-      .on(FlowExecutionStatus.COMPLETED)
-      .to('import-products')
-      .build();
-    registry.register(
-      moduleRef.get(DefinitionCompiler).compileFromBuilderConfig(config),
-    );
+      const execution = await launcher.launch('import-products', { file: filePath });
 
-    const execution = await launcher.launch('import-products', { file: filePath });
+      expect(execution.status).toBe(JobStatus.FAILED);
 
-    expect(execution.status).toBe(JobStatus.FAILED);
-
-    const stepExec = await em.findOne(StepExecutionEntity, {
-      jobExecutionId: execution.id,
-      stepName: 'import-products',
-    });
-    expect(stepExec?.status).toBe(StepStatus.FAILED);
-    // The 11th skip would have exceeded the budget → chunk failed.
-    expect(stepExec?.exitMessage).toMatch(/skip limit/i);
-  });
+      const stepExec = await em.findOne(StepExecutionEntity, {
+        jobExecutionId: execution.id,
+        stepName: 'import-products',
+      });
+      expect(stepExec?.status).toBe(StepStatus.FAILED);
+      // The 11th skip would have exceeded the budget → chunk failed.
+      expect(stepExec?.exitMessage).toMatch(/skip limit/i);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 4. Retry success
   // -------------------------------------------------------------------------
-  testIfPostgres('4. Retry success: writer fails twice then succeeds → status COMPLETED', async () => {
-    let attempts = 0;
-    const flakyWriter = (): import('@nest-batch/core').ItemWriter => ({
-      async write(items) {
-        attempts += 1;
-        if (attempts <= 2) {
-          throw new Error(`flaky write attempt #${attempts}`);
-        }
-        // On the 3rd attempt, delegate to the real writer so the
-        // products actually land in the DB.
-        return new ProductWriter(em).write(items);
-      },
-    });
+  testIfPostgres(
+    '4. Retry success: writer fails twice then succeeds → status COMPLETED',
+    async () => {
+      let attempts = 0;
+      const flakyWriter = (): import('@nest-batch/core').ItemWriter => ({
+        async write(items) {
+          attempts += 1;
+          if (attempts <= 2) {
+            throw new Error(`flaky write attempt #${attempts}`);
+          }
+          // On the 3rd attempt, delegate to the real writer so the
+          // products actually land in the DB.
+          return new ProductWriter(em).write(items);
+        },
+      });
 
-    const config = buildImportJobDefinition(VALID_CSV, em, {
-      writer: flakyWriter,
-    });
-    registry.register(
-      config,
-    );
+      const config = buildImportJobDefinition(VALID_CSV, em, {
+        writer: flakyWriter,
+      });
+      registry.register(config);
 
-    const execution = await launcher.launch('import-products', { file: VALID_CSV });
+      const execution = await launcher.launch('import-products', { file: VALID_CSV });
 
-    expect(execution.status).toBe(JobStatus.COMPLETED);
-    expect(attempts).toBeGreaterThanOrEqual(3);
+      expect(execution.status).toBe(JobStatus.COMPLETED);
+      expect(attempts).toBeGreaterThanOrEqual(3);
 
-    // All 3 products must be in the DB after the eventual success.
-    const products = await em.find(ProductEntity, {});
-    expect(products).toHaveLength(3);
-  });
+      // All 3 products must be in the DB after the eventual success.
+      const products = await em.find(ProductEntity, {});
+      expect(products).toHaveLength(3);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 5. Retry exhausted
   // -------------------------------------------------------------------------
-  testIfPostgres('5. Retry exhausted: writer always fails → status FAILED, RetryLimitExceededError', async () => {
-    let attempts = 0;
-    const alwaysFailingWriter = (): import('@nest-batch/core').ItemWriter => ({
-      async write(_items) {
-        attempts += 1;
-        throw new Error(`permanent failure on attempt #${attempts}`);
-      },
-    });
+  testIfPostgres(
+    '5. Retry exhausted: writer always fails → status FAILED, RetryLimitExceededError',
+    async () => {
+      let attempts = 0;
+      const alwaysFailingWriter = (): import('@nest-batch/core').ItemWriter => ({
+        async write(_items) {
+          attempts += 1;
+          throw new Error(`permanent failure on attempt #${attempts}`);
+        },
+      });
 
-    const config = buildImportJobDefinition(VALID_CSV, em, {
-      writer: alwaysFailingWriter,
-    });
-    registry.register(
-      config,
-    );
+      const config = buildImportJobDefinition(VALID_CSV, em, {
+        writer: alwaysFailingWriter,
+      });
+      registry.register(config);
 
-    const execution = await launcher.launch('import-products', { file: VALID_CSV });
+      const execution = await launcher.launch('import-products', { file: VALID_CSV });
 
-    expect(execution.status).toBe(JobStatus.FAILED);
+      expect(execution.status).toBe(JobStatus.FAILED);
 
-    // The job has limit: 3, so we should see 1 (initial) + 3 (retries) = 4 attempts.
-    expect(attempts).toBe(4);
+      // The job has limit: 3, so we should see 1 (initial) + 3 (retries) = 4 attempts.
+      expect(attempts).toBe(4);
 
-    // Step-level: the chunk step should have failed with a retry-limit error.
-    const stepExec = await em.findOne(StepExecutionEntity, {
-      jobExecutionId: execution.id,
-      stepName: 'import-products',
-    });
-    expect(stepExec?.status).toBe(StepStatus.FAILED);
-    expect(stepExec?.exitMessage).toMatch(/retry limit/i);
-  });
+      // Step-level: the chunk step should have failed with a retry-limit error.
+      const stepExec = await em.findOne(StepExecutionEntity, {
+        jobExecutionId: execution.id,
+        stepName: 'import-products',
+      });
+      expect(stepExec?.status).toBe(StepStatus.FAILED);
+      expect(stepExec?.exitMessage).toMatch(/retry limit/i);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 6. Restart after crash
   // -------------------------------------------------------------------------
-  testIfPostgres('6. Restart after crash: 1st run fails on chunk 1, 2nd run with working writer → COMPLETED', async () => {
-    // ---- 1st launch: failing writer, no products committed ----
-    const alwaysFailingWriter = (): import('@nest-batch/core').ItemWriter => ({
-      async write(_items) {
-        throw new Error('synthetic crash on every chunk');
-      },
-    });
-    const failingConfig = buildImportJobDefinition(VALID_CSV, em, {
-      writer: alwaysFailingWriter,
-    });
-    registry.register(failingConfig);
+  testIfPostgres(
+    '6. Restart after crash: 1st run fails on chunk 1, 2nd run with working writer → COMPLETED',
+    async () => {
+      // ---- 1st launch: failing writer, no products committed ----
+      const alwaysFailingWriter = (): import('@nest-batch/core').ItemWriter => ({
+        async write(_items) {
+          throw new Error('synthetic crash on every chunk');
+        },
+      });
+      const failingConfig = buildImportJobDefinition(VALID_CSV, em, {
+        writer: alwaysFailingWriter,
+      });
+      registry.register(failingConfig);
 
-    const failedExecution = await launcher.launch('import-products', {
-      file: VALID_CSV,
-    });
-    expect(failedExecution.status).toBe(JobStatus.FAILED);
+      const failedExecution = await launcher.launch('import-products', {
+        file: VALID_CSV,
+      });
+      expect(failedExecution.status).toBe(JobStatus.FAILED);
 
-    // The failing writer rolled back every chunk's transaction → no
-    // products in the DB.
-    const productsAfterFailure = await em.find(ProductEntity, {});
-    expect(productsAfterFailure).toHaveLength(0);
+      // The failing writer rolled back every chunk's transaction → no
+      // products in the DB.
+      const productsAfterFailure = await em.find(ProductEntity, {});
+      expect(productsAfterFailure).toHaveLength(0);
 
-    // ---- 2nd launch: tear down, rebuild module, register working job,
-    // then call `JobLauncher.run()` on the FAILED execution. ----
-    await moduleRef.close();
-    const ctx2 = await buildLauncher(orm);
-    moduleRef = ctx2.moduleRef;
-    launcher = ctx2.launcher;
-    registry = ctx2.registry;
-    em = ctx2.em;
+      // ---- 2nd launch: tear down, rebuild module, register working job,
+      // then call `JobLauncher.run()` on the FAILED execution. ----
+      await moduleRef.close();
+      const ctx2 = await buildLauncher(orm);
+      moduleRef = ctx2.moduleRef;
+      launcher = ctx2.launcher;
+      registry = ctx2.registry;
+      em = ctx2.em;
 
-    const workingConfig = buildImportJobDefinition(VALID_CSV, em);
-    registry.register(workingConfig);
+      const workingConfig = buildImportJobDefinition(VALID_CSV, em);
+      registry.register(workingConfig);
 
-    // Re-fetch the FAILED execution from the DB (it has status FAILED
-    // persisted by the first run). The library's restart path uses
-    // this status to enter the checkpoint-resume branch.
-    const persistedFailed = await em.findOne(JobExecutionEntity, {
-      id: failedExecution.id,
-    });
-    expect(persistedFailed).toBeTruthy();
-    expect(persistedFailed!.status).toBe(JobStatus.FAILED);
+      // Re-fetch the FAILED execution from the DB (it has status FAILED
+      // persisted by the first run). The library's restart path uses
+      // this status to enter the checkpoint-resume branch.
+      const persistedFailed = await em.findOne(JobExecutionEntity, {
+        id: failedExecution.id,
+      });
+      expect(persistedFailed).toBeTruthy();
+      expect(persistedFailed!.status).toBe(JobStatus.FAILED);
 
-    // `JobLauncher.run()` is the documented restart entry point.
-    const restarted = await launcher.run(
-      {
-        id: persistedFailed!.id,
-        jobInstanceId: persistedFailed!.jobInstanceId,
-        status: persistedFailed!.status as JobStatus,
-        startTime: persistedFailed!.startTime,
-        endTime: persistedFailed!.endTime,
-        exitCode: persistedFailed!.exitCode,
-        exitMessage: persistedFailed!.exitMessage,
-        params: { file: VALID_CSV },
-      },
-      workingConfig,
-    );
+      // `JobLauncher.run()` is the documented restart entry point.
+      const restarted = await launcher.run(
+        {
+          id: persistedFailed!.id,
+          jobInstanceId: persistedFailed!.jobInstanceId,
+          status: persistedFailed!.status as JobStatus,
+          startTime: persistedFailed!.startTime,
+          endTime: persistedFailed!.endTime,
+          exitCode: persistedFailed!.exitCode,
+          exitMessage: persistedFailed!.exitMessage,
+          params: { file: VALID_CSV },
+        },
+        workingConfig,
+      );
 
-    expect(restarted.status).toBe(JobStatus.COMPLETED);
+      expect(restarted.status).toBe(JobStatus.COMPLETED);
 
-    // No duplicates, all 3 products in the DB.
-    const products = await em.find(ProductEntity, {});
-    expect(products).toHaveLength(3);
-    const skus = products.map((p) => p.sku).sort();
-    expect(skus).toEqual(['SKU-001', 'SKU-002', 'SKU-003']);
-  });
+      // No duplicates, all 3 products in the DB.
+      const products = await em.find(ProductEntity, {});
+      expect(products).toHaveLength(3);
+      const skus = products.map((p) => p.sku).sort();
+      expect(skus).toEqual(['SKU-001', 'SKU-002', 'SKU-003']);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 7. Concurrent launch
   // -------------------------------------------------------------------------
-  testIfPostgres('7. Concurrent launch: 2 parallel launches of same job+params → second throws JobExecutionAlreadyRunningError', async () => {
-    const config = buildImportJobDefinition(VALID_CSV, em);
-    registry.register(
-      config,
-    );
+  testIfPostgres(
+    '7. Concurrent launch: 2 parallel launches of same job+params → second throws JobExecutionAlreadyRunningError',
+    async () => {
+      const config = buildImportJobDefinition(VALID_CSV, em);
+      registry.register(config);
 
-    // Use a "slow" writer so the first launch is still in-flight when
-    // the second one fires. The default `ProductWriter` returns very
-    // quickly against a 3-row CSV, so we race-window is tiny without
-    // this delay.
-    const slowProductWriter = (): import('@nest-batch/core').ItemWriter => ({
-      async write(items) {
-        await new Promise((r) => setTimeout(r, 50));
-        return new ProductWriter(em).write(items);
-      },
-    });
-    const slowConfig = buildImportJobDefinition(VALID_CSV, em, {
-      writer: slowProductWriter,
-    });
-    // Re-register the slow variant (the previous register call was a
-    // warm-up; we need the slow one to actually fire).
-    // To avoid duplicate-registration, tear down and rebuild:
-    await moduleRef.close();
-    const ctx2 = await buildLauncher(orm);
-    moduleRef = ctx2.moduleRef;
-    launcher = ctx2.launcher;
-    registry = ctx2.registry;
-    em = ctx2.em;
-    registry.register(slowConfig);
+      // Use a "slow" writer so the first launch is still in-flight when
+      // the second one fires. The default `ProductWriter` returns very
+      // quickly against a 3-row CSV, so we race-window is tiny without
+      // this delay.
+      const slowProductWriter = (): import('@nest-batch/core').ItemWriter => ({
+        async write(items) {
+          await new Promise((r) => setTimeout(r, 50));
+          return new ProductWriter(em).write(items);
+        },
+      });
+      const slowConfig = buildImportJobDefinition(VALID_CSV, em, {
+        writer: slowProductWriter,
+      });
+      // Re-register the slow variant (the previous register call was a
+      // warm-up; we need the slow one to actually fire).
+      // To avoid duplicate-registration, tear down and rebuild:
+      await moduleRef.close();
+      const ctx2 = await buildLauncher(orm);
+      moduleRef = ctx2.moduleRef;
+      launcher = ctx2.launcher;
+      registry = ctx2.registry;
+      em = ctx2.em;
+      registry.register(slowConfig);
 
-    // Both launches use the SAME `params` → same canonical jobKey →
-    // same JobInstance → concurrency check should fire.
-    const params = { file: VALID_CSV };
-    const results = await Promise.allSettled([
-      launcher.launch('import-products', params),
-      launcher.launch('import-products', params),
-    ]);
+      // Both launches use the SAME `params` → same canonical jobKey →
+      // same JobInstance → concurrency check should fire.
+      const params = { file: VALID_CSV };
+      const results = await Promise.allSettled([
+        launcher.launch('import-products', params),
+        launcher.launch('import-products', params),
+      ]);
 
-    const fulfilled = results.filter((r) => r.status === 'fulfilled');
-    const rejected = results.filter((r) => r.status === 'rejected');
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
 
-    // Known limitation: `MikroORMJobRepository.getRunningJobExecution`
-    // is a stub that always returns null, so the library's concurrency
-    // check cannot reject the second launch against the real DB. We
-    // expect BOTH launches to succeed; only one of them is supposed to
-    // "win". Documented as expected behavior given the current
-    // adapter.
-    expect(fulfilled.length + rejected.length).toBe(2);
+      // Known limitation: `MikroORMJobRepository.getRunningJobExecution`
+      // is a stub that always returns null, so the library's concurrency
+      // check cannot reject the second launch against the real DB. We
+      // expect BOTH launches to succeed; only one of them is supposed to
+      // "win". Documented as expected behavior given the current
+      // adapter.
+      expect(fulfilled.length + rejected.length).toBe(2);
 
-    if (rejected.length === 0) {
-      // Document the limitation; the test still asserts that nothing
-      // crashed and the DB ended up with at most 3 unique products
-      // (the second launch may have re-inserted or skipped depending
-      // on the race).
-      const products = await em.find(ProductEntity, {});
-      // If both succeeded, we may have duplicate SKU errors → fewer
-      // than 6 products. Just assert no crash.
-      expect(products.length).toBeGreaterThanOrEqual(3);
-    } else {
-      // If a future fix wires `getRunningJobExecution` correctly,
-      // exactly one should be rejected with `JobExecutionAlreadyRunningError`.
-      const err = (rejected[0] as PromiseRejectedResult).reason;
-      expect(err).toBeInstanceOf(JobExecutionAlreadyRunningError);
-    }
-  });
+      if (rejected.length === 0) {
+        // Document the limitation; the test still asserts that nothing
+        // crashed and the DB ended up with at most 3 unique products
+        // (the second launch may have re-inserted or skipped depending
+        // on the race).
+        const products = await em.find(ProductEntity, {});
+        // If both succeeded, we may have duplicate SKU errors → fewer
+        // than 6 products. Just assert no crash.
+        expect(products.length).toBeGreaterThanOrEqual(3);
+      } else {
+        // If a future fix wires `getRunningJobExecution` correctly,
+        // exactly one should be rejected with `JobExecutionAlreadyRunningError`.
+        const err = (rejected[0] as PromiseRejectedResult).reason;
+        expect(err).toBeInstanceOf(JobExecutionAlreadyRunningError);
+      }
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 8. Flow routing (validate-csv fails)
   // -------------------------------------------------------------------------
-  testIfPostgres('8. Flow routing: header-only CSV → validate-csv fails, importProducts not run, job FAILED', async () => {
-    // A CSV with only the header row → validate-csv's "at least 1
-    // data row" check throws → chunk step is never reached.
-    const headerOnlyCsv = makeTempCsv('id,name,sku,price,category\n');
+  testIfPostgres(
+    '8. Flow routing: header-only CSV → validate-csv fails, importProducts not run, job FAILED',
+    async () => {
+      // A CSV with only the header row → validate-csv's "at least 1
+      // data row" check throws → chunk step is never reached.
+      const headerOnlyCsv = makeTempCsv('id,name,sku,price,category\n');
 
-    const config = buildImportJobDefinition(headerOnlyCsv, em);
-    registry.register(
-      config,
-    );
+      const config = buildImportJobDefinition(headerOnlyCsv, em);
+      registry.register(config);
 
-    const execution = await launcher.launch('import-products', {
-      file: headerOnlyCsv,
-    });
+      const execution = await launcher.launch('import-products', {
+        file: headerOnlyCsv,
+      });
 
-    expect(execution.status).toBe(JobStatus.FAILED);
+      expect(execution.status).toBe(JobStatus.FAILED);
 
-    // The importProducts (chunk) step must NOT have been created.
-    const importStep = await em.findOne(StepExecutionEntity, {
-      jobExecutionId: execution.id,
-      stepName: 'import-products',
-    });
-    expect(importStep).toBeNull();
+      // The importProducts (chunk) step must NOT have been created.
+      const importStep = await em.findOne(StepExecutionEntity, {
+        jobExecutionId: execution.id,
+        stepName: 'import-products',
+      });
+      expect(importStep).toBeNull();
 
-    // The validate-csv (tasklet) step must be the one that FAILED.
-    const validateStep = await em.findOne(StepExecutionEntity, {
-      jobExecutionId: execution.id,
-      stepName: 'validate-csv',
-    });
-    expect(validateStep).toBeTruthy();
-    expect(validateStep!.status).toBe(StepStatus.FAILED);
-    expect(validateStep!.exitMessage).toMatch(/at least 1 data row/i);
-  });
+      // The validate-csv (tasklet) step must be the one that FAILED.
+      const validateStep = await em.findOne(StepExecutionEntity, {
+        jobExecutionId: execution.id,
+        stepName: 'validate-csv',
+      });
+      expect(validateStep).toBeTruthy();
+      expect(validateStep!.status).toBe(StepStatus.FAILED);
+      expect(validateStep!.exitMessage).toMatch(/at least 1 data row/i);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 9. Malformed CSV
   // -------------------------------------------------------------------------
-  testIfPostgres('9. Malformed CSV: products-malformed.csv → CsvProductReader throws → chunk step FAILED', async () => {
-    const config = buildImportJobDefinition(MALFORMED_CSV, em);
-    registry.register(
-      config,
-    );
+  testIfPostgres(
+    '9. Malformed CSV: products-malformed.csv → CsvProductReader throws → chunk step FAILED',
+    async () => {
+      const config = buildImportJobDefinition(MALFORMED_CSV, em);
+      registry.register(config);
 
-    // Reading the file succeeds (the row exists), but the column
-    // validation in `CsvProductReader.validateHeader` throws when the
-    // chunk executor first invokes the reader lambda.
-    const execution = await launcher.launch('import-products', {
-      file: MALFORMED_CSV,
-    });
+      // Reading the file succeeds (the row exists), but the column
+      // validation in `CsvProductReader.validateHeader` throws when the
+      // chunk executor first invokes the reader lambda.
+      const execution = await launcher.launch('import-products', {
+        file: MALFORMED_CSV,
+      });
 
-    expect(execution.status).toBe(JobStatus.FAILED);
+      expect(execution.status).toBe(JobStatus.FAILED);
 
-    const stepExec = await em.findOne(StepExecutionEntity, {
-      jobExecutionId: execution.id,
-      stepName: 'import-products',
-    });
-    expect(stepExec?.status).toBe(StepStatus.FAILED);
-    // The `Malformed CSV: missing column "category"` error comes from
-    // `CsvProductReader.validateHeader` → propagates up through the
-    // chunk executor's read phase.
-    expect(stepExec?.exitMessage).toMatch(/malformed csv|missing column/i);
-  });
+      const stepExec = await em.findOne(StepExecutionEntity, {
+        jobExecutionId: execution.id,
+        stepName: 'import-products',
+      });
+      expect(stepExec?.status).toBe(StepStatus.FAILED);
+      // The `Malformed CSV: missing column "category"` error comes from
+      // `CsvProductReader.validateHeader` → propagates up through the
+      // chunk executor's read phase.
+      expect(stepExec?.exitMessage).toMatch(/malformed csv|missing column/i);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 10. Non-critical listener failure is suppressed
   // -------------------------------------------------------------------------
-  testIfPostgres('10. Non-critical listener: throws on invoke but the surrounding step still completes', async () => {
-    // The library's full pipeline does not yet wire step-level listener
-    // resolvers for `BuilderLambda` refs (job-level listeners land in a
-    // follow-up task). We therefore exercise the `ListenerInvoker`
-    // primitive directly to prove the contract: a non-critical
-    // listener throwing is logged but does NOT abort the step.
+  testIfPostgres(
+    '10. Non-critical listener: throws on invoke but the surrounding step still completes',
+    async () => {
+      // The library's full pipeline does not yet wire step-level listener
+      // resolvers for `BuilderLambda` refs (job-level listeners land in a
+      // follow-up task). We therefore exercise the `ListenerInvoker`
+      // primitive directly to prove the contract: a non-critical
+      // listener throwing is logged but does NOT abort the step.
 
-    const loggerWarn = vi
-      .spyOn(Logger.prototype, 'warn')
-      .mockImplementation(() => undefined);
+      const loggerWarn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-    const invoker = new ListenerInvoker();
-    const resolvers: ResolverMap = new Map<string, ListenerEntry>();
-    resolvers.set('after:step:ThrowingListener', {
-      fn: async () => {
-        throw new Error('synthetic listener crash');
-      },
-      nonCritical: true,
-    });
+      const invoker = new ListenerInvoker();
+      const resolvers: ResolverMap = new Map<string, ListenerEntry>();
+      resolvers.set('after:step:ThrowingListener', {
+        fn: async () => {
+          throw new Error('synthetic listener crash');
+        },
+        nonCritical: true,
+      });
 
-    // `invokeAfter` with a 'step' kind. With a non-critical entry, the
-    // throw is logged + swallowed; the call returns cleanly.
-    await expect(
-      invoker.invokeAfter(resolvers, 'step', { jobExecutionId: 'e1', stepExecutionId: 's1' }, {
-        status: 'COMPLETED',
-        exitCode: 'COMPLETED',
-      }),
-    ).resolves.toBeUndefined();
+      // `invokeAfter` with a 'step' kind. With a non-critical entry, the
+      // throw is logged + swallowed; the call returns cleanly.
+      await expect(
+        invoker.invokeAfter(
+          resolvers,
+          'step',
+          { jobExecutionId: 'e1', stepExecutionId: 's1' },
+          {
+            status: 'COMPLETED',
+            exitCode: 'COMPLETED',
+          },
+        ),
+      ).resolves.toBeUndefined();
 
-    expect(loggerWarn).toHaveBeenCalled();
-    const warningMessage = loggerWarn.mock.calls[0]?.[0] as string;
-    expect(warningMessage).toMatch(/non-critical listener.*failed/i);
-    expect(warningMessage).toMatch(/ThrowingListener/);
+      expect(loggerWarn).toHaveBeenCalled();
+      const warningMessage = loggerWarn.mock.calls[0]?.[0] as string;
+      expect(warningMessage).toMatch(/non-critical listener.*failed/i);
+      expect(warningMessage).toMatch(/ThrowingListener/);
 
-    // Sanity check: the same scenario with `nonCritical: false` (the
-    // default) WOULD re-throw. Use a fresh invoker to keep state
-    // isolated.
-    const strictInv = new ListenerInvoker();
-    const strictResolvers: ResolverMap = new Map<string, ListenerEntry>();
-    strictResolvers.set('after:step:ThrowingListener', {
-      fn: async () => {
-        throw new Error('synthetic strict listener crash');
-      },
-      // nonCritical omitted → false
-    });
-    await expect(
-      strictInv.invokeAfter(strictResolvers, 'step', { jobExecutionId: 'e2', stepExecutionId: 's2' }, {
-        status: 'COMPLETED',
-        exitCode: 'COMPLETED',
-      }),
-    ).rejects.toThrow(/synthetic strict listener crash/);
+      // Sanity check: the same scenario with `nonCritical: false` (the
+      // default) WOULD re-throw. Use a fresh invoker to keep state
+      // isolated.
+      const strictInv = new ListenerInvoker();
+      const strictResolvers: ResolverMap = new Map<string, ListenerEntry>();
+      strictResolvers.set('after:step:ThrowingListener', {
+        fn: async () => {
+          throw new Error('synthetic strict listener crash');
+        },
+        // nonCritical omitted → false
+      });
+      await expect(
+        strictInv.invokeAfter(
+          strictResolvers,
+          'step',
+          { jobExecutionId: 'e2', stepExecutionId: 's2' },
+          {
+            status: 'COMPLETED',
+            exitCode: 'COMPLETED',
+          },
+        ),
+      ).rejects.toThrow(/synthetic strict listener crash/);
 
-    loggerWarn.mockRestore();
-  });
+      loggerWarn.mockRestore();
+    },
+  );
 });

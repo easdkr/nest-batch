@@ -46,7 +46,7 @@ breakdown.
 @nest-batch/prisma         ← Prisma adapter slot (driver-agnostic in 0.2.0)
 @nest-batch/bullmq         ← BullMQ transport strategy (Queue/Worker/QueueEvents, partition-aware)
 @nest-batch/kafka          ← Kafka transport strategy (partition-aware)
-@nest-batch/postgresql     ← NEW. 4 Postgres adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma) + 6-table migration
+@nest-batch/postgresql     ← NEW. 4 Postgres adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma) + 5-table migration
 @nest-batch/mysql          ← NEW. 4 MySQL adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma) + 6-table migration
 @nest-batch/webhook        ← NEW. WebhookBatchObserver with HMAC-SHA256 + exponential backoff + dead-letter
 ```
@@ -58,18 +58,18 @@ this release. See [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md)
 
 ### Where things live
 
-| Concern                          | Package                          |
-| -------------------------------- | -------------------------------- |
-| Batch engine, decorators, IR     | `@nest-batch/core`               |
-| PostgreSQL + MySQL via MikroORM  | `@nest-batch/mikro-orm`          |
-| PostgreSQL + MySQL via TypeORM   | `@nest-batch/typeorm`            |
-| PostgreSQL + MySQL via Drizzle   | `@nest-batch/drizzle`            |
-| PostgreSQL + MySQL via Prisma    | `@nest-batch/prisma`             |
-| BullMQ transport strategy        | `@nest-batch/bullmq`             |
-| Kafka transport strategy         | `@nest-batch/kafka`              |
-| PostgreSQL driver sibling        | `@nest-batch/postgresql`         |
-| MySQL driver sibling             | `@nest-batch/mysql`              |
-| Webhook delivery observer        | `@nest-batch/webhook`            |
+| Concern                         | Package                  |
+| ------------------------------- | ------------------------ |
+| Batch engine, decorators, IR    | `@nest-batch/core`       |
+| PostgreSQL + MySQL via MikroORM | `@nest-batch/mikro-orm`  |
+| PostgreSQL + MySQL via TypeORM  | `@nest-batch/typeorm`    |
+| PostgreSQL + MySQL via Drizzle  | `@nest-batch/drizzle`    |
+| PostgreSQL + MySQL via Prisma   | `@nest-batch/prisma`     |
+| BullMQ transport strategy       | `@nest-batch/bullmq`     |
+| Kafka transport strategy        | `@nest-batch/kafka`      |
+| PostgreSQL driver sibling       | `@nest-batch/postgresql` |
+| MySQL driver sibling            | `@nest-batch/mysql`      |
+| Webhook delivery observer       | `@nest-batch/webhook`    |
 
 The 0.2.0 release splits the previous 4 packages into 10. The 4 DB
 adapter packages (`mikro-orm`, `typeorm`, `drizzle`, `prisma`) become

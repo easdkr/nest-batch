@@ -2,7 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDirs": ["src", "tests"]
+    "rootDirs": ["src", "tests"],
+    "baseUrl": ".",
+    "paths": {
+      "@nest-batch/core": ["../core/src/index.ts"],
+      "@nest-batch/core/test-contracts": ["../core/tests/contracts/index.ts"]
+    }
   },
   "include": ["src/**/*", "tests/**/*"],
   "exclude": ["node_modules", "dist"]

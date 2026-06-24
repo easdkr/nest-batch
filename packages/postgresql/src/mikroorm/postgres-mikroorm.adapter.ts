@@ -20,7 +20,7 @@ import { PostgresMikroOrmBatchModule } from './postgres-mikroorm.module';
  * `@mikro-orm/postgresql`). It does **not** call
  * `MikroOrmModule.forRoot()` — the host must call it in
  * `AppModule.imports` (with the Postgres connection options and the
- * 5 batch meta-entities from `@nest-batch/postgresql`'s
+ * 5 batch meta-entities from `@nest-batch/mikro-orm`'s
  * `BATCH_META_ENTITIES` spread into the `entities` array).
  *
  * The shell is a thin carrier: the repository / transaction-manager

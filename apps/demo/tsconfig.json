@@ -3,7 +3,13 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDirs": ["src", "test"],
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@nest-batch/core": ["../../packages/core/src/index.ts"],
+      "@nest-batch/mikro-orm": ["../../packages/mikro-orm/src/index.ts"],
+      "@nest-batch/bullmq": ["../../packages/bullmq/src/index.ts"]
+    }
   },
   "include": ["src/**/*", "test/**/*"],
   "exclude": ["node_modules", "dist"]

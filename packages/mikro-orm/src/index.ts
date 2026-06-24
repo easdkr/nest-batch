@@ -15,26 +15,26 @@
 //
 //   import { NestBatchModule, InProcessAdapter } from '@nest-batch/core';
 //   import { MikroOrmAdapter } from '@nest-batch/mikro-orm';
-//   import { PostgresAdapter } from '@nest-batch/postgresql';
+//   import { PostgresMikroOrmAdapter } from '@nest-batch/postgresql';
+//   import { BATCH_META_ENTITIES } from '@nest-batch/mikro-orm';
 //
 //   // The host must also call
-//   // `MikroOrmModule.forRoot({ ... })` in their `AppModule.imports`.
-//   // The PostgresAdapter.forRoot() factory binds the
-//   // MikroOrmDriverProvider token to the host's EntityManager.
+//   // `MikroOrmModule.forRoot({ entities: [...BATCH_META_ENTITIES] })`
+//   // in their `AppModule.imports`.
 //
 //   NestBatchModule.forRoot({
 //     adapters: {
-//       persistence: PostgresAdapter.forRoot(),
+//       persistence: PostgresMikroOrmAdapter.forRoot(),
 //       transport: InProcessAdapter.forRoot(),
 //     },
 //   });
 //
-// The original `BATCH_META_ENTITIES` constant and the bundled
-// migrations moved to `@nest-batch/postgresql/src/entities/`. The
-// driver sibling owns the Postgres-specific entity classes and the
-// migration scripts; this package owns only the repository /
-// transaction manager shape and the driver-provider token.
+// `BATCH_META_ENTITIES` and the MikroORM entity classes live here
+// because `MikroORMJobRepository` instantiates these class
+// identities. Driver siblings own dialect-specific shells,
+// migrations, schema carriers, and driver peer dependencies.
 export * from './mikroorm-job-repository';
 export * from './mikroorm-transaction-manager';
 export * from './adapters';
 export * from './mikro-orm.driver-provider';
+export * from './entities/job-meta.entities';

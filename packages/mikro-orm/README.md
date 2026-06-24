@@ -1,9 +1,12 @@
 # `@nest-batch/mikro-orm`
 
-The MikroORM 6.x adapter for [`@nest-batch/core`](../core). It owns
-the Spring Batch-compatible batch meta-schema (entities + migrations)
-and ships the `JobRepository` and `TransactionManager` implementations
-that satisfy the core contract suite.
+The MikroORM 6.x adapter slot for [`@nest-batch/core`](../core). It
+owns the MikroORM meta-entity classes, the
+`MikroORMJobRepository`, and the `MikroORMTransactionManager`
+implementation that satisfy the core contract suite. Driver sibling
+packages such as [`@nest-batch/postgresql`](../postgresql) own the
+dialect-specific shells, DDL migrations, and driver peer
+dependencies.
 
 The package is a **sibling**, not a replacement. The dependency
 direction is strict and one-way:
@@ -11,7 +14,7 @@ direction is strict and one-way:
 ```
 @nest-batch/mikro-orm  ──▶  @nest-batch/core
         │
-        └──────▶  @mikro-orm/core, @mikro-orm/postgresql, @mikro-orm/nestjs (peer)
+        └──────▶  @mikro-orm/core, @mikro-orm/nestjs (peer)
 ```
 
 `@nest-batch/core` does not know this package exists. It cannot. The
@@ -28,13 +31,12 @@ pnpm add @nest-batch/mikro-orm
 
 Peer dependencies the host must already provide:
 
-| Package                 | Range         |
-| ----------------------- | ------------- |
-| `@nest-batch/core`      | `workspace:*` |
-| `@nestjs/common`        | `^11.0.0`     |
-| `@mikro-orm/core`       | `^6.0.0`      |
-| `@mikro-orm/nestjs`     | `^6.0.0`      |
-| `@mikro-orm/postgresql` | `^6.0.0`      |
+| Package             | Range         |
+| ------------------- | ------------- |
+| `@nest-batch/core`  | `workspace:*` |
+| `@nestjs/common`    | `^11.0.0`     |
+| `@mikro-orm/core`   | `^6.0.0`      |
+| `@mikro-orm/nestjs` | `^6.0.0`      |
 
 The adapter targets **MikroORM 6.x only**. Versions outside that
 range (notably 5.x) are not supported. The peer range is hard-pinned
@@ -43,49 +45,27 @@ current.
 
 ---
 
-## Schema ownership
+## Entity Ownership
 
-This package owns the six batch meta tables. Apps that depend on
-`@nest-batch/mikro-orm` get them as part of the install, and the
-migrations are versioned alongside the package.
+This package owns the 5 active MikroORM meta-entity classes because
+`MikroORMJobRepository` instantiates those class identities directly.
+Driver sibling packages provide matching DDL/schema carriers for the
+chosen database.
 
 | Table                          | Purpose                                                                            |
 | ------------------------------ | ---------------------------------------------------------------------------------- |
 | `batch_job_instance`           | One row per logical job (unique on `job_name`+`job_key`).                          |
 | `batch_job_execution`          | One row per job run. Holds status, start/end, exit code/message.                   |
-| `batch_job_execution_params`   | Composite-keyed params (one row per param name).                                   |
 | `batch_step_execution`         | One row per step run. Holds step status, exit code/message, last-chunk checkpoint. |
 | `batch_job_execution_context`  | JSON checkpoint + execution context (job-scoped).                                  |
 | `batch_step_execution_context` | JSON checkpoint + execution context (step-scoped).                                 |
 
-The shape is the Spring Batch meta-schema with two omissions: the
-classic `BATCH_STEP_EXECUTION_PARAMS` table is intentionally not
-shipped (step params are derivable from the parent job execution
-params plus the step execution context), and the active-execution
-unique index is intentionally absent (the
-`SELECT ... FOR UPDATE SKIP LOCKED` pattern in the
-`createExecutionAtomic` flow provides the same guarantee without
-the constraint's contention profile).
-
-### Migrations
-
-Migrations live in `src/migrations/` and are exported as
-`CreateBatchMeta001`, `AddStepExecutionExitFields003`, etc. The full
-list:
-
-- `001-create-batch-meta.ts` — the six base tables.
-- `003-add-step-execution-exit-fields.ts` — adds `exit_code` /
-  `exit_message` to `batch_step_execution`.
-- `004-add-active-execution-unique-index.ts` — adds the active-
-  execution unique index. (See history below.)
-- `005-drop-active-execution-unique-index.ts` — drops the index added
-  by 004. The unique index was retired in favor of
-  `SELECT ... FOR UPDATE SKIP LOCKED`, which serializes concurrent
-  launches without the constraint's write-contention cost.
-
-Apps that already have a MikroORM migration directory should copy
-these files in. Apps that don't can point `MikroOrmModule` at this
-package's directory.
+The shape intentionally omits `batch_job_execution_params`; job
+parameters are stored as a serialized snapshot on
+`batch_job_execution.params`. The active-execution unique index is
+also intentionally absent: the `SELECT ... FOR UPDATE SKIP LOCKED`
+pattern in the `createExecutionAtomic` flow provides the same
+guarantee without the constraint's contention profile.
 
 ---
 
@@ -135,7 +115,7 @@ registered globally by the adapter, so you do **not** list
 `MikroORMJobRepository` / `MikroORMTransactionManager` in the
 `providers` array — they're already wired.
 
-`BATCH_META_ENTITIES` is the typed tuple of all six batch meta
+`BATCH_META_ENTITIES` is the typed tuple of all 5 active batch meta
 entities. Spread it into your `entities` array once and forget about
 it.
 
@@ -160,33 +140,6 @@ config service or a secret manager. Pass the standard `useFactory`
 plus `inject` list to `MikroOrmModule.forRootAsync()` and keep
 `MikroOrmAdapter.forRoot()` unchanged — the adapter doesn't care
 how the connection is built.
-
-> **Recommended:** If your app runs the MikroORM CLI directly
-> (`pnpm mikro-orm migration:create`, `migration:up`, etc.) and
-> you don't want to repeat the entity / migrations wiring, reach
-> for `createBatchMikroOrmConfig` (exported from
-> `@nest-batch/mikro-orm`). It takes the same options you would
-> pass to `MikroOrmModule.forRoot()` and auto-merges
-> `BATCH_META_ENTITIES` into the `entities` array, plus points
-> the migrator at this package's `src/migrations/` directory:
->
-> ```ts
-> // mikro-orm.config.ts (the file the MikroORM CLI loads)
-> import { createBatchMikroOrmConfig } from '@nest-batch/mikro-orm';
-> import { ProductEntity } from './entities/product.entity';
->
-> export default createBatchMikroOrmConfig({
->   entities: [ProductEntity],
->   dbName: 'nest_batch_demo',
->   // ...other MikroORM options
-> });
-> ```
->
-> The `forRoot()` call on the adapter still takes no args — the
-> helper is for CLI / migration use only, not for the Nest module
-> wiring above.
-
----
 
 ## DB-first semantics
 
@@ -220,7 +173,7 @@ from there.
 - A Drizzle adapter. Drizzle is explicitly excluded from this
   release. See `MIGRATION.md`.
 - A TypeORM adapter. Use `@nest-batch/typeorm` if you're on
-  TypeORM 1.0.0; the two packages expose the same six-table schema
+  TypeORM 1.0.0; the two packages expose the same 5-table schema
   with adapter-specific migrations.
 - A transport. Use `@nest-batch/bullmq` to wire BullMQ as the
   execution strategy; the transport layer reads the same

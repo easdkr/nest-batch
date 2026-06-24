@@ -60,15 +60,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  test,
-} from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { NestFactory } from '@nestjs/core';
 import type { INestApplication } from '@nestjs/common';
 import { MikroORM, type EntityManager } from '@mikro-orm/core';
@@ -89,7 +81,7 @@ import {
   BATCH_META_ENTITIES,
   JobExecutionEntity,
   StepExecutionEntity,
-} from '@nest-batch/postgresql';
+} from '@nest-batch/mikro-orm';
 
 import { AppModule } from '../../src/app.module';
 import { ProductEntity } from '../../src/entities/product.entity';
@@ -118,7 +110,6 @@ const TRUNCATE_SQL = `
                    batch_step_execution_context,
                    batch_job_execution_context,
                    batch_step_execution,
-                   batch_job_execution_params,
                    batch_job_execution,
                    batch_job_instance
   RESTART IDENTITY CASCADE
@@ -471,9 +462,10 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
     async () => {
       const csv = VALID_CSV;
       // Sanity: the fixture is the 3-row demo CSV.
-      const fixtureRows = readFileSync(csv, 'utf8')
-        .split('\n')
-        .filter((l) => l.trim() !== '').length - 1;
+      const fixtureRows =
+        readFileSync(csv, 'utf8')
+          .split('\n')
+          .filter((l) => l.trim() !== '').length - 1;
       expect(fixtureRows).toBe(3);
 
       const response = await request(app.getHttpServer())
@@ -498,8 +490,7 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
           em.clear();
           return em.findOne(JobExecutionEntity, { id: executionId });
         },
-        async (row) =>
-          row?.status === JobStatus.COMPLETED || row?.status === JobStatus.FAILED,
+        async (row) => row?.status === JobStatus.COMPLETED || row?.status === JobStatus.FAILED,
         15_000,
       );
       expect(final).not.toBeNull();
@@ -542,18 +533,14 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
       // re-registration uses `BuilderLambda`s that point at the new
       // CSV — exactly the "per-launch file path" extension point
       // documented in `import-products.job.ts`.
-      const { CsvProductReader } = await import(
-        '../../src/jobs/import-products/reader/csv-product.reader'
-      );
-      const { ProductProcessor } = await import(
-        '../../src/jobs/import-products/processor/product.processor'
-      );
-      const { ProductWriter } = await import(
-        '../../src/jobs/import-products/writer/product.writer'
-      );
-      const { ValidateCsvTasklet } = await import(
-        '../../src/jobs/import-products/validate-csv.tasklet'
-      );
+      const { CsvProductReader } =
+        await import('../../src/jobs/import-products/reader/csv-product.reader');
+      const { ProductProcessor } =
+        await import('../../src/jobs/import-products/processor/product.processor');
+      const { ProductWriter } =
+        await import('../../src/jobs/import-products/writer/product.writer');
+      const { ValidateCsvTasklet } =
+        await import('../../src/jobs/import-products/validate-csv.tasklet');
       const writer = new ProductWriter(em);
       const config = BatchBuilder.create()
         .job('import-products-big')
@@ -585,8 +572,7 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
           em.clear();
           return em.findOne(JobExecutionEntity, { id: executionId });
         },
-        async (row) =>
-          row?.status === JobStatus.COMPLETED || row?.status === JobStatus.FAILED,
+        async (row) => row?.status === JobStatus.COMPLETED || row?.status === JobStatus.FAILED,
         30_000,
       );
       expect(final!.status).toBe(JobStatus.COMPLETED);
@@ -701,8 +687,7 @@ describe('Demo BullMQ execution path (Task 21) — live PG + live Redis', () => 
           em.clear();
           return em.findOne(JobExecutionEntity, { id: executionId });
         },
-        async (row) =>
-          row?.status === JobStatus.COMPLETED || row?.status === JobStatus.FAILED,
+        async (row) => row?.status === JobStatus.COMPLETED || row?.status === JobStatus.FAILED,
         10_000,
         50,
       );

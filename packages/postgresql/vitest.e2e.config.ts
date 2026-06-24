@@ -37,7 +37,7 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     // The 4-shell e2e suite spins up one Postgres testcontainer,
-    // applies the 6-table migration, then boots 4 separate Nest test
+    // applies the 5-table migration, then boots 4 separate Nest test
     // modules (one per shell). Cold Docker pull on CI is the slow
     // path; 180 s covers a worst-case first run. The 4 Nest module
     // boots together add another ~5–10 s.

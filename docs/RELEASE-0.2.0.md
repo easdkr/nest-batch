@@ -36,7 +36,7 @@ family.
 - `@nest-batch/prisma`, Prisma adapter (driver-agnostic slot in 0.2.0)
 - `@nest-batch/bullmq`, BullMQ transport strategy with partition support
 - `@nest-batch/kafka`, Kafka transport strategy with partition support
-- `@nest-batch/postgresql`, NEW. Owns the 4 Postgres adapter shells (`MikroOrmPostgres`, `TypeOrmPostgres`, `DrizzlePostgres`, `PrismaPostgres`); the only package that declares Postgres providers as peer deps.
+- `@nest-batch/postgresql`, NEW. Owns the 4 Postgres adapter shells (`PostgresMikroOrmAdapter`, `PostgresTypeOrmAdapter`, `PostgresDrizzleAdapter`, `PostgresPrismaAdapter`); the only package that declares Postgres providers as peer deps.
 - `@nest-batch/mysql`, NEW. Owns the 4 MySQL adapter shells (`MikroOrmMySql`, `TypeOrmMySql`, `DrizzleMySql`, `PrismaMySql`); the only package that declares MySQL providers as peer deps.
 - `@nest-batch/webhook`, NEW. `WebhookBatchObserver` with HMAC-SHA256 signing, exponential-backoff retry, and a dead-letter log.
 
@@ -56,18 +56,18 @@ All 10 packages ship at version `0.2.0` in lockstep. The lockstep
 policy is unchanged from 0.1.0: bumping one package bumps all
 ten, recorded in a single `.changeset/release-0.2.0.md` entry.
 
-| Package                       | Version | Role                                                                                  | Peer deps                                                                                                   |
-| ----------------------------- | ------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `@nest-batch/core`            | `0.2.0` | Job / Step / Chunk / Tasklet IR, decorators, listeners, skip / retry policies, `IExecutionStrategy`, `@BatchScheduled`, `BatchScheduleRegistry`, `JobLauncher` | `@nestjs/common@^10 \|\| ^11`, `@nestjs/core@^10 \|\| ^11`, `reflect-metadata@^0.2`                          |
-| `@nest-batch/mikro-orm`       | `0.2.0` | MikroORM 6.x adapter slot. `MikroOrmJobRepository` + `MikroOrmTransactionManager` + `MikroOrmAdapter`. Driver-agnostic; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@mikro-orm/core@^6.0.0`, `@mikro-orm/nestjs@^6.0.0` |
-| `@nest-batch/typeorm`         | `0.2.0` | TypeORM 1.0.0 adapter slot. `TypeOrmJobRepository` + `TypeOrmTransactionManager` + `TypeOrmAdapter`. Driver-agnostic; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@nestjs/typeorm@^10 \|\| ^11`, `typeorm@^1.0.0` |
-| `@nest-batch/drizzle`         | `0.2.0` | Drizzle ORM adapter slot. `DrizzleJobRepository` + `DrizzleTransactionManager` + `DrizzleAdapter` + `DrizzleBatchModule`. Driver-agnostic; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `drizzle-orm@^0.40.0`                       |
-| `@nest-batch/prisma`          | `0.2.0` | Prisma adapter slot. `PrismaJobRepository` + `PrismaTransactionManager` + `PrismaAdapter` + `PrismaBatchModule`. Driver-agnostic; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@prisma/client@^6.0.0`                       |
-| `@nest-batch/bullmq`          | `0.2.0` | BullMQ transport strategy. `BullmqRuntimeService`, `BullmqAdapter`, `BullmqScheduleService` (cron firing via `upsertJobScheduler`), partition-aware `BullmqExecutionStrategy`. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@nestjs/core@^10 \|\| ^11`, `bullmq@^5.0.0`   |
-| `@nest-batch/kafka`           | `0.2.0` | Kafka transport strategy. `KafkaRuntimeService`, `KafkaAdapter`, `KafkaExecutionStrategy`, `KafkaScheduleService` (hand-rolled `*/N * * * *` parser; see §4), partition-aware runtime. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@nestjs/core@^10 \|\| ^11`, `kafkajs@^2.2.4` |
-| `@nest-batch/postgresql`      | `0.2.0` | Postgres driver sibling. 4 adapter shells (`MikroOrmPostgres`, `TypeOrmPostgres`, `DrizzlePostgres`, `PrismaPostgres`) + 6-table migration + boundary test. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, plus the 4 underlying adapter slot peer deps    |
-| `@nest-batch/mysql`           | `0.2.0` | MySQL driver sibling. 4 adapter shells (`MikroOrmMySql`, `TypeOrmMySql`, `DrizzleMySql`, `PrismaMySql`) + 6-table migration + boundary test. Ephemeral Docker; gated by `RUN_MYSQL_E2E=1`. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, plus the 4 underlying adapter slot peer deps    |
-| `@nest-batch/webhook`         | `0.2.0` | Webhook delivery observer. `WebhookBatchObserver` + HMAC-SHA256 signing + exponential backoff (1s / 5s / 25s / 125s) + dead-letter `logger.warn` + `X-Nest-Batch-Signature` header. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`                                                  |
+| Package                  | Version | Role                                                                                                                                                                                                  | Peer deps                                                                                                           |
+| ------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `@nest-batch/core`       | `0.2.0` | Job / Step / Chunk / Tasklet IR, decorators, listeners, skip / retry policies, `IExecutionStrategy`, `@BatchScheduled`, `BatchScheduleRegistry`, `JobLauncher`                                        | `@nestjs/common@^10 \|\| ^11`, `@nestjs/core@^10 \|\| ^11`, `reflect-metadata@^0.2`                                 |
+| `@nest-batch/mikro-orm`  | `0.2.0` | MikroORM 6.x adapter slot. `MikroOrmJobRepository` + `MikroOrmTransactionManager` + `MikroOrmAdapter`. Driver-agnostic; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`.                    | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@mikro-orm/core@^6.0.0`, `@mikro-orm/nestjs@^6.0.0` |
+| `@nest-batch/typeorm`    | `0.2.0` | TypeORM 1.0.0 adapter slot. `TypeOrmJobRepository` + `TypeOrmTransactionManager` + `TypeOrmAdapter`. Driver-agnostic; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`.                      | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@nestjs/typeorm@^10 \|\| ^11`, `typeorm@^1.0.0`     |
+| `@nest-batch/drizzle`    | `0.2.0` | Drizzle ORM adapter slot. `DrizzleJobRepository` + `DrizzleTransactionManager` + `DrizzleAdapter` + `DrizzleBatchModule`. Driver-agnostic; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`. | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `drizzle-orm@^0.40.0`                                |
+| `@nest-batch/prisma`     | `0.2.0` | Prisma adapter slot. `PrismaJobRepository` + `PrismaTransactionManager` + `PrismaAdapter` + `PrismaBatchModule`. Driver-agnostic; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`.          | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@prisma/client@^6.0.0`                              |
+| `@nest-batch/bullmq`     | `0.2.0` | BullMQ transport strategy. `BullmqRuntimeService`, `BullmqAdapter`, `BullmqScheduleService` (cron firing via `upsertJobScheduler`), partition-aware `BullmqExecutionStrategy`.                        | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@nestjs/core@^10 \|\| ^11`, `bullmq@^5.0.0`         |
+| `@nest-batch/kafka`      | `0.2.0` | Kafka transport strategy. `KafkaRuntimeService`, `KafkaAdapter`, `KafkaExecutionStrategy`, `KafkaScheduleService` (hand-rolled `*/N * * * *` parser; see §4), partition-aware runtime.                | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@nestjs/core@^10 \|\| ^11`, `kafkajs@^2.2.4`        |
+| `@nest-batch/postgresql` | `0.2.0` | Postgres driver sibling. 4 adapter shells (`PostgresMikroOrmAdapter`, `PostgresTypeOrmAdapter`, `PostgresDrizzleAdapter`, `PostgresPrismaAdapter`) + 5-table migration + boundary test.               | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, plus the 4 underlying adapter slot peer deps         |
+| `@nest-batch/mysql`      | `0.2.0` | MySQL driver sibling. 4 adapter shells (`MikroOrmMySql`, `TypeOrmMySql`, `DrizzleMySql`, `PrismaMySql`) + 6-table migration + boundary test. Ephemeral Docker; gated by `RUN_MYSQL_E2E=1`.            | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, plus the 4 underlying adapter slot peer deps         |
+| `@nest-batch/webhook`    | `0.2.0` | Webhook delivery observer. `WebhookBatchObserver` + HMAC-SHA256 signing + exponential backoff (1s / 5s / 25s / 125s) + dead-letter `logger.warn` + `X-Nest-Batch-Signature` header.                   | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`                                                       |
 
 > **Why the 4 existing DB-adapter packages became "driver-agnostic slots."** The 0.1.0 release had 4 DB adapter packages (`mikro-orm`, `typeorm`, `drizzle`, `prisma`) that each inlined a Postgres shell: `mikro-orm` declared `@mikro-orm/postgresql` as a peer dep, `drizzle` shipped a `drizzle-orm/pg-core` schema, `prisma` shipped a `prisma/schema.prisma` with a Postgres provider, and `typeorm` carried the Postgres driver via `@nestjs/typeorm`. In 0.2.0 those shells move into the new `@nest-batch/postgresql` package. The 4 existing packages keep their name and their public API (`XxxJobRepository`, `XxxTransactionManager`, `XxxAdapter`, `XxxBatchModule`); they no longer declare a driver-specific peer dep. This is the symmetric refactor that backs the user-imposed guardrail "DB adapters must not depend on a DB provider." The 4 existing packages expose the ORM-specific interface shape and a build artifact that `@nest-batch/postgresql` and `@nest-batch/mysql` import. See [§3 What shipped](#3-what-shipped-in-020) and [§4 Stabilization](#4-stabilization).
 
@@ -125,10 +125,10 @@ Symmetric to `@nest-batch/mysql`. Owns the 4 Postgres adapter
 shells that previously lived inside the 4 existing DB adapter
 packages:
 
-- `MikroOrmPostgres`, MikroORM 6.x + `@mikro-orm/postgresql` driver
-- `TypeOrmPostgres`, TypeORM 1.0.0 + `pg` driver
-- `DrizzlePostgres`, Drizzle ORM + `drizzle-orm/node-postgres` + `drizzle-orm/pg-core` schema
-- `PrismaPostgres`, Prisma + the `postgresql` Prisma provider
+- `PostgresMikroOrmAdapter`, MikroORM 6.x + `@mikro-orm/postgresql` driver
+- `PostgresTypeOrmAdapter`, TypeORM 1.0.0 + `pg` driver
+- `PostgresDrizzleAdapter`, Drizzle ORM + `drizzle-orm/node-postgres` + `drizzle-orm/pg-core` schema
+- `PostgresPrismaAdapter`, Prisma + the `postgresql` Prisma provider
 
 The Postgres shells are extracted from `@nest-batch/mikro-orm`,
 `@nest-batch/typeorm`, `@nest-batch/drizzle`, and
@@ -225,13 +225,13 @@ The 0.1.0 release shipped code that the docs did not reflect. The
 five stale phrases, the file:line they lived at in the 0.1.0
 revision, and the new 0.2.0 reality.
 
-| Stale phrase (0.1.0 docs)                                                                                                | Location (0.1.0 revision)                | 0.2.0 reality                                                                                              |
-| ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| "Drizzle is not in this release (deferred)"                                                                              | `MIGRATION.md:218-232` and `README.md:65-67` | `@nest-batch/drizzle` is a stable member of the family. Driver-agnostic slot; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`. |
-| "What's still on the roadmap is the optional scheduler (cron-style jobs that actually fire, not just register metadata), partitioning for chunked steps, and (eventually) the Drizzle adapter" | `README.md:362-369`                      | The cron scheduler fires today via `BullmqScheduleService.onApplicationBootstrap()` which calls `queue.upsertJobScheduler(schedulerKey, { pattern, tz }, template)`. Partitioning ships in 0.2.0. Drizzle ships in 0.2.0. |
-| "Future enhancement (not in this release): Chunked steps with explicit partition configuration will enqueue one job per partition... `partitionIndex` is a forward-compatibility stub" | `docs/ARCHITECTURE.md:175-181` (and a paraphrase at `packages/bullmq/README.md:50-58`) | Partition orchestration ships in 0.2.0 for both BullMQ and Kafka. `partitionIndex` is a real, user-facing field with the contract `0 <= partitionIndex < count`. InProcessAdapter throws or warns on `count > 1`. |
-| "There is no Sidekiq, no RabbitMQ, no SQS, no Celery, no Kafka transport in this release"                                | `MIGRATION.md:267-274`                   | Sidekiq / RabbitMQ / SQS / Celery are still not in this release, the `IExecutionStrategy` polymorphism is the documented extension point. **Kafka ships in 0.2.0** via `@nest-batch/kafka`; the "no Kafka" clause is removed. |
-| "Today the decorator is useful for declaring intent and for the `BatchScheduleRegistry` to expose a queryable list" / "A future runtime scheduler (likely a follow-up to the BullMQ adapter) will read that metadata and install the real timers." | `docs/FAQ.md:196-211`                    | `@BatchScheduled` is not metadata-only. `BullmqScheduleService` walks the `BatchScheduleRegistry` on `OnApplicationBootstrap` and installs a BullMQ `upsertJobScheduler` for every non-inert entry. Inert mode (`BATCH_SCHEDULED_DISABLE=1`) is the documented test escape hatch. |
+| Stale phrase (0.1.0 docs)                                                                                                                                                                                                                          | Location (0.1.0 revision)                                                              | 0.2.0 reality                                                                                                                                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Drizzle is not in this release (deferred)"                                                                                                                                                                                                        | `MIGRATION.md:218-232` and `README.md:65-67`                                           | `@nest-batch/drizzle` is a stable member of the family. Driver-agnostic slot; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`.                                                                                                                                          |
+| "What's still on the roadmap is the optional scheduler (cron-style jobs that actually fire, not just register metadata), partitioning for chunked steps, and (eventually) the Drizzle adapter"                                                     | `README.md:362-369`                                                                    | The cron scheduler fires today via `BullmqScheduleService.onApplicationBootstrap()` which calls `queue.upsertJobScheduler(schedulerKey, { pattern, tz }, template)`. Partitioning ships in 0.2.0. Drizzle ships in 0.2.0.                                                         |
+| "Future enhancement (not in this release): Chunked steps with explicit partition configuration will enqueue one job per partition... `partitionIndex` is a forward-compatibility stub"                                                             | `docs/ARCHITECTURE.md:175-181` (and a paraphrase at `packages/bullmq/README.md:50-58`) | Partition orchestration ships in 0.2.0 for both BullMQ and Kafka. `partitionIndex` is a real, user-facing field with the contract `0 <= partitionIndex < count`. InProcessAdapter throws or warns on `count > 1`.                                                                 |
+| "There is no Sidekiq, no RabbitMQ, no SQS, no Celery, no Kafka transport in this release"                                                                                                                                                          | `MIGRATION.md:267-274`                                                                 | Sidekiq / RabbitMQ / SQS / Celery are still not in this release, the `IExecutionStrategy` polymorphism is the documented extension point. **Kafka ships in 0.2.0** via `@nest-batch/kafka`; the "no Kafka" clause is removed.                                                     |
+| "Today the decorator is useful for declaring intent and for the `BatchScheduleRegistry` to expose a queryable list" / "A future runtime scheduler (likely a follow-up to the BullMQ adapter) will read that metadata and install the real timers." | `docs/FAQ.md:196-211`                                                                  | `@BatchScheduled` is not metadata-only. `BullmqScheduleService` walks the `BatchScheduleRegistry` on `OnApplicationBootstrap` and installs a BullMQ `upsertJobScheduler` for every non-inert entry. Inert mode (`BATCH_SCHEDULED_DISABLE=1`) is the documented test escape hatch. |
 
 The doc edits that fix these five lines are not a top-to-bottom
 rewrite; each is a targeted paragraph or sentence replacement.
@@ -327,10 +327,7 @@ The `@nest-batch/webhook` v1 contract.
 ```ts
 WebhookBatchModule.forRoot({
   secret: process.env.WEBHOOK_HMAC_SECRET, // 32+ bytes recommended
-  urls: [
-    'https://hooks.example.com/nest-batch',
-    'https://ops.example.com/ingest/nest-batch',
-  ],
+  urls: ['https://hooks.example.com/nest-batch', 'https://ops.example.com/ingest/nest-batch'],
   // Optional overrides:
   // retryDelaysMs: [1_000, 5_000, 25_000, 125_000],  // default below
   // maxRetries: 4,                                   // default below
@@ -352,14 +349,14 @@ default is the contract the test suite relies on.
 
 ### 7.3 4xx-no-retry / 5xx-retry rule
 
-| HTTP status       | Behavior                                                                                |
-| ----------------- | --------------------------------------------------------------------------------------- |
-| `2xx`             | Success. The observer marks the delivery done.                                          |
-| `3xx`             | Treated as a redirect. The observer follows the redirect once; if the redirect target returns 4xx / 5xx, that target's status drives the retry decision. |
-| `4xx`             | **No retry.** Logged at `warn` level with the URL and the response body. The host is expected to fix the misconfiguration (bad URL, missing auth, malformed payload). |
-| `5xx`             | **Retried** through the full 4-attempt budget at the 1s / 5s / 25s / 125s schedule. After the final attempt, dead-letter. |
-| Network error     | **Retried** through the full 4-attempt budget. After the final attempt, dead-letter.    |
-| Timeout           | Treated as a network error. **Retried** through the full 4-attempt budget.              |
+| HTTP status   | Behavior                                                                                                                                                              |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `2xx`         | Success. The observer marks the delivery done.                                                                                                                        |
+| `3xx`         | Treated as a redirect. The observer follows the redirect once; if the redirect target returns 4xx / 5xx, that target's status drives the retry decision.              |
+| `4xx`         | **No retry.** Logged at `warn` level with the URL and the response body. The host is expected to fix the misconfiguration (bad URL, missing auth, malformed payload). |
+| `5xx`         | **Retried** through the full 4-attempt budget at the 1s / 5s / 25s / 125s schedule. After the final attempt, dead-letter.                                             |
+| Network error | **Retried** through the full 4-attempt budget. After the final attempt, dead-letter.                                                                                  |
+| Timeout       | Treated as a network error. **Retried** through the full 4-attempt budget.                                                                                            |
 
 ### 7.4 `X-Nest-Batch-Signature` header (Stripe-style)
 
@@ -396,7 +393,7 @@ network / timeout after all 4 attempts), the observer emits:
 ```ts
 logger.warn(
   `[WebhookBatchObserver] dead-letter url=${url} attempts=${attempts} ` +
-  `lastStatus=${lastStatus ?? 'n/a'} lastError=${lastError}`,
+    `lastStatus=${lastStatus ?? 'n/a'} lastError=${lastError}`,
 );
 ```
 
@@ -566,7 +563,7 @@ The 0.2.0 release does not ship MariaDB or CockroachDB
 support. When one ships, it follows the same per-driver
 sibling pattern: a new `@nest-batch/mariadb` (or
 `@nest-batch/cockroachdb`) package that owns the 4 adapter
-shells and the 6-table migration against that dialect. The
+shells and the active meta-schema migration against that dialect. The
 10 existing packages stay dialect-agnostic; the boundary
 test pattern from T-AC-2 / T-AC-2b extends to forbid the
 new dialect's import paths in the existing 10 packages.
@@ -601,14 +598,14 @@ agent-executed in CI. No human action is required to clear the
 gates. The full list lives in the plan file
 (`.omo/plans/not-in-this-release.md`); the summary is:
 
-| Test        | Location                                                                                   | Asserts                                                                                                                                |
-| ----------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| T-AC-1      | `packages/core/tests/release-0.2.0/doc-currency.test.ts`                                   | The 5 stale phrases from [§5](#5-doc-currency-correction) are absent across `MIGRATION.md` / `README.md` / `docs/FAQ.md` / `docs/ARCHITECTURE.md`. `docs/RELEASE-0.2.0.md` exists and contains the 10-package list. |
-| T-AC-2      | `packages/core/tests/core/boundary/no-mysql-in-existing-packages.test.ts`                  | No `mysql` / `mysql2` / `@mysql/` import or peer dep appears in the 8 non-MySQL packages.                                              |
-| T-AC-2b     | `packages/core/tests/core/boundary/no-postgres-in-existing-packages.test.ts`              | No `pg` / `@mikro-orm/postgresql` / `drizzle-orm/pg-core` / `drizzle-orm/node-postgres` / Postgres Prisma provider in the 8 non-Postgres packages. |
-| T-AC-3      | `packages/bullmq/tests/partition-invariant.test.ts` + `packages/kafka/tests/partition-invariant.test.ts` | `0 <= partitionIndex < count` is enforced at runtime; out-of-range values throw.                                                       |
-| T-AC-4      | `packages/bullmq/tests/schedule-fires.test.ts`                                             | `BullmqScheduleService.onApplicationBootstrap()` calls `queue.upsertJobScheduler(schedulerKey, { pattern, tz }, template)` for every non-inert entry; inert entries are skipped. |
-| T-AC-5      | `packages/webhook/tests/webhook-observer.test.ts`                                          | HMAC-SHA256 signature in `X-Nest-Batch-Signature: t=<unix>,v1=<hex>` header; 1s / 5s / 25s / 125s retry; 4xx-no-retry / 5xx-retry; secret never logged; dead-letter `logger.warn` after final attempt. |
+| Test    | Location                                                                                                 | Asserts                                                                                                                                                                                                             |
+| ------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T-AC-1  | `packages/core/tests/release-0.2.0/doc-currency.test.ts`                                                 | The 5 stale phrases from [§5](#5-doc-currency-correction) are absent across `MIGRATION.md` / `README.md` / `docs/FAQ.md` / `docs/ARCHITECTURE.md`. `docs/RELEASE-0.2.0.md` exists and contains the 10-package list. |
+| T-AC-2  | `packages/core/tests/core/boundary/no-mysql-in-existing-packages.test.ts`                                | No `mysql` / `mysql2` / `@mysql/` import or peer dep appears in the 8 non-MySQL packages.                                                                                                                           |
+| T-AC-2b | `packages/core/tests/core/boundary/no-postgres-in-existing-packages.test.ts`                             | No `pg` / `@mikro-orm/postgresql` / `drizzle-orm/pg-core` / `drizzle-orm/node-postgres` / Postgres Prisma provider in the 8 non-Postgres packages.                                                                  |
+| T-AC-3  | `packages/bullmq/tests/partition-invariant.test.ts` + `packages/kafka/tests/partition-invariant.test.ts` | `0 <= partitionIndex < count` is enforced at runtime; out-of-range values throw.                                                                                                                                    |
+| T-AC-4  | `packages/bullmq/tests/schedule-fires.test.ts`                                                           | `BullmqScheduleService.onApplicationBootstrap()` calls `queue.upsertJobScheduler(schedulerKey, { pattern, tz }, template)` for every non-inert entry; inert entries are skipped.                                    |
+| T-AC-5  | `packages/webhook/tests/webhook-observer.test.ts`                                                        | HMAC-SHA256 signature in `X-Nest-Batch-Signature: t=<unix>,v1=<hex>` header; 1s / 5s / 25s / 125s retry; 4xx-no-retry / 5xx-retry; secret never logged; dead-letter `logger.warn` after final attempt.              |
 
 A release that has not pinned all 6 to green in `pnpm test`
 across the workspace is not 0.2.0.
