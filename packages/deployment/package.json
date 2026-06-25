@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/deployment",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Deployment recipes and IaC helper objects for nest-batch runtime adapters.",
   "license": "MIT",
   "author": "easdkr",
@@ -25,7 +25,8 @@
   "files": [
     "dist/src",
     "src",
-    "README.md"
+    "README.md",
+    "README.ko.md"
   ],
   "publishConfig": {
     "access": "public"

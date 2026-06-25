@@ -1,34 +1,45 @@
 # @nest-batch/admin
 
-Nest-native admin API and lightweight dashboard helpers for
-`@nest-batch/core`.
+Small Nest-native admin HTTP surface for `@nest-batch/core`.
+
+Korean: [README.ko.md](./README.ko.md)
 
 ## Install
 
 ```bash
-pnpm add @nest-batch/admin @nest-batch/core
+pnpm add @nest-batch/core @nest-batch/admin
 ```
 
-Peer dependencies:
+## Public Imports
 
-- `@nest-batch/core@^0.2.0`
-- `@nestjs/common@^10 || ^11`
-- `@nestjs/core@^10 || ^11`
-
-## What this package provides
-
-- `BatchAdminModule`
-- `BatchAdminController`
-- `BatchAdminRenderer`
-
-Use this package when a Nest application needs a small HTTP admin surface for
-batch job inspection and operation. The batch runtime, repository contracts,
-job definitions, and execution semantics stay in `@nest-batch/core`.
-
-## Build and test
-
-```bash
-pnpm --filter @nest-batch/admin build
-pnpm --filter @nest-batch/admin test
-pnpm --filter @nest-batch/admin typecheck
+```ts
+import { BatchAdminController, BatchAdminModule, renderBatchAdminHtml } from '@nest-batch/admin';
 ```
+
+## Wiring
+
+```ts
+import { BatchAdminModule } from '@nest-batch/admin';
+
+@Module({
+  imports: [NestBatchModule.forRoot({ adapters }), BatchAdminModule],
+})
+export class AppModule {}
+```
+
+The controller is mounted under `/batch` and exposes job/execution inspection
+and basic operations.
+
+## Routes
+
+| Route                                         | Purpose                               |
+| --------------------------------------------- | ------------------------------------- |
+| `GET /batch`                                  | HTML dashboard.                       |
+| `GET /batch/jobs`                             | List discovered jobs.                 |
+| `GET /batch/jobs/:jobName/instances`          | List instances for a job.             |
+| `GET /batch/executions`                       | List executions, optionally filtered. |
+| `GET /batch/executions/:executionId`          | Read execution details.               |
+| `POST /batch/executions/:executionId/stop`    | Stop an execution.                    |
+| `POST /batch/executions/:executionId/restart` | Restart an execution.                 |
+| `POST /batch/executions/:executionId/abandon` | Mark an execution abandoned.          |
+| `POST /batch/jobs/:jobId/start-next`          | Start the next instance.              |

@@ -17,13 +17,25 @@ markdown file in this folder — commit it alongside your change.
 
 ## How releases happen
 
-On push to `main`, the `Release` GitHub Actions workflow runs:
+On push to `main`, the `Release` GitHub Actions workflow creates or updates the
+Changesets version PR:
 
-- **If changesets are present**, it opens (or updates) a `chore(release): version packages`
-  PR that bumps versions, rewrites internal dependency ranges, and updates each
-  package's `CHANGELOG.md`. Merging that PR triggers the next run.
-- **If no changesets are present** but versions in `package.json` are ahead of
-  what is on npm, it builds and runs `changeset publish` to publish them.
+- **If changesets are present**, it opens or updates a `chore(release): version packages`
+  PR that bumps versions, rewrites internal dependency ranges, and updates package
+  changelogs.
+- **npm publishing is currently manual.** GitHub OIDC / npm trusted publishing is
+  not configured yet, so the workflow intentionally does not run
+  `changeset publish`.
 
-See the root `README.md` / `RELEASING` notes for the one-time `NPM_TOKEN`
-secret setup.
+After the version PR is merged, publish from a machine that is logged in to npm
+with access to the `@nest-batch` scope:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --dir packages/prisma exec prisma generate --schema tests/fixtures/postgresql/schema.prisma
+pnpm build
+pnpm changeset publish
+```
+
+Push the tags created by Changesets if the manual publish step creates local git
+tags.

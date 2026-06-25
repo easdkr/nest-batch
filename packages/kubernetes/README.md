@@ -2,32 +2,43 @@
 
 Kubernetes Job one-off execution adapter for `@nest-batch/core`.
 
+Korean: [README.ko.md](./README.ko.md)
+
 ## Install
 
 ```bash
-pnpm add @nest-batch/kubernetes @nest-batch/core
+pnpm add @nest-batch/core @nest-batch/kubernetes
 ```
 
-Peer dependencies:
+Provide a client object with a `createJob(input)` method. It can wrap the
+Kubernetes API client your application uses.
 
-- `@nest-batch/core@^0.2.0`
-- `@nestjs/common@^10 || ^11`
-- `@nestjs/core@^10 || ^11`
+## Public Imports
 
-## What this package provides
+```ts
+import {
+  KubernetesJobAdapter,
+  KubernetesJobLauncher,
+  type KubernetesJobModuleOptions,
+} from '@nest-batch/kubernetes';
+```
 
-- `KubernetesJobAdapter`
-- `KubernetesJobLauncher`
-- Kubernetes Job module option types
+## Wiring
 
-Use this package when a launcher service should create one-off Kubernetes Jobs
-for batch work. The package does not create Kubernetes clusters, RBAC, service
-accounts, or persistence tables.
+```ts
+import { KubernetesJobAdapter } from '@nest-batch/kubernetes';
 
-## Build and test
-
-```bash
-pnpm --filter @nest-batch/kubernetes build
-pnpm --filter @nest-batch/kubernetes test
-pnpm --filter @nest-batch/kubernetes typecheck
+NestBatchModule.forRoot({
+  adapters: {
+    persistence: persistenceAdapter,
+    transport: KubernetesJobAdapter.forRoot({
+      client: kubernetesJobsClient,
+      namespace: 'batch',
+      image: 'registry.example.com/orders-worker:latest',
+      containerName: 'batch-worker',
+      command: ['node', 'dist/batch-worker.js'],
+      serviceAccountName: 'batch-worker',
+    }),
+  },
+});
 ```

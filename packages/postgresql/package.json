@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/postgresql",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "PostgreSQL driver shells for @nest-batch/core. Provides 4 Postgres adapter shells (MikroORM, TypeORM, Drizzle, Prisma) and the shared test-contracts e2e harness against a real Postgres testcontainer.",
   "license": "MIT",
   "author": "easdkr",
@@ -30,7 +30,8 @@
   "files": [
     "dist/src",
     "src",
-    "README.md"
+    "README.md",
+    "README.ko.md"
   ],
   "publishConfig": {
     "access": "public"

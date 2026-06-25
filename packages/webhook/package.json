@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/webhook",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Webhook delivery observer for @nest-batch/core. Subscribes to BATCH_EVENT.* and POSTs HMAC-SHA256-signed JSON envelopes to one or more URLs with exponential-backoff retry and dead-letter logging. Uses native fetch (Node 20+); no HTTP client peer dep.",
   "license": "MIT",
   "author": "easdkr",
@@ -27,7 +27,8 @@
   "files": [
     "dist/src",
     "src",
-    "README.md"
+    "README.md",
+    "README.ko.md"
   ],
   "publishConfig": {
     "access": "public"

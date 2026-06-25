@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/aws-eventbridge-scheduler",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "AWS EventBridge Scheduler integration for @nest-batch/core schedules.",
   "license": "MIT",
   "author": "easdkr",
@@ -25,7 +25,8 @@
   "files": [
     "dist/src",
     "src",
-    "README.md"
+    "README.md",
+    "README.ko.md"
   ],
   "publishConfig": {
     "access": "public"

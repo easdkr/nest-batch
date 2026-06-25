@@ -2,32 +2,42 @@
 
 AWS Batch submit-job adapter for `@nest-batch/core`.
 
+Korean: [README.ko.md](./README.ko.md)
+
 ## Install
 
 ```bash
-pnpm add @nest-batch/aws-batch @nest-batch/core
+pnpm add @nest-batch/core @nest-batch/aws-batch
 ```
 
-Peer dependencies:
+Provide a client object with a `submitJob(input)` method. It can wrap the AWS
+SDK Batch client.
 
-- `@nest-batch/core@^0.2.0`
-- `@nestjs/common@^10 || ^11`
-- `@nestjs/core@^10 || ^11`
+## Public Imports
 
-## What this package provides
+```ts
+import {
+  AwsBatchAdapter,
+  AwsBatchJobLauncher,
+  type AwsBatchModuleOptions,
+} from '@nest-batch/aws-batch';
+```
 
-- `AwsBatchAdapter`
-- `AwsBatchJobLauncher`
-- AWS Batch module option types
+## Wiring
 
-Use this package when a launcher service should submit batch work to AWS Batch.
-The package is an execution adapter. It does not define jobs, own persistence,
-or create AWS infrastructure.
+```ts
+import { AwsBatchAdapter } from '@nest-batch/aws-batch';
 
-## Build and test
-
-```bash
-pnpm --filter @nest-batch/aws-batch build
-pnpm --filter @nest-batch/aws-batch test
-pnpm --filter @nest-batch/aws-batch typecheck
+NestBatchModule.forRoot({
+  adapters: {
+    persistence: persistenceAdapter,
+    transport: AwsBatchAdapter.forRoot({
+      client: batchClient,
+      jobQueue: process.env.AWS_BATCH_JOB_QUEUE,
+      jobDefinition: process.env.AWS_BATCH_JOB_DEFINITION,
+      jobNamePrefix: 'orders-batch',
+      workerCommand: ['node', 'dist/batch-worker.js'],
+    }),
+  },
+});
 ```

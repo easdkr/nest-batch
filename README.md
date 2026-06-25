@@ -1,437 +1,243 @@
 # nest-batch
 
-A NestJS batch processing framework, modelled after Spring Batch, split
-into a small set of focused sibling packages. The repo is a pnpm
-workspace with the library packages under `packages/` and a consumer
-demo under `apps/demo`.
+NestJS batch processing packages for jobs that need durable execution
+state, restartable steps, chunk-oriented processing, and pluggable runtime
+adapters.
 
-This is a **breaking new major-structure release**. The previous
-single-package `@nest-batch/nest-batch` is gone; the
-`@nest-batch/core` engine now lives in its own package, and the
-persistence and transport integrations have moved into sibling
-packages. See [`MIGRATION.md`](./MIGRATION.md) for the full
-breakdown.
+English is the default npm documentation language. Korean docs are available in
+[README.ko.md](./README.ko.md) and in the matching `*.ko.md` files under
+[`docs/`](./docs).
 
----
+## How the Packages Fit Together
 
-## Further reading
+`nest-batch` is split by runtime responsibility. A real application usually
+chooses one package from each required layer:
 
-- [`docs/QUICKSTART.md`](./docs/QUICKSTART.md) — bring the repo up
-  locally in five minutes: install, Postgres + Redis, test suites,
-  env-var matrix.
-- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — the four
-  design principles (BullMQ-as-runtime, DB-first state, step /
-  partition granularity, business vs technical retry) and the
-  tests that enforce them.
-- [`docs/FAQ.md`](./docs/FAQ.md) — common questions (Drizzle,
-  TypeORM 0.3, chunking ownership, JobExecution canonical store,
-  scheduling).
-- [`MIGRATION.md`](./MIGRATION.md) — breaking changes and the
-  explicit "what is NOT in this release" list.
-- [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md) — the single
-  integrated release note for 0.2.0 (covers 10 packages, partition
-  orchestration, MySQL, webhook).
+| Layer                       | What it does                                                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core                        | Discovers job classes, compiles steps, runs chunk/tasklet logic, and exposes `JobLauncher`, `JobExplorer`, `JobOperator`, decorators, and tokens. |
+| Persistence adapter         | Stores durable batch metadata such as job instances, job executions, step executions, checkpoints, and execution context in your database.        |
+| Transport adapter           | Decides where the execution runs: the current process, a queue worker, SQS handoff, ECS task, AWS Batch job, or Kubernetes Job.                   |
+| Optional companion packages | Add scheduling, webhook notification, admin routes, or deployment recipe helpers.                                                                 |
 
----
+Persistence and transport are deliberately separate. Your job may store state in
+PostgreSQL through MikroORM while running locally with `InProcessAdapter`, or use
+the same persistence adapter while handing execution to BullMQ workers.
 
-## The `@nest-batch/*` package family
+## Choose an Installation Shape
 
-```
-@nest-batch/core           ← the batch engine (Job/Step/Chunk/Tasklet, checkpoint, restart, skip, retry)
-        ▲
-        │
-@nest-batch/mikro-orm      ← MikroORM 6.x adapter slot (driver-agnostic in 0.2.0)
-@nest-batch/typeorm        ← TypeORM 1.0.0 adapter slot (driver-agnostic in 0.2.0)
-@nest-batch/drizzle        ← Drizzle ORM adapter slot (driver-agnostic in 0.2.0)
-@nest-batch/prisma         ← Prisma adapter slot (driver-agnostic in 0.2.0)
-@nest-batch/bullmq         ← BullMQ transport strategy (Queue/Worker/QueueEvents, partition-aware)
-@nest-batch/kafka          ← Kafka transport strategy (partition-aware)
-@nest-batch/postgresql     ← NEW. 4 Postgres adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma)
-@nest-batch/mysql          ← NEW. 4 MySQL adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma)
-@nest-batch/webhook        ← NEW. WebhookBatchObserver with HMAC-SHA256 + exponential backoff + dead-letter
-```
-
-Each adapter is a sibling. They depend on `@nest-batch/core`; they
-do not depend on each other. The list above is the full list in
-this release. See [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md)
-§2 for the full 10-package table (versions, roles, peer deps).
-
-### Where things live
-
-| Concern                         | Package                  |
-| ------------------------------- | ------------------------ |
-| Batch engine, decorators, IR    | `@nest-batch/core`       |
-| PostgreSQL + MySQL via MikroORM | `@nest-batch/mikro-orm`  |
-| PostgreSQL + MySQL via TypeORM  | `@nest-batch/typeorm`    |
-| PostgreSQL + MySQL via Drizzle  | `@nest-batch/drizzle`    |
-| PostgreSQL + MySQL via Prisma   | `@nest-batch/prisma`     |
-| BullMQ transport strategy       | `@nest-batch/bullmq`     |
-| Kafka transport strategy        | `@nest-batch/kafka`      |
-| PostgreSQL driver sibling       | `@nest-batch/postgresql` |
-| MySQL driver sibling            | `@nest-batch/mysql`      |
-| Webhook delivery observer       | `@nest-batch/webhook`    |
-
-The 0.2.0 release splits the previous 4 packages into 10. The 4 DB
-adapter packages (`mikro-orm`, `typeorm`, `drizzle`, `prisma`) own
-the ORM surface and schema/entity contract; consuming apps generate
-and own their runnable migrations. The 4 Postgres shells and the 4
-MySQL shells live in the new
-`@nest-batch/postgresql` and `@nest-batch/mysql` sibling packages.
-The 10-package list, the peer-dep table, and the user-facing
-guardrail (no DB provider in runtime surfaces of the non-target-DB
-packages) are documented in
-[`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md) §2.
-
-Read the per-package README for the contract, the peer
-dependencies, and the wiring snippet:
-
-- [`packages/core/README.md`](./packages/core/README.md)
-- [`packages/mikro-orm/README.md`](./packages/mikro-orm/README.md)
-- [`packages/typeorm/README.md`](./packages/typeorm/README.md)
-- [`packages/bullmq/README.md`](./packages/bullmq/README.md)
-
----
-
-## Workspace layout
-
-```
-nest-batch/
-├── packages/
-│   ├── core/                # @nest-batch/core
-│   ├── mikro-orm/           # @nest-batch/mikro-orm
-│   ├── typeorm/             # @nest-batch/typeorm
-│   ├── drizzle/             # @nest-batch/drizzle
-│   ├── prisma/              # @nest-batch/prisma
-│   ├── bullmq/              # @nest-batch/bullmq
-│   ├── kafka/               # @nest-batch/kafka
-│   ├── postgresql/          # @nest-batch/postgresql
-│   ├── mysql/               # @nest-batch/mysql
-│   └── webhook/             # @nest-batch/webhook
-└── apps/
-    └── demo/                # @nest-batch/demo (consumer Nest app)
-```
-
-All packages extend the root `tsconfig.base.json`, share the root
-`.swcrc` for compilation, and use the root `vitest.config.ts` (or
-their own per-package config) for testing.
-
----
-
-## Tooling
-
-- **Package manager:** pnpm@10 (workspaces)
-- **Language:** TypeScript 5.7 (strict, NodeNext modules, ES2022 target)
-- **Decorator support:** `experimentalDecorators` + `emitDecoratorMetadata` (NestJS-compatible)
-- **Compiler:** SWC (`.swcrc` at root) for fast TS → CJS transpilation
-- **Tests:** Vitest with v8 coverage (80% threshold)
-- **Lint:** ESLint with `@typescript-eslint` + `eslint-plugin-import`
-- **Format:** Prettier (single quote, trailing comma `all`, 100 cols)
-- **Node:** `>=20` (Node 24 supported). Volta pins both `node` and `pnpm` versions in this repo.
-
----
-
-## Local development setup
-
-> Looking for the **full** runbook (test commands, e2e suites, env
-> var matrix)? See
-> [`docs/QUICKSTART.md`](./docs/QUICKSTART.md). The section below
-> covers the install + services + migrations path needed to boot
-> the demo; the runbook covers the test suites too.
-
-### 1. Install dependencies
+For local development or a single-process worker:
 
 ```bash
-pnpm install --frozen-lockfile
+pnpm add @nest-batch/core @nest-batch/mikro-orm
 ```
 
-The lockfile pins every workspace and peer dependency. If you need
-to add a dependency, run `pnpm install` (without `--frozen-lockfile`)
-and commit the updated `pnpm-lock.yaml`.
-
-### 2. Start the local services
-
-The repo's `docker-compose.yml` brings up Postgres and Redis:
+For a separate Redis-backed worker:
 
 ```bash
-docker compose up -d
-# or, to bring up one at a time:
-docker compose up -d postgres
-docker compose up -d redis
+pnpm add @nest-batch/core @nest-batch/mikro-orm @nest-batch/bullmq bullmq ioredis
 ```
 
-The default ports are `5434` (Postgres) and `6379` (Redis). The
-demo app and the integration tests connect to these.
-
-### 3. Run the demo migrations
-
-The demo app owns its MikroORM migration flow. Run it once after
-the first `docker compose up` to create the demo tables and the
-batch meta tables:
+For a Drizzle + PostgreSQL application:
 
 ```bash
-pnpm --filter @nest-batch/demo migration:up
+pnpm add @nest-batch/core @nest-batch/drizzle @nest-batch/postgresql drizzle-orm pg
 ```
 
-Library packages do not publish runnable migration files. In a
-consumer app, include the relevant exported entities/schema/model
-contract and generate migrations with that app's normal ORM tool.
+## Package Map
 
-### 4. Environment variables
+| Layer             | Package                                 | What it owns                                                                                                       | Add it when                                                                                     |
+| ----------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| Core              | `@nest-batch/core`                      | Job/step model, decorators, chunk/tasklet execution, flow, launcher, explorer, operator, and adapter tokens.       | Every app that defines or launches batch jobs.                                                  |
+| Persistence       | `@nest-batch/mikro-orm`                 | MikroORM-backed `JobRepository`, `TransactionManager`, and `BATCH_META_ENTITIES`.                                  | Your app already uses MikroORM or wants MikroORM to store batch metadata.                       |
+| Persistence       | `@nest-batch/typeorm`                   | TypeORM-backed repository/transaction manager and TypeORM batch meta entities.                                     | Your app uses TypeORM and wants TypeORM-owned migrations.                                       |
+| Persistence slot  | `@nest-batch/drizzle`                   | Drizzle repository/transaction manager contract. Driver-specific schema comes from a DB package.                   | Your app uses Drizzle; pair it with `@nest-batch/postgresql` or `@nest-batch/mysql`.            |
+| Persistence slot  | `@nest-batch/prisma`                    | Prisma repository/transaction manager contract against a host-owned generated Prisma Client.                       | Your app uses Prisma and owns the batch meta models in its `schema.prisma`.                     |
+| DB driver         | `@nest-batch/postgresql`                | PostgreSQL shells and Drizzle schema exports for the ORM adapter slots.                                            | Your persistence adapter runs against PostgreSQL and needs PostgreSQL-specific bindings/schema. |
+| DB driver         | `@nest-batch/mysql`                     | MySQL shells and Drizzle schema exports for the ORM adapter slots.                                                 | Your persistence adapter runs against MySQL and needs MySQL-specific bindings/schema.           |
+| Transport         | `@nest-batch/bullmq`                    | BullMQ execution strategy, Redis queue/worker runtime, and schedule bridge.                                        | Launcher and worker processes communicate through Redis/BullMQ.                                 |
+| Transport         | `@nest-batch/kafka`                     | Kafka execution strategy, producer/consumer runtime, topic, and consumer-group wiring.                             | Launcher and worker processes communicate through Kafka.                                        |
+| Transport         | `@nest-batch/aws-sqs`                   | SQS execution strategy that sends a batch work message to a queue.                                                 | The launcher should hand work to SQS and another runtime polls the queue.                       |
+| External compute  | `@nest-batch/aws-ecs`                   | Execution strategy that starts an ECS Fargate task for a job execution.                                            | Each execution should run as a one-off ECS task.                                                |
+| External compute  | `@nest-batch/aws-batch`                 | Execution strategy that submits an AWS Batch job.                                                                  | AWS Batch owns worker scheduling and compute allocation.                                        |
+| External compute  | `@nest-batch/kubernetes`                | Execution strategy that creates a Kubernetes Job manifest.                                                         | Each execution should run as a Kubernetes Job.                                                  |
+| Scheduler         | `@nest-batch/aws-eventbridge-scheduler` | Reads discovered `@BatchScheduled` metadata and creates EventBridge Scheduler schedules.                           | AWS should own schedule firing for your batch jobs.                                             |
+| Notification      | `@nest-batch/webhook`                   | Batch event observer that signs and POSTs lifecycle event envelopes.                                               | External systems need job/step completion or failure notifications.                             |
+| Admin             | `@nest-batch/admin`                     | Small Nest controller and HTML renderer backed by `JobExplorer` and `JobOperator`.                                 | You want basic `/batch` routes for inspection and operations.                                   |
+| Deployment helper | `@nest-batch/deployment`                | Plain typed recipe objects for ECS, Kubernetes, AWS Batch, and SQS/EventBridge infrastructure planning/generation. | You want typed deployment metadata for docs, generators, or internal platform tooling.          |
 
-The demo app reads from `.env` (see `.env.example` for the full
-list). The most important ones:
+## Minimal App Wiring
 
-```env
-# Postgres (matches docker-compose.yml)
-DB_HOST=127.0.0.1
-DB_PORT=5434
-DB_USER=demo
-DB_PASSWORD=demo
-DB_NAME=nest_batch_demo
+The batch module needs two explicit adapter choices:
 
-# Redis (matches docker-compose.yml)
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
-REDIS_KEY_PREFIX=nest-batch:
-
-# Batch scheduling (optional; see @BatchScheduled docs)
-BATCH_SCHEDULED_DISABLE=0
-```
-
-Set `BATCH_SCHEDULED_DISABLE=1` to put cron-scheduled jobs into
-inert mode for tests. The decorator captures this at decoration
-time.
-
-### 5. Verify
-
-```bash
-pnpm build       # builds every package
-pnpm lint        # runs ESLint per package
-pnpm typecheck   # tsc --noEmit per package
-pnpm test        # vitest run per package (unit + contract)
-```
-
-The CI workflow at `.github/workflows/ci.yml` runs the same four
-commands. The local run should match CI exactly.
-
----
-
-## Quickstart
-
-A minimal app that wires the three packages together (core + MikroORM
-
-- BullMQ) looks like this.
-
-### 1. Install
-
-```bash
-pnpm add @nest-batch/core @nest-batch/mikro-orm @nest-batch/bullmq \
-         @nestjs/common @nestjs/core @mikro-orm/core @mikro-orm/nestjs \
-         @mikro-orm/postgresql bullmq
-```
-
-### 2. Module
+- `persistence`: where durable execution state is stored
+- `transport`: where execution is performed or handed off
 
 ```ts
-// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
-import { NestBatchModule } from '@nest-batch/core';
+import { PostgreSqlDriver } from '@mikro-orm/postgresql';
+import { InProcessAdapter, NestBatchModule } from '@nest-batch/core';
 import { BATCH_META_ENTITIES, MikroOrmAdapter } from '@nest-batch/mikro-orm';
-import { BullmqAdapter } from '@nest-batch/bullmq';
-import { ProductEntity } from './entities/product.entity';
-import { ImportProductsJob } from './jobs/import-products.job';
 
 @Module({
   imports: [
     MikroOrmModule.forRoot({
-      entities: [ProductEntity, ...BATCH_META_ENTITIES],
+      entities: [...BATCH_META_ENTITIES],
+      driver: PostgreSqlDriver,
       dbName: process.env.DB_NAME,
       host: process.env.DB_HOST,
-      port: Number(process.env.DB_PORT),
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
     }),
     NestBatchModule.forRoot({
       adapters: {
         persistence: MikroOrmAdapter.forRoot(),
-        transport: BullmqAdapter.forRoot({
-          connection: {
-            host: process.env.REDIS_HOST,
-            port: Number(process.env.REDIS_PORT),
-            keyPrefix: process.env.REDIS_KEY_PREFIX,
-          },
-          autoStartWorker: true,
-        }),
+        transport: InProcessAdapter.forRoot(),
       },
     }),
   ],
-  providers: [ImportProductsJob],
 })
 export class AppModule {}
 ```
 
-`MikroOrmAdapter.forRoot()` takes no arguments on purpose. The host
-owns the `MikroOrmModule.forRoot()` call above, and the adapter
-only registers the `JOB_REPOSITORY_TOKEN` and
-`TRANSACTION_MANAGER_TOKEN` bindings globally. It also aliases
-`MikroOrmDriverProvider` to the host `EntityManager`, so consuming
-apps do not need to add their own temporary provider for the batch
-repository. The `transport` slot picks the execution strategy: swap
-`BullmqAdapter.forRoot({...})` for `InProcessAdapter.forRoot()`
-(imported from `@nest-batch/core`) to drop BullMQ and run the job
-in-process for tests or local development. `JobLauncher.launch()`
-doesn't care which transport is wired, so the controller code is
-unchanged.
-
-### 3. Job
+For a queued deployment, keep the same persistence adapter and replace the
+transport:
 
 ```ts
-// src/jobs/import-products.job.ts
+import { BullmqAdapter } from '@nest-batch/bullmq';
+
+NestBatchModule.forRoot({
+  adapters: {
+    persistence: MikroOrmAdapter.forRoot(),
+    transport: BullmqAdapter.forRoot({
+      connection: { host: process.env.REDIS_HOST, port: 6379 },
+      autoStartWorker: process.env.BATCH_WORKER === '1',
+    }),
+  },
+});
+```
+
+## First Job
+
+Decorators live under the `Batch` namespace from `@nest-batch/core`.
+
+```ts
 import { Injectable } from '@nestjs/common';
-import {
-  Batch,
-  BatchScheduled,
-  type ItemExecutionContext,
-  type ListenerContext,
-} from '@nest-batch/core';
+import { Batch, type ItemExecutionContext } from '@nest-batch/core';
+
+interface InputRow {
+  id: string;
+  email: string;
+}
 
 @Injectable()
-@Batch.Jobable({ id: 'import-products' })
-export class ImportProductsJob {
-  @BatchScheduled('0 * * * *', { name: 'hourly-import', timezone: 'UTC' })
-  scheduledImport(): void {
-    // Marker method for schedule metadata.
-  }
+@Batch.Jobable({ id: 'import-users', restartable: true })
+export class ImportUsersJob {
+  private rows: InputRow[] = [
+    { id: '1', email: 'a@example.com' },
+    { id: '2', email: 'b@example.com' },
+  ];
 
-  @Batch.Stepable({ id: 'import-products', chunkSize: 100 })
-  importProducts(): void {
-    // Marker method for step metadata.
+  @Batch.Stepable({ id: 'load-users', chunkSize: 100 })
+  loadUsers(): void {
+    // Marker method. The reader, processor, and writer below define the chunk step.
   }
 
   @Batch.ItemReader()
-  async read(ctx?: ItemExecutionContext): Promise<ProductRow | null> {
-    const file = ctx?.jobParameters.file;
-    // Read one row at a time from the launch parameter's file.
+  async read(_ctx?: ItemExecutionContext): Promise<InputRow | null> {
+    return this.rows.shift() ?? null;
   }
 
   @Batch.ItemProcessor()
-  async process(row: ProductRow, _ctx?: ItemExecutionContext): Promise<Product | null> {
-    // Transform / validate / skip.
+  async process(row: InputRow): Promise<InputRow> {
+    return { ...row, email: row.email.toLowerCase() };
   }
 
   @Batch.ItemWriter()
-  async write(items: Product[], _ctx?: ItemExecutionContext): Promise<void> {
-    // Persist a chunk.
-  }
-
-  @Batch.AfterStep()
-  afterStep(ctx: ListenerContext, result?: { status?: string }): void {
-    // Record metrics, cleanup per-step reader state, emit logs, etc.
+  async write(items: InputRow[]): Promise<void> {
+    await saveUsers(items);
   }
 }
 ```
 
-### 4. Launch
+Register the job class as a Nest provider. At application bootstrap,
+`NestBatchModule` discovers `@Batch.Jobable` providers and registers their
+compiled job definitions.
 
-There are two launch paths, and both converge on the same runtime
-contract:
+## Launching Jobs
 
-- `@BatchScheduled(...)` declares the cron trigger. The selected
-  transport consumes that metadata and, on each fire, calls
-  `JobLauncher.launch(jobId, { scheduled: true, scheduleName,
-scheduledAt, ... })`. `InProcessAdapter` runs the cron loop inside
-  this server process; BullMQ installs a queue-backed scheduler bridge.
-- Application code can still call `JobLauncher.launch(jobId, params)`
-  for ad-hoc or API-driven runs. This is the same entry point the
-  scheduler bridge uses after the cron tick fires.
+Inject `JobLauncher` where your application wants to start work.
 
 ```ts
-// src/controller/batch.controller.ts
-import { Controller, Post } from '@nestjs/common';
-import { JobLauncher } from '@nest-batch/core';
+import { Body, Controller, Post } from '@nestjs/common';
+import { JobLauncher, type JobParameters } from '@nest-batch/core';
 
 @Controller('jobs')
-export class BatchController {
+export class JobsController {
   constructor(private readonly launcher: JobLauncher) {}
 
-  @Post('import-products')
-  async importProducts() {
-    return this.launcher.launch('import-products', { file: 'sample.csv' });
+  @Post('import-users')
+  launch(@Body() params: JobParameters) {
+    return this.launcher.launch('import-users', params);
   }
 }
 ```
 
-The launcher returns the latest persisted `JobExecution`. With the
-in-process strategy the `status` is the terminal state; with the
-BullMQ strategy the `status` is `STARTING` / `STARTED` and the rest
-of the lifecycle is driven by the worker.
+With `InProcessAdapter`, the launch call executes in the current process. With
+queue or external-task adapters, the launch call records durable execution state
+and hands work to the selected runtime.
 
-### 5. Run
+## Choosing Adapters
+
+| Need                         | Recommended packages                                                        |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| Simple local execution       | `@nest-batch/core` with `InProcessAdapter`                                  |
+| Nest app using MikroORM      | `@nest-batch/core`, `@nest-batch/mikro-orm`                                 |
+| Nest app using TypeORM       | `@nest-batch/core`, `@nest-batch/typeorm`                                   |
+| Drizzle + PostgreSQL         | `@nest-batch/core`, `@nest-batch/drizzle`, `@nest-batch/postgresql`         |
+| Prisma + MySQL               | `@nest-batch/core`, `@nest-batch/prisma`, `@nest-batch/mysql`               |
+| Redis-backed workers         | `@nest-batch/bullmq`                                                        |
+| Kafka-backed workers         | `@nest-batch/kafka`                                                         |
+| AWS SQS handoff              | `@nest-batch/aws-sqs`                                                       |
+| One-off compute tasks        | `@nest-batch/aws-ecs`, `@nest-batch/aws-batch`, or `@nest-batch/kubernetes` |
+| External schedule management | `@nest-batch/aws-eventbridge-scheduler`                                     |
+| Lifecycle notifications      | `@nest-batch/webhook`                                                       |
+| Basic admin HTTP endpoints   | `@nest-batch/admin`                                                         |
+
+## Documentation
+
+- [Getting started](./docs/getting-started.md)
+- [Concepts](./docs/concepts.md)
+- [Adapters](./docs/adapters.md)
+- [Recipes](./docs/recipes.md)
+- [FAQ](./docs/faq.md)
+
+Korean versions:
+
+- [시작하기](./docs/getting-started.ko.md)
+- [개념](./docs/concepts.ko.md)
+- [어댑터](./docs/adapters.ko.md)
+- [레시피](./docs/recipes.ko.md)
+- [FAQ](./docs/faq.ko.md)
+
+## Local Development
 
 ```bash
-pnpm --filter @nest-batch/demo start
-# In a second terminal, trigger a launch. The body MUST contain a
-# `file` field; the demo's CSV reader uses it as the input path.
-curl -X POST http://localhost:3000/jobs/import-products \
-  -H 'content-type: application/json' \
-  -d '{"file":"sample-data/products-valid.csv"}'
+pnpm install --frozen-lockfile
+pnpm build
+pnpm test
 ```
 
----
+The demo app is in `apps/demo`. It uses MikroORM, PostgreSQL, Redis, and the
+published package APIs the same way a consuming Nest application would.
 
-## Migration from `@nest-batch/nest-batch` (pre-rename)
+```bash
+docker compose up -d
+pnpm --filter @nest-batch/demo migration:up
+pnpm --filter @nest-batch/demo start
+```
 
-The previous single-package layout is gone. If you depend on the
-old package name, you need to:
+## License
 
-1. Replace `@nest-batch/nest-batch` with `@nest-batch/core` in your
-   `package.json`.
-2. Move persistence bindings (`JobRepository`,
-   `TransactionManager`) to `@nest-batch/mikro-orm` or
-   `@nest-batch/typeorm`.
-3. If you used the built-in queue, move to
-   `@nest-batch/bullmq`.
-4. Update imports — the new layout re-exports through the package
-   root, but the underlying module structure has changed.
-
-Read [`MIGRATION.md`](./MIGRATION.md) for the full list of
-breaking changes and the explicit "what is NOT in this release"
-items (Drizzle, admin UI, metrics, tracing, webhooks, job
-visualization).
-
----
-
-## Common scripts
-
-| Script                      | Description                                    |
-| --------------------------- | ---------------------------------------------- |
-| `pnpm build`                | Build every workspace package (`-r`).          |
-| `pnpm test`                 | Run tests across all workspace packages.       |
-| `pnpm lint`                 | Lint all workspace packages.                   |
-| `pnpm typecheck`            | `tsc --noEmit` per package via `pnpm -r exec`. |
-| `pnpm format`               | Prettier write across the repo.                |
-| `pnpm format:check`         | Prettier check (CI-friendly).                  |
-| `pnpm --filter <pkg> test`  | Run one package's test suite.                  |
-| `pnpm --filter <pkg> build` | Build one package.                             |
-
----
-
-## Status
-
-This is the **0.2.0 release** of the package family. The
-engine, the 4 driver-agnostic adapter slots (`mikro-orm`,
-`typeorm`, `drizzle`, `prisma`), the 2 driver siblings
-(`postgresql`, `mysql`), the 2 transport strategies (`bullmq`,
-`kafka`), and the webhook observer (`webhook`) are all wired
-up. Partition orchestration ships for chunked steps in both
-transports. 0.2.0 also flips the 3 previously-deferred
-packages (`drizzle`, `kafka`, `prisma`) to stable members of
-the family.
-
-The **0.3.0 roadmap** includes: SQLite (own sibling package),
-OpenTelemetry tracing (own exporter), admin UI (own package),
-MariaDB / CockroachDB driver siblings.
-
-See [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md) for the
-single integrated release note covering all 10 packages.
+MIT
