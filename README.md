@@ -290,42 +290,42 @@ unchanged.
 // src/jobs/import-products.job.ts
 import { Injectable } from '@nestjs/common';
 import {
-  BatchDecorators,
+  Batch,
   BatchScheduled,
   type ItemExecutionContext,
   type ListenerContext,
 } from '@nest-batch/core';
 
 @Injectable()
-@BatchDecorators.Jobable({ id: 'import-products' })
+@Batch.Jobable({ id: 'import-products' })
 export class ImportProductsJob {
   @BatchScheduled('0 * * * *', { name: 'hourly-import', timezone: 'UTC' })
   scheduledImport(): void {
     // Marker method for schedule metadata.
   }
 
-  @BatchDecorators.Stepable({ id: 'import-products', chunkSize: 100 })
+  @Batch.Stepable({ id: 'import-products', chunkSize: 100 })
   importProducts(): void {
     // Marker method for step metadata.
   }
 
-  @BatchDecorators.ItemReader()
+  @Batch.ItemReader()
   async read(ctx?: ItemExecutionContext): Promise<ProductRow | null> {
     const file = ctx?.jobParameters.file;
     // Read one row at a time from the launch parameter's file.
   }
 
-  @BatchDecorators.ItemProcessor()
+  @Batch.ItemProcessor()
   async process(row: ProductRow, _ctx?: ItemExecutionContext): Promise<Product | null> {
     // Transform / validate / skip.
   }
 
-  @BatchDecorators.ItemWriter()
+  @Batch.ItemWriter()
   async write(items: Product[], _ctx?: ItemExecutionContext): Promise<void> {
     // Persist a chunk.
   }
 
-  @BatchDecorators.AfterStep()
+  @Batch.AfterStep()
   afterStep(ctx: ListenerContext, result?: { status?: string }): void {
     // Record metrics, cleanup per-step reader state, emit logs, etc.
   }

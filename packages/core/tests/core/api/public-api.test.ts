@@ -26,12 +26,12 @@ describe('public API of @nest-batch/core', () => {
     }
   });
 
-  it('the BatchDecorators namespace is exported and every member is defined', () => {
+  it('the Batch namespace is exported and every member is defined', () => {
     const bag = publicApi as unknown as ExportBag;
-    const decorators = bag['BatchDecorators'];
+    const decorators = bag['Batch'];
     expect(
       decorators,
-      'BatchDecorators namespace must be exported from package root',
+      'Batch namespace must be exported from package root',
     ).toBeDefined();
 
     const members = decorators as ExportBag;
@@ -40,8 +40,15 @@ describe('public API of @nest-batch/core', () => {
 
     for (const name of memberNames) {
       const value = members[name];
-      expect(value, `BatchDecorators.${name} must be defined (not undefined)`).toBeDefined();
+      expect(value, `Batch.${name} must be defined (not undefined)`).toBeDefined();
     }
+  });
+
+  it('the legacy BatchDecorators namespace remains an alias for Batch', () => {
+    const bag = publicApi as unknown as ExportBag;
+
+    expect(bag['BatchDecorators']).toBeDefined();
+    expect(bag['BatchDecorators']).toBe(bag['Batch']);
   });
 
   it('the Task 12 adapter tokens are exported from the package root', () => {

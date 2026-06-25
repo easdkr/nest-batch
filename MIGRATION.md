@@ -82,9 +82,10 @@ The previous `@nest-batch/nest-batch` package became four:
    workflow.
 
 5. **Update imports.** The re-export surface moved. Decorators
-   live under the `BatchDecorators` namespace from the core
+   live under the `Batch` namespace from the core
    package. Interfaces stay reachable as bare names from
-   `core/item`.
+   `core/item`. `BatchDecorators` remains available as a backward-compatible
+   alias.
 
 ### What did NOT change
 

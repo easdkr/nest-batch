@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
-  BatchDecorators,
+  Batch,
   BatchScheduled,
   FlowExecutionStatus,
   type ItemExecutionContext,
@@ -27,7 +27,7 @@ const DEFAULT_IMPORT_FILE = 'sample-data/products-valid.csv';
  * 2. `import-products` reads, validates, and writes products in chunks.
  */
 @Injectable()
-@BatchDecorators.Jobable({ id: 'import-products', restartable: true })
+@Batch.Jobable({ id: 'import-products', restartable: true })
 export class ImportProductsJob {
   private readonly logger = new Logger(ImportProductsJob.name);
   private readonly readers = new Map<string, CsvProductReader>();
@@ -49,13 +49,13 @@ export class ImportProductsJob {
     // Marker method for cron schedule metadata.
   }
 
-  @BatchDecorators.Stepable({ id: 'validate-csv' })
-  @BatchDecorators.Tasklet()
+  @Batch.Stepable({ id: 'validate-csv' })
+  @Batch.Tasklet()
   async validateCsv(ctx: TaskletContext): Promise<{ rows: number }> {
     return new ValidateCsvTasklet(this.resolveFilePath(ctx.jobParameters)).execute(ctx);
   }
 
-  @BatchDecorators.Stepable({
+  @Batch.Stepable({
     id: 'import-products',
     chunkSize: 10,
     skipPolicy: { limit: 100, skippable: [InvalidProductError, DuplicateSkuError] },
@@ -69,23 +69,23 @@ export class ImportProductsJob {
     // Marker method for decorator metadata.
   }
 
-  @BatchDecorators.ItemReader()
+  @Batch.ItemReader()
   async read(ctx?: ItemExecutionContext): Promise<RawProductRow | null> {
     const itemContext = this.requireItemContext(ctx);
     return this.requireReader(itemContext).read(itemContext);
   }
 
-  @BatchDecorators.ItemProcessor()
+  @Batch.ItemProcessor()
   async process(item: RawProductRow, ctx?: ItemExecutionContext): Promise<ProductEntity | null> {
     return this.productProcessor.process(item, ctx);
   }
 
-  @BatchDecorators.ItemWriter()
+  @Batch.ItemWriter()
   async write(items: ProductEntity[], ctx?: ItemExecutionContext): Promise<WriterResult | void> {
     return this.productWriter.write(items, ctx);
   }
 
-  @BatchDecorators.OnTransition({
+  @Batch.OnTransition({
     fromStep: 'validate-csv',
     onStatus: FlowExecutionStatus.COMPLETED,
     toStep: 'import-products',
@@ -94,14 +94,14 @@ export class ImportProductsJob {
     // Marker method for decorator metadata.
   }
 
-  @BatchDecorators.BeforeJob()
+  @Batch.BeforeJob()
   beforeJob(ctx: ListenerContext): void {
     this.logger.log(
       `Starting import-products with file=${this.resolveFilePath(ctx.jobParameters)}`,
     );
   }
 
-  @BatchDecorators.AfterJob()
+  @Batch.AfterJob()
   afterJob(ctx: ListenerContext, result?: { status?: string }): void {
     this.readers.clear();
     this.stepStartTimes.clear();
@@ -110,7 +110,7 @@ export class ImportProductsJob {
     );
   }
 
-  @BatchDecorators.BeforeStep()
+  @Batch.BeforeStep()
   beforeStep(ctx: ListenerContext): void {
     if (ctx.stepExecutionId) {
       this.stepStartTimes.set(ctx.stepExecutionId, Date.now());
@@ -118,7 +118,7 @@ export class ImportProductsJob {
     this.logger.log(`Step ${ctx.stepName ?? '<unknown>'} starting`);
   }
 
-  @BatchDecorators.AfterStep()
+  @Batch.AfterStep()
   afterStep(
     ctx: ListenerContext,
     result?: {
@@ -146,12 +146,12 @@ export class ImportProductsJob {
     );
   }
 
-  @BatchDecorators.BeforeChunk()
+  @Batch.BeforeChunk()
   beforeChunk(ctx: ListenerContext): void {
     this.logger.debug(`Chunk ${String(ctx.chunkIndex ?? '?')} starting`);
   }
 
-  @BatchDecorators.AfterChunk()
+  @Batch.AfterChunk()
   afterChunk(
     ctx: ListenerContext,
     result?: { readCount?: number; writeCount?: number; skipCount?: number },
@@ -162,49 +162,49 @@ export class ImportProductsJob {
     );
   }
 
-  @BatchDecorators.OnChunkError()
+  @Batch.OnChunkError()
   onChunkError(ctx: ListenerContext, error: unknown): void {
     this.logger.error(`Chunk ${String(ctx.chunkIndex ?? '?')} failed: ${this.formatError(error)}`);
   }
 
-  @BatchDecorators.BeforeRead()
+  @Batch.BeforeRead()
   beforeRead(ctx: ListenerContext): void {
     this.logger.debug(`Reading from ${this.resolveFilePath(ctx.jobParameters)}`);
   }
 
-  @BatchDecorators.AfterRead()
+  @Batch.AfterRead()
   afterRead(item: RawProductRow): void {
     this.logger.debug(`Read row sku=${item.sku}`);
   }
 
-  @BatchDecorators.OnReadError()
+  @Batch.OnReadError()
   onReadError(error: unknown, ctx: ListenerContext): void {
     this.logger.warn(
       `Read failed for file=${this.resolveFilePath(ctx.jobParameters)}: ${this.formatError(error)}`,
     );
   }
 
-  @BatchDecorators.BeforeProcess()
+  @Batch.BeforeProcess()
   beforeProcess(item: RawProductRow): void {
     this.logger.debug(`Processing row sku=${item.sku}`);
   }
 
-  @BatchDecorators.AfterProcess()
+  @Batch.AfterProcess()
   afterProcess(item: RawProductRow, result: ProductEntity | null | undefined): void {
     this.logger.debug(result ? `Processed sku=${item.sku}` : `Filtered row sku=${item.sku}`);
   }
 
-  @BatchDecorators.OnProcessError()
+  @Batch.OnProcessError()
   onProcessError(item: RawProductRow, error: unknown): void {
     this.logger.warn(`Process skipped sku=${item.sku}: ${this.formatError(error)}`);
   }
 
-  @BatchDecorators.BeforeWrite()
+  @Batch.BeforeWrite()
   beforeWrite(items: ProductEntity[]): void {
     this.logger.debug(`Writing ${items.length} product(s)`);
   }
 
-  @BatchDecorators.AfterWrite()
+  @Batch.AfterWrite()
   afterWrite(items: ProductEntity[], result?: WriterResult | void): void {
     const writerResult = result && typeof result === 'object' ? result : undefined;
     this.logger.debug(
@@ -212,22 +212,22 @@ export class ImportProductsJob {
     );
   }
 
-  @BatchDecorators.OnWriteError()
+  @Batch.OnWriteError()
   onWriteError(items: ProductEntity[], error: unknown): void {
     this.logger.error(`Write failed for ${items.length} product(s): ${this.formatError(error)}`);
   }
 
-  @BatchDecorators.OnSkipRead()
+  @Batch.OnSkipRead()
   onSkipRead(error: unknown, item: unknown): void {
     this.logger.warn(`Skip read item=${String(item)}: ${this.formatError(error)}`);
   }
 
-  @BatchDecorators.OnSkipProcess()
+  @Batch.OnSkipProcess()
   onSkipProcess(item: RawProductRow, error: unknown): void {
     this.logger.warn(`Skip process sku=${item.sku}: ${this.formatError(error)}`);
   }
 
-  @BatchDecorators.OnSkipWrite()
+  @Batch.OnSkipWrite()
   onSkipWrite(items: ProductEntity[], error: unknown): void {
     this.logger.warn(`Skip write count=${items.length}: ${this.formatError(error)}`);
   }
