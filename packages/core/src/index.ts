@@ -3,8 +3,8 @@
 // Decorator functions (ItemReader, ItemProcessor, ItemWriter, Tasklet) live in
 // ./decorators and share names with interfaces in ./core/item. To avoid name
 // collisions in the public surface, decorators are re-exported under the
-// `BatchDecorators` namespace; interfaces remain reachable as bare names from
-// ./core/item (or via core/index).
+// `Batch` namespace; interfaces remain reachable as bare names from ./core/item
+// (or via core/index). `BatchDecorators` remains as a compatibility alias.
 export * from './core';
 export * from './compiler';
 export * from './partition-helpers';
@@ -12,6 +12,7 @@ export * from './registry';
 export * from './execution';
 export * from './transaction';
 export * from './repository';
+export * as Batch from './decorators';
 export * as BatchDecorators from './decorators';
 export * from './module';
 export * from './scheduling/batch-scheduled';

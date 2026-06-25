@@ -1,5 +1,11 @@
 # @nest-batch/core
 
+## 0.2.3
+
+### Patch Changes
+
+- Add the `Batch` decorator namespace as the preferred public API while keeping `BatchDecorators` as a compatibility alias.
+
 ## 0.2.2
 
 ### Patch Changes

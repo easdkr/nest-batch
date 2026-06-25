@@ -72,7 +72,7 @@ back. This is the model Spring Batch uses, and we keep it.
 
 The reader, processor, and writer are plain Nest providers. You can
 declare them with `@ItemReader`, `@ItemProcessor`, `@ItemWriter` (under
-the `BatchDecorators` namespace) or with method references on the job
+the `Batch` namespace) or with method references on the job
 class itself. Three reference kinds are accepted:
 
 - `BuilderLambda` — a function value captured by the builder.
@@ -306,7 +306,7 @@ The barrel re-exports:
 - `./execution` — `JobLauncher`, `JobExecutor`, `InProcessExecutionStrategy`, `IExecutionStrategy`, `EXECUTION_STRATEGY`, `ChunkStepExecutor`, `TaskletStepExecutor`, `ListenerInvoker`, `RefResolver`.
 - `./transaction` — `TransactionManager` token and contract.
 - `./repository` — `JobRepository` token, contract, in-memory reference, ID generators.
-- `./decorators` — under the `BatchDecorators` namespace (`@Jobable`, `@ItemReader`, `@ItemProcessor`, `@ItemWriter`, `@Tasklet`, listener decorators).
+- `./decorators` — under the `Batch` namespace (`@Jobable`, `@ItemReader`, `@ItemProcessor`, `@ItemWriter`, `@Tasklet`, listener decorators).
 - `./scheduling/batch-scheduled` — `@BatchScheduled` and its schedule option/error types are also re-exported directly from the package root.
 - `./module` — `NestBatchModule`, tokens, options.
 - `./builder` — fluent `BatchBuilder`, `JobBuilder`, `StepBuilder`, `FlowBuilder`.
@@ -318,8 +318,9 @@ The barrel re-exports:
 
 Decorator names collide with interface names (e.g. `Tasklet` is both a
 decorator and an interface). Decorators are re-exported under
-`BatchDecorators`; interfaces are reachable as bare names from
-`./core/item`. This is intentional.
+`Batch`; interfaces are reachable as bare names from
+`./core/item`. `BatchDecorators` remains available as a backward-compatible
+alias. This is intentional.
 
 ---
 
