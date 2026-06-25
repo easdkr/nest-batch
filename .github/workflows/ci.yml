@@ -68,6 +68,9 @@ jobs:
       - name: Rebuild native modules
         run: pnpm rebuild better-sqlite3
 
+      - name: Generate Prisma Client
+        run: pnpm --dir packages/prisma exec prisma generate --schema tests/fixtures/postgresql/schema.prisma
+
       - name: Build
         run: pnpm build
 
@@ -130,6 +133,9 @@ jobs:
 
       - name: Rebuild native modules
         run: pnpm rebuild better-sqlite3
+
+      - name: Generate Prisma Client
+        run: pnpm --dir packages/prisma exec prisma generate --schema tests/fixtures/postgresql/schema.prisma
 
       - name: Build
         run: pnpm build
