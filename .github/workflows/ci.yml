@@ -69,7 +69,7 @@ jobs:
         run: pnpm rebuild better-sqlite3
 
       - name: Generate Prisma Client
-        run: pnpm --filter @nest-batch/postgresql exec prisma generate --schema prisma/schema.prisma
+        run: pnpm --dir packages/prisma exec prisma generate --schema tests/fixtures/postgresql/schema.prisma
 
       - name: Build
         run: pnpm build
@@ -135,7 +135,7 @@ jobs:
         run: pnpm rebuild better-sqlite3
 
       - name: Generate Prisma Client
-        run: pnpm --filter @nest-batch/postgresql exec prisma generate --schema prisma/schema.prisma
+        run: pnpm --dir packages/prisma exec prisma generate --schema tests/fixtures/postgresql/schema.prisma
 
       - name: Build
         run: pnpm build

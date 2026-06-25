@@ -65,22 +65,21 @@ docker compose exec -T postgres pg_isready -U demo        # → accepting connec
 
 ---
 
-## 3. Apply the batch meta-schema
+## 3. Apply the demo-owned schema
 
-The MikroORM migrations live in `@nest-batch/mikro-orm`. The demo's
-`migration:up` script loads the adapter's `createBatchMikroOrmConfig`
-helper and runs them. Run it once after the first `docker compose up`:
+The demo app owns the migrations required to boot locally, including
+the batch meta tables. Run it once after the first
+`docker compose up`:
 
 ```bash
 pnpm --filter @nest-batch/demo migration:up
 # → "Pending migrations: 4" then "All migrations applied."
 ```
 
-The TypeORM adapter ships its own migration as
-`CreateBatchMeta1700000000000`. Hosts with their own TypeORM migration
-directory copy the file in and renumber it; the demo app does not
-exercise the TypeORM adapter, so there is no `migration:up` script in
-`apps/demo` for it.
+Library packages do not publish runnable migration files. Hosts using
+TypeORM, Prisma, Drizzle, or MikroORM include the documented
+entities/schema/model contract and generate migrations in their own
+application repository.
 
 ---
 
@@ -139,7 +138,7 @@ Redis state. The setup file
 
 ## 5. Run the demo app
 
-With Postgres + Redis up and the migrations applied:
+With Postgres + Redis up and the demo migrations applied:
 
 ```bash
 # Launcher-only deployment (default; a separate worker would consume

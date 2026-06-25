@@ -12,7 +12,7 @@ export interface PostgresPrismaTransactionContext extends TransactionContext {
 /**
  * TransactionManager bound to Prisma's `$transaction()` over a PostgreSQL
  * connection. The shell accepts a `PrismaClient` generated against
- * the PostgreSQL schema bundled in `prisma/schema.prisma`.
+ * the PostgreSQL schema owned by `@nest-batch/prisma`.
  */
 @Injectable()
 export class PostgresPrismaTransactionManager extends TransactionManager {
@@ -20,9 +20,7 @@ export class PostgresPrismaTransactionManager extends TransactionManager {
     super();
   }
 
-  async withTransaction<T>(
-    fn: (ctx: PostgresPrismaTransactionContext) => Promise<T>,
-  ): Promise<T> {
+  async withTransaction<T>(fn: (ctx: PostgresPrismaTransactionContext) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(async (tx) => {
       const ctx: PostgresPrismaTransactionContext = {
         isActive: true,

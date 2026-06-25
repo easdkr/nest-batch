@@ -133,8 +133,8 @@ T-AC-2b Boundary Note](#6-t-ac-2b-boundary-note).
 
 **Prisma**
 
-- mysql: `prisma/schema.prisma` declares `provider = "mysql"` and `url = env("DATABASE_URL")`
-- postgres: `prisma/schema.prisma` declares `provider = "postgresql"` (the only line that changes; the model body is identical)
+- mysql: the consuming app's `schema.prisma` declares `provider = "mysql"` and includes the batch meta models documented in `@nest-batch/prisma`
+- postgres: the consuming app's `schema.prisma` declares `provider = "postgresql"` with the same model body
 - The `MysqlPrismaJobRepository` switches `tx.$executeRawUnsafe` SQL strings (or uses Prisma's typed model API) to use double-quoted identifiers / Postgres-native types. The `MySqlPrismaTransactionManager` itself is driver-agnostic — Prisma's `$transaction` works the same for either.
 
 ---
@@ -168,7 +168,7 @@ T-AC-2b Boundary Note](#6-t-ac-2b-boundary-note).
 | `packages/mysql/src/prisma/mysql-prisma.module.ts`              | `packages/postgresql/src/prisma/postgres-prisma.module.ts`              | Identical empty module carrier.                                                                                                                                                                                                                                                                                                                                                                  |
 | `packages/mysql/src/prisma/mysql-prisma-job-repository.ts`      | `packages/postgresql/src/prisma/postgres-prisma-job-repository.ts`      | Constructor takes `PrismaClient`; the only MySQL-specific bit is the raw `INSERT ... ON DUPLICATE KEY UPDATE` SQL inside `createExecutionAtomic` — port to `INSERT ... ON CONFLICT (...) DO NOTHING` (or, more idiomatically, use Prisma's typed `upsert` once the `@@unique` is on the model). The rest of the file (CRUD, `findLatestStepExecution` ordering, context save/load) is identical. |
 | `packages/mysql/src/prisma/mysql-prisma-transaction-manager.ts` | `packages/postgresql/src/prisma/postgres-prisma-transaction-manager.ts` | `prisma.$transaction(async (tx) => ...)` is driver-agnostic; no porting changes.                                                                                                                                                                                                                                                                                                                 |
-| `packages/mysql/prisma/schema.prisma`                           | `packages/postgresql/prisma/schema.prisma`                              | One line: `provider = "mysql"` → `provider = "postgresql"`.                                                                                                                                                                                                                                                                                                                                      |
+| App-owned `schema.prisma`                                       | App-owned `schema.prisma`                                               | Datasource provider changes from `mysql` to `postgresql`; the batch meta model body stays the same.                                                                                                                                                                                                                                                                                              |
 
 ### 4.4 TypeORM shell — `MysqlTypeOrmAdapter` → `PostgresTypeOrmAdapter`
 
@@ -272,7 +272,7 @@ expected public exports (to be added to
 | MikroORM        | `PostgresMikroOrmAdapter`, `PostgresMikroOrmBatchModule`, `PostgresMikroOrmJobRepository` (or thin re-export), `PostgresMikroOrmTransactionManager` |
 | Prisma          | `PostgresPrismaAdapter`, `PostgresPrismaBatchModule`, `PostgresPrismaJobRepository`, `PostgresPrismaTransactionManager`                             |
 | TypeORM         | `PostgresTypeOrmAdapter`, `PostgresTypeOrmBatchModule`, `PostgresTypeOrmJobRepository`, `PostgresTypeOrmTransactionManager`                         |
-| Schema carriers | `postgresDrizzleSchema` (re-export from `./drizzle-schema.postgres`), bundled Prisma schema, bundled Postgres migrations                            |
+| Schema carriers | `postgresDrizzleSchema` (re-export from `./drizzle-schema.postgres`); Prisma and migration files stay app-owned                                     |
 
 ---
 
@@ -304,9 +304,8 @@ expected public exports (to be added to
   resolve the MySQL parity gap.
 - **Running migrations / writing the Drizzle-kit / Prisma /
   TypeORM migration files for Postgres.** Those are separate
-  tasks; the canonical `migrations/0001-create-batch-meta.sql`
-  and `migrations/1700000000000-CreateBatchMeta.ts` already
-  exist in `packages/postgresql/`.
+  app-owned tasks; this package should not publish runnable
+  migration artifacts.
 - **Updating the `@nest-batch/postgresql` README.** The README
   should document `PostgresMikroOrmAdapter`,
   `PostgresTypeOrmAdapter`, `PostgresDrizzleAdapter`, and
@@ -429,9 +428,8 @@ if any of them ends up in the wrong directory:
     `src-import` regex catches it).
 - A `POSTGRES_HOST` string literal in any slot's `src/**` will
   fail the `src-env` check.
-- A `prisma/schema.prisma` in any non-Postgres package with
-  `provider = "postgresql"` will fail the `prisma-schema`
-  check.
+- A Prisma schema may live in a consuming app; runtime source and
+  package peer dependencies must still avoid Postgres driver leaks.
 
 ### Follow-up actions for the Wave 1 implementation task
 

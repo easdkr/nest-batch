@@ -157,9 +157,8 @@ export class StepExecutionContextEntity {
  * Apps that already configure their own MikroORM connection
  * (`MikroOrmModule.forRoot()` from `@mikro-orm/nestjs`) should
  * spread this list into the host's `entities` array so the
- * batch meta tables are wired in. The corresponding MySQL DDL
- * lives at `migrations/1700000000001-CreateBatchMetaMysql.ts`
- * (the TypeORM 1.0.0 migration class bundled in this package).
+ * batch meta tables are wired in. The consuming app owns the
+ * runnable MySQL migration generated from this contract.
  *
  * The 5-table `BATCH_META_ENTITIES` constant that
  * `@nest-batch/mikro-orm` shipped in 0.1.x moved to the

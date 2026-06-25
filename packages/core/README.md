@@ -330,8 +330,8 @@ injected at the DI boundary:
 
 | Concern                       | Package                 | Why                                                               |
 | ----------------------------- | ----------------------- | ----------------------------------------------------------------- |
-| **Persistence (PostgreSQL)**  | `@nest-batch/mikro-orm` | Ships the 6 batch meta tables, entities, and migrations.          |
-| **Persistence (TypeORM 1.0)** | `@nest-batch/typeorm`   | Ships the same 6 tables as TypeORM 1.0.0 entities + migration.    |
+| **Persistence (MikroORM)**    | `@nest-batch/mikro-orm` | Exposes the batch meta entities; the host owns migrations.        |
+| **Persistence (TypeORM 1.0)** | `@nest-batch/typeorm`   | Exposes the same table contract as TypeORM 1.0.0 entities.        |
 | **Transport (BullMQ)**        | `@nest-batch/bullmq`    | The Redis-backed execution strategy. Owns Queue/Worker lifecycle. |
 | **Drizzle**                   | _not in this release_   | Explicitly excluded and deferred. See `MIGRATION.md`.             |
 

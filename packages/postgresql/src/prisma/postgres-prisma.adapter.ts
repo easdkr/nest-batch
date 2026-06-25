@@ -14,10 +14,10 @@ import { PostgresPrismaBatchModule } from './postgres-prisma.module';
  * `PostgresPrismaAdapter` — the PostgreSQL driver shell for the
  * `@nest-batch/prisma` adapter slot.
  *
- * This shell pairs the driver-agnostic `PrismaClient` shape (owned by
- * `@nest-batch/prisma`) with the PostgreSQL provider configuration
- * (the `provider = "postgresql"` schema bundled in this package's
- * `prisma/schema.prisma`).
+ * This shell pairs the host-owned `PrismaClient` with the
+ * PostgreSQL repository / transaction-manager implementations. The
+ * consuming app owns the Prisma schema, generated client, and
+ * migration files.
  *
  * The host owns the `PrismaClient` instance — the shell does **not**
  * call `prisma generate` or instantiate the client.

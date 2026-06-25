@@ -2,7 +2,7 @@
 
 Drizzle ORM adapter SLOT for [`@nest-batch/core`](../core). Owns the
 `DrizzleAdapter`, the `DrizzleJobRepository` / `DrizzleTransactionManager`
-interface shape, and the Drizzle `pgTable` schema definitions. Pair with
+interface shape, and the driver-agnostic repository contract. Pair with
 [`@nest-batch/postgresql`](../postgresql) for the actual Postgres driver
 binding, or `@nest-batch/mysql` for the MySQL driver binding.
 
@@ -29,11 +29,11 @@ pnpm add @nest-batch/drizzle
 
 Peer dependencies the host must already provide:
 
-| Package              | Range           |
-| -------------------- | --------------- |
-| `@nest-batch/core`   | `workspace:*`   |
-| `@nestjs/common`     | `^10 \|\| ^11`  |
-| `drizzle-orm`        | `^0.40.0`       |
+| Package            | Range          |
+| ------------------ | -------------- |
+| `@nest-batch/core` | `workspace:*`  |
+| `@nestjs/common`   | `^10 \|\| ^11` |
+| `drizzle-orm`      | `^0.40.0`      |
 
 The adapter targets **`drizzle-orm@^0.40.0`**. The peer range is
 hard-pinned for 0.2.0; the T10a refactor (Postgres shell extraction)
@@ -46,11 +46,11 @@ shaping context.
 
 ## Peer dependencies
 
-| Package              | Range           | Notes                                                                                  |
-| -------------------- | --------------- | -------------------------------------------------------------------------------------- |
-| `@nest-batch/core`   | `workspace:*`   | The batch engine; this adapter only extends its DI surface.                             |
-| `@nestjs/common`     | `^10 \|\| ^11`  | For `@Module` / `Module` / injection tokens. Nest 10 and 11 are both supported.        |
-| `drizzle-orm`        | `^0.40.0`       | The schema-only `drizzle-orm` import (the `pgTable` factory). Driver-specific imports live in the driver sibling packages. |
+| Package            | Range          | Notes                                                                                            |
+| ------------------ | -------------- | ------------------------------------------------------------------------------------------------ |
+| `@nest-batch/core` | `workspace:*`  | The batch engine; this adapter only extends its DI surface.                                      |
+| `@nestjs/common`   | `^10 \|\| ^11` | For `@Module` / `Module` / injection tokens. Nest 10 and 11 are both supported.                  |
+| `drizzle-orm`      | `^0.40.0`      | Drizzle core types and SQL helpers. Driver-specific imports live in the driver sibling packages. |
 
 ---
 
@@ -61,7 +61,7 @@ or MySQL driver as a peer dep. Pair with
 [`@nest-batch/postgresql`](../postgresql) for Postgres support or
 `@nest-batch/mysql` for MySQL support. Those driver sibling packages
 own the `pg` / `mysql2` / `drizzle-orm/pg-core` / `drizzle-orm/mysql-core`
-imports and the dialect-specific migration scripts. Importing
+imports and dialect-specific table definitions. Importing
 `drizzle-orm/node-postgres` or `drizzle-orm/mysql2` directly from this
 package is a boundary violation enforced by the T-AC-2b core test.
 
@@ -80,25 +80,26 @@ pnpm add @nest-batch/drizzle @nest-batch/mysql
 The adapter itself is a no-arg `BatchAdapter` factory. The host owns
 the Drizzle ORM connection (typically via
 `drizzle-orm/node-postgres` or `drizzle-orm/postgres-js`) and the
-driver sibling owns the batch meta-table migration. A typical
-Postgres wiring looks like:
+app's Drizzle migration pipeline. A typical Postgres wiring looks
+like:
 
 ```ts
 import { Module } from '@nestjs/common';
 import { Pool } from 'pg';
 import { drizzle, NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { NestBatchModule, InProcessAdapter } from '@nest-batch/core';
-import { DrizzleAdapter, schema } from '@nest-batch/drizzle';
-import { DrizzlePostgres } from '@nest-batch/postgresql';
+import { PostgresDrizzleAdapter, postgresDrizzleSchema } from '@nest-batch/postgresql';
 
-type Db = NodePgDatabase<typeof schema>;
+type Db = NodePgDatabase<typeof postgresDrizzleSchema>;
 
 @Module({
   providers: [
     {
       provide: 'DB',
       useFactory: (): Db =>
-        drizzle(new Pool({ connectionString: process.env.DATABASE_URL }), { schema }),
+        drizzle(new Pool({ connectionString: process.env.DATABASE_URL }), {
+          schema: postgresDrizzleSchema,
+        }),
     },
   ],
   exports: ['DB'],
@@ -110,7 +111,7 @@ class DbModule {}
     DbModule,
     NestBatchModule.forRoot({
       adapters: {
-        persistence: DrizzleAdapter.forRoot(),
+        persistence: PostgresDrizzleAdapter.forRoot(),
         transport: InProcessAdapter.forRoot(),
       },
     }),
@@ -119,7 +120,7 @@ class DbModule {}
 export class AppModule {}
 ```
 
-`DrizzleAdapter.forRoot()` takes no arguments on purpose. The host
+`PostgresDrizzleAdapter.forRoot()` takes no arguments on purpose. The host
 already owns the Drizzle `drizzle()` call; the adapter only declares
 its own provider and export surface. The `JOB_REPOSITORY_TOKEN` and
 `TRANSACTION_MANAGER_TOKEN` bindings are registered globally by the
@@ -127,11 +128,11 @@ adapter, so you do **not** list `DrizzleJobRepository` /
 `DrizzleTransactionManager` in the `providers` array — they're
 already wired.
 
-The MySQL mirror is the same shape: swap `DrizzlePostgres` for
-`DrizzleMySql`, swap `drizzle-orm/node-postgres` for
+The MySQL mirror is the same shape: swap `PostgresDrizzleAdapter` /
+`postgresDrizzleSchema` for `MysqlDrizzleAdapter` /
+`mysqlDrizzleSchema`, swap `drizzle-orm/node-postgres` for
 `drizzle-orm/mysql2`, and use `mysql2`'s `createPool` instead of
-`pg`'s `Pool`. The `DrizzleAdapter.forRoot()` body is identical
-across drivers; it does not care which `Database` the host passes in.
+`pg`'s `Pool`.
 
 > **Warning:** The adapter does **not** call `drizzle()` and does
 > **not** create a `Pool`. If you forget the DB provider binding, the
@@ -155,13 +156,14 @@ import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { runJobRepositoryContract } from '@nest-batch/core/test-contracts';
-import { DrizzleJobRepository, DrizzleTransactionManager, schema } from '@nest-batch/drizzle';
+import { DrizzleJobRepository, DrizzleTransactionManager } from '@nest-batch/drizzle';
+import { postgresDrizzleSchema } from '@nest-batch/postgresql';
 
 const container = await new PostgreSqlContainer('postgres:15-alpine')
   .withDatabase('nest_batch_drizzle')
   .start();
 const pool = new Pool({ connectionString: container.getConnectionUri() });
-const db = drizzle(pool, { schema });
+const db = drizzle(pool, { schema: postgresDrizzleSchema });
 
 runJobRepositoryContract(
   {
@@ -215,10 +217,9 @@ run the e2e suite to confirm you have not broken the contract.
   surface. These are out of scope for the whole `@nest-batch/*`
   family. Hook a `BatchObserver` if you need to ship events
   somewhere.
-- A migration runner. The 0.2.0 release moves the migration script
-  into [`@nest-batch/postgresql`](../postgresql) (and the MySQL
-  mirror into `@nest-batch/mysql`). The schema definitions stay
-  here so the driver sibling can reuse them.
+- A migration runner or public SQL migration file. Include the
+  dialect-specific Drizzle table definitions in your app's Drizzle
+  config and generate/apply migrations in the app repository.
 
 ---
 

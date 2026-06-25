@@ -250,7 +250,8 @@ support. The package's `PrismaJobRepository` and
 Yes, [`@nest-batch/mysql`](../../packages/mysql/README.md) `0.2.0`
 (sibling package; no MySQL provider in the 8 other packages).
 It owns the 4 MySQL adapter shells (`MikroOrmMySql`, `TypeOrmMySql`,
-`DrizzleMySql`, `PrismaMySql`) and a 6-table MySQL migration. The
+`DrizzleMySql`, `PrismaMySql`). The consuming app owns the MySQL
+batch meta migration generated from its chosen ORM contract. The
 MySQL boundary test (T-AC-2 in
 [`packages/core/tests/core/boundary/no-mysql-in-existing-packages.test.ts`](../../packages/core/tests/core/boundary/no-mysql-in-existing-packages.test.ts))
 confirms no MySQL provider leaks into the 8 non-MySQL packages.

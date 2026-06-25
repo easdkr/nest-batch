@@ -20,8 +20,8 @@ you can decide whether the family meets your needs.
 - The library was split into four sibling packages.
 - `@nest-batch/core` is now a dependency-light engine with stable
   public API.
-- `@nest-batch/mikro-orm` and `@nest-batch/typeorm` each own a copy
-  of the six Spring Batch-compatible batch meta tables.
+- `@nest-batch/mikro-orm` and `@nest-batch/typeorm` each expose the
+  batch meta table contract for their ORM.
 - `@nest-batch/bullmq` provides the BullMQ transport strategy.
 - `@nest-batch/drizzle` is **not in this release** (deferred).
 - No admin UI, metrics, tracing, webhooks, or job visualization are
@@ -78,7 +78,8 @@ The previous `@nest-batch/nest-batch` package became four:
 4. **Spread batch meta entities into your ORM config.** Each
    adapter package exports a `BATCH_META_ENTITIES` (or
    `batchMetaEntities`) tuple. Spread it into your `entities` list
-   and run the bundled migration.
+   and generate/run the migration in your consuming app's own ORM
+   workflow.
 
 5. **Update imports.** The re-export surface moved. Decorators
    live under the `BatchDecorators` namespace from the core
@@ -385,24 +386,24 @@ Each package in the family was packed with `pnpm pack --pack-destination /tmp/ta
 
 ### Peer-dependency ranges (declared in `package.json`, verified post-pack)
 
-| Package                  | Peer dep                         | Range          | Notes                          |
-| ------------------------ | -------------------------------- | -------------- | ------------------------------ |
-| `@nest-batch/core`       | `@nestjs/common`                 | `^10 \|\| ^11` |                                |
-|                          | `@nestjs/core`                   | `^10 \|\| ^11` |                                |
-|                          | `reflect-metadata`               | `^0.2`         |                                |
-| `@nest-batch/mikro-orm`  | `@nest-batch/core`               | `workspace:*`  | resolved to `0.1.0` on pack    |
-|                          | `@mikro-orm/core`                | `^6.0.0`       | MikroORM 6.x only              |
-|                          | `@mikro-orm/nestjs`              | `^6.0.0`       |                                |
-|                          | `@mikro-orm/postgresql`          | `^6.0.0`       |                                |
-|                          | `@nestjs/common`                 | `^10 \|\| ^11` |                                |
-| `@nest-batch/typeorm`    | `@nest-batch/core`               | `workspace:*`  | resolved to `0.1.0` on pack    |
-|                          | `@nestjs/common`                 | `^10 \|\| ^11` |                                |
-|                          | `@nestjs/typeorm`                | `^10 \|\| ^11` |                                |
-|                          | `typeorm`                        | `^1.0.0`       | **NOT 0.3.x** — 1.0.0-only     |
-| `@nest-batch/bullmq`     | `@nest-batch/core`               | `workspace:*`  | resolved to `0.1.0` on pack    |
-|                          | `@nestjs/common`                 | `^10 \|\| ^11` |                                |
-|                          | `@nestjs/core`                   | `^10 \|\| ^11` |                                |
-|                          | `bullmq`                         | `^5.0.0`       | BullMQ 5.x only                |
+| Package                 | Peer dep                | Range          | Notes                       |
+| ----------------------- | ----------------------- | -------------- | --------------------------- |
+| `@nest-batch/core`      | `@nestjs/common`        | `^10 \|\| ^11` |                             |
+|                         | `@nestjs/core`          | `^10 \|\| ^11` |                             |
+|                         | `reflect-metadata`      | `^0.2`         |                             |
+| `@nest-batch/mikro-orm` | `@nest-batch/core`      | `workspace:*`  | resolved to `0.1.0` on pack |
+|                         | `@mikro-orm/core`       | `^6.0.0`       | MikroORM 6.x only           |
+|                         | `@mikro-orm/nestjs`     | `^6.0.0`       |                             |
+|                         | `@mikro-orm/postgresql` | `^6.0.0`       |                             |
+|                         | `@nestjs/common`        | `^10 \|\| ^11` |                             |
+| `@nest-batch/typeorm`   | `@nest-batch/core`      | `workspace:*`  | resolved to `0.1.0` on pack |
+|                         | `@nestjs/common`        | `^10 \|\| ^11` |                             |
+|                         | `@nestjs/typeorm`       | `^10 \|\| ^11` |                             |
+|                         | `typeorm`               | `^1.0.0`       | **NOT 0.3.x** — 1.0.0-only  |
+| `@nest-batch/bullmq`    | `@nest-batch/core`      | `workspace:*`  | resolved to `0.1.0` on pack |
+|                         | `@nestjs/common`        | `^10 \|\| ^11` |                             |
+|                         | `@nestjs/core`          | `^10 \|\| ^11` |                             |
+|                         | `bullmq`                | `^5.0.0`       | BullMQ 5.x only             |
 
 `@nest-batch/drizzle` is **not** in this release. No package directory, no `workspace:*` reference, no import. The full check is in
 [`.omo/evidence/task-23-no-drizzle.txt`](.omo/evidence/task-23-no-drizzle.txt).
@@ -431,12 +432,12 @@ The pack output never contains:
 
 ### Pack-dry-run result (0.1.0)
 
-| Package                  | Total files | Has dist/ | Has src/ | Has README.md | Test/coverage/node_modules | Exit |
-| ------------------------ | ----------- | --------- | -------- | ------------- | -------------------------- | ---- |
-| `@nest-batch/core`       | 395         | ✓         | ✓        | ✓             | 0                          | 0    |
-| `@nest-batch/mikro-orm`  | 52          | ✓         | ✓        | ✓             | 0                          | 0    |
-| `@nest-batch/typeorm`    | 20          | ✓         | ✓        | ✓             | 0                          | 0    |
-| `@nest-batch/bullmq`     | 33          | ✓         | ✓        | ✓             | 0                          | 0    |
+| Package                 | Total files | Has dist/ | Has src/ | Has README.md | Test/coverage/node_modules | Exit |
+| ----------------------- | ----------- | --------- | -------- | ------------- | -------------------------- | ---- |
+| `@nest-batch/core`      | 395         | ✓         | ✓        | ✓             | 0                          | 0    |
+| `@nest-batch/mikro-orm` | 52          | ✓         | ✓        | ✓             | 0                          | 0    |
+| `@nest-batch/typeorm`   | 20          | ✓         | ✓        | ✓             | 0                          | 0    |
+| `@nest-batch/bullmq`    | 33          | ✓         | ✓        | ✓             | 0                          | 0    |
 
 Reproduce locally:
 
@@ -455,5 +456,5 @@ ls -la /tmp/task23-pack/
 - `dist/src` is the runtime artifact (`main: "dist/src/index.js"`, `types: "dist/src/index.d.ts"`). It is the only thing an end-user import actually loads.
 - `src` ships so that downstream adapters (and the `@nest-batch/core/test-contracts` consumer) can read the original TypeScript to align with the published public API surface. It is also the source for the `.d.ts.map` source maps.
 - `README.md` is the package's per-package documentation.
-- We deliberately do **not** ship `tests/` (except `dist/tests/contracts` for core). The contract suite is the *interface*, not the test. Downstream adapters import the compiled contracts from `@nest-batch/core/test-contracts`; the raw test sources are not part of the published boundary.
+- We deliberately do **not** ship `tests/` (except `dist/tests/contracts` for core). The contract suite is the _interface_, not the test. Downstream adapters import the compiled contracts from `@nest-batch/core/test-contracts`; the raw test sources are not part of the published boundary.
 - `tsconfig.json`, `vitest.config.ts`, `.swcrc`, debug scripts, and editor scratch files are excluded by the `files` allow-list.

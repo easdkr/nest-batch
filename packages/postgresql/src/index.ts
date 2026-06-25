@@ -2,10 +2,9 @@
 //
 // This package is the **PostgreSQL driver sibling**. It owns the
 // 4 Postgres adapter shells (MikroORM Postgres, TypeORM Postgres,
-// Drizzle Postgres, Prisma Postgres), the bundled Postgres DDL
-// migration, the Postgres Prisma schema, the Postgres-specific
-// Drizzle schema carrier (`drizzle-schema.postgres.ts`), and the
-// Postgres driver peer dependencies.
+// Drizzle Postgres, Prisma Postgres), Postgres runtime binding
+// code, and the Postgres driver peer dependencies. Migration files
+// live with the ORM package whose runner consumes them.
 //
 // Apps wire the persistence concern into
 // `NestBatchModule.forRoot()` via the `BatchAdapter` factory
@@ -29,7 +28,7 @@
 //
 // MikroORM entity classes are owned and exported by
 // `@nest-batch/mikro-orm`; this package only exports the Postgres
-// shell and Postgres-specific schema/migration carriers.
+// shell and runtime binding.
 
 // MikroORM Postgres shell
 export { PostgresMikroOrmAdapter } from './mikroorm/postgres-mikroorm.adapter';

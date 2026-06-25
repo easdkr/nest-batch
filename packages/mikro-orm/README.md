@@ -5,8 +5,8 @@ owns the MikroORM meta-entity classes, the
 `MikroORMJobRepository`, and the `MikroORMTransactionManager`
 implementation that satisfy the core contract suite. Driver sibling
 packages such as [`@nest-batch/postgresql`](../postgresql) own the
-dialect-specific shells, DDL migrations, and driver peer
-dependencies.
+dialect-specific shells and driver peer dependencies; consuming apps
+generate and own their runnable migrations.
 
 The package is a **sibling**, not a replacement. The dependency
 direction is strict and one-way:
@@ -49,8 +49,8 @@ current.
 
 This package owns the 5 active MikroORM meta-entity classes because
 `MikroORMJobRepository` instantiates those class identities directly.
-Driver sibling packages provide matching DDL/schema carriers for the
-chosen database.
+The consuming app includes these entities in its MikroORM config and
+generates migrations through its own MikroORM migration workflow.
 
 | Table                          | Purpose                                                                            |
 | ------------------------------ | ---------------------------------------------------------------------------------- |
@@ -176,7 +176,7 @@ from there.
   release. See `MIGRATION.md`.
 - A TypeORM adapter. Use `@nest-batch/typeorm` if you're on
   TypeORM 1.0.0; the two packages expose the same 5-table schema
-  with adapter-specific migrations.
+  contract through ORM-specific entities.
 - A transport. Use `@nest-batch/bullmq` to wire BullMQ as the
   execution strategy; the transport layer reads the same
   `JobExecution` rows.

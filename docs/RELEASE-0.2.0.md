@@ -65,11 +65,11 @@ ten, recorded in a single `.changeset/release-0.2.0.md` entry.
 | `@nest-batch/prisma`     | `0.2.0` | Prisma adapter slot. `PrismaJobRepository` + `PrismaTransactionManager` + `PrismaAdapter` + `PrismaBatchModule`. Driver-agnostic; pair with `@nest-batch/postgresql` or `@nest-batch/mysql`.          | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@prisma/client@^6.0.0`                              |
 | `@nest-batch/bullmq`     | `0.2.0` | BullMQ transport strategy. `BullmqRuntime`, `BullmqAdapter`, `BullmqSchedule` (cron firing via `upsertJobScheduler`), partition-aware `BullmqExecutionStrategy`.                                      | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@nestjs/core@^10 \|\| ^11`, `bullmq@^5.0.0`         |
 | `@nest-batch/kafka`      | `0.2.0` | Kafka transport strategy. `KafkaRuntime`, `KafkaAdapter`, `KafkaExecutionStrategy`, `KafkaSchedule` (hand-rolled `*/N * * * *` parser; see §4), partition-aware runtime.                              | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, `@nestjs/core@^10 \|\| ^11`, `kafkajs@^2.2.4`        |
-| `@nest-batch/postgresql` | `0.2.0` | Postgres driver sibling. 4 adapter shells (`PostgresMikroOrmAdapter`, `PostgresTypeOrmAdapter`, `PostgresDrizzleAdapter`, `PostgresPrismaAdapter`) + 5-table migration + boundary test.               | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, plus the 4 underlying adapter slot peer deps         |
-| `@nest-batch/mysql`      | `0.2.0` | MySQL driver sibling. 4 adapter shells (`MikroOrmMySql`, `TypeOrmMySql`, `DrizzleMySql`, `PrismaMySql`) + 6-table migration + boundary test. Ephemeral Docker; gated by `RUN_MYSQL_E2E=1`.            | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, plus the 4 underlying adapter slot peer deps         |
+| `@nest-batch/postgresql` | `0.2.0` | Postgres driver sibling. 4 adapter shells (`PostgresMikroOrmAdapter`, `PostgresTypeOrmAdapter`, `PostgresDrizzleAdapter`, `PostgresPrismaAdapter`) + boundary test.                                   | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, plus the 4 underlying adapter slot peer deps         |
+| `@nest-batch/mysql`      | `0.2.0` | MySQL driver sibling. 4 adapter shells (`MikroOrmMySql`, `TypeOrmMySql`, `DrizzleMySql`, `PrismaMySql`) + boundary test. Ephemeral Docker; gated by `RUN_MYSQL_E2E=1`.                                | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`, plus the 4 underlying adapter slot peer deps         |
 | `@nest-batch/webhook`    | `0.2.0` | Webhook delivery observer. `WebhookBatchObserver` + HMAC-SHA256 signing + exponential backoff (1s / 5s / 25s / 125s) + dead-letter `logger.warn` + `X-Nest-Batch-Signature` header.                   | `@nest-batch/core@workspace:^`, `@nestjs/common@^10 \|\| ^11`                                                       |
 
-> **Why the 4 existing DB-adapter packages became "driver-agnostic slots."** The 0.1.0 release had 4 DB adapter packages (`mikro-orm`, `typeorm`, `drizzle`, `prisma`) that each inlined a Postgres shell: `mikro-orm` declared `@mikro-orm/postgresql` as a peer dep, `drizzle` shipped a `drizzle-orm/pg-core` schema, `prisma` shipped a `prisma/schema.prisma` with a Postgres provider, and `typeorm` carried the Postgres driver via `@nestjs/typeorm`. In 0.2.0 those shells move into the new `@nest-batch/postgresql` package. The 4 existing packages keep their name and their public API (`XxxJobRepository`, `XxxTransactionManager`, `XxxAdapter`, `XxxBatchModule`); they no longer declare a driver-specific peer dep. This is the symmetric refactor that backs the user-imposed guardrail "DB adapters must not depend on a DB provider." The 4 existing packages expose the ORM-specific interface shape and a build artifact that `@nest-batch/postgresql` and `@nest-batch/mysql` import. See [§3 What shipped](#3-what-shipped-in-020) and [§4 Stabilization](#4-stabilization).
+> **Why the 4 existing DB-adapter packages became runtime driver-agnostic slots.** The 0.1.0 release had 4 DB adapter packages (`mikro-orm`, `typeorm`, `drizzle`, `prisma`) that each inlined a Postgres shell: `mikro-orm` declared `@mikro-orm/postgresql` as a peer dep, `drizzle` shipped a `drizzle-orm/pg-core` schema, `prisma` shipped a `prisma/schema.prisma` with a Postgres provider, and `typeorm` carried the Postgres driver via `@nestjs/typeorm`. In 0.2.0 those runtime shells move into the new `@nest-batch/postgresql` package. The 4 existing packages keep their name and their public API (`XxxJobRepository`, `XxxTransactionManager`, `XxxAdapter`, `XxxBatchModule`) and own the ORM-specific schema/entity contract; consuming apps own the generated migration files. They no longer declare a driver-specific peer dep. This is the symmetric refactor that backs the user-imposed guardrail "DB adapters must not depend on a DB provider." The 4 existing packages expose the ORM-specific interface shape and a build artifact that `@nest-batch/postgresql` and `@nest-batch/mysql` import. See [§3 What shipped](#3-what-shipped-in-020) and [§4 Stabilization](#4-stabilization).
 
 ---
 
@@ -112,10 +112,11 @@ A new package that owns the 4 MySQL adapter shells:
 
 Each shell registers the host's `JOB_REPOSITORY_TOKEN` and
 `TRANSACTION_MANAGER_TOKEN` bindings against the MySQL connection.
-The package ships a 6-table MySQL migration (the same six
-Spring Batch-compatible tables the Postgres siblings use, ported
-to MySQL DDL). MySQL e2e uses ephemeral `docker run` or
-testcontainers, gated by `RUN_MYSQL_E2E=1`. The boundary test
+The package provides the MySQL runtime shells and dialect-specific
+table contract; consuming apps generate their own migrations from
+their chosen ORM workflow. MySQL e2e uses ephemeral `docker run` or
+testcontainers plus test-only bootstrap DDL, gated by
+`RUN_MYSQL_E2E=1`. The boundary test
 (T-AC-2) confirms no MySQL provider leaks into any of the 8
 non-MySQL packages.
 
@@ -563,8 +564,9 @@ The 0.2.0 release does not ship MariaDB or CockroachDB
 support. When one ships, it follows the same per-driver
 sibling pattern: a new `@nest-batch/mariadb` (or
 `@nest-batch/cockroachdb`) package that owns the 4 adapter
-shells and the active meta-schema migration against that dialect. The
-10 existing packages stay dialect-agnostic; the boundary
+shells and dialect-specific runtime bindings. The 10 existing
+packages stay dialect-agnostic; consuming apps still own runnable
+migrations. The boundary
 test pattern from T-AC-2 / T-AC-2b extends to forbid the
 new dialect's import paths in the existing 10 packages.
 

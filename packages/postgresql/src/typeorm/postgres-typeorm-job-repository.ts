@@ -147,9 +147,7 @@ function mapStepExecution(r: StepExecutionRow): StepExecution {
  *   the Drizzle / Prisma carriers without surprises.
  * - Idempotent insert: `INSERT ... ON DUPLICATE KEY UPDATE id=id` →
  *   `INSERT ... ON CONFLICT (job_name, job_key) DO NOTHING`. The
- *   unique constraint on `(job_name, job_key)` (defined in the
- *   bundled `migrations/0001-create-batch-meta.sql`) is the
- *   conflict target.
+ *   unique constraint on `(job_name, job_key)` is the conflict target.
  * - Time function: `NOW(6)` → `NOW()`. Postgres' `NOW()` returns
  *   `timestamptz` with microsecond precision natively; the
  *   `(6)` microsecond suffix is MySQL-specific.

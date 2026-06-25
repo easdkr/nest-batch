@@ -1,20 +1,14 @@
 // E2E harness for `@nest-batch/prisma` against a real Postgres.
 //
 // Spins up a Postgres testcontainer, runs `prisma db push` against
-// the Postgres Prisma schema bundled in `@nest-batch/postgresql`
-// (`packages/postgresql/prisma/schema.prisma`, `provider =
-// "postgresql"`), runs the shared `@nest-batch/core` contract suite
-// against the slot's `PrismaJobRepository` /
+// a test-only Postgres Prisma schema fixture, then runs the shared
+// `@nest-batch/core` contract suite against the slot's
+// `PrismaJobRepository` /
 // `PrismaTransactionManager`, and tears the container down.
 //
-// The Prisma slot is **driver-agnostic** in 0.2.0 — its
-// `prisma/schema.prisma` and bundled `prisma/migrations/` moved to
-// `@nest-batch/postgresql/prisma/` in the F4 refactor
-// (commit `a294162`). The slot itself does NOT ship a
-// `prisma/schema.prisma`. This test pulls the schema from
-// `@nest-batch/postgresql/prisma/schema.prisma` (the canonical
-// location post-F4) and applies it against the testcontainer with
-// the Prisma CLI.
+// The fixture is only for this e2e bootstrap. Consumer apps include
+// the documented batch meta models in their own Prisma schema and
+// own their migrations.
 //
 // This is the release-gate e2e for the Prisma adapter. It is
 // **gated by `RUN_PRISMA_E2E=1`** — without the env var the file
@@ -23,10 +17,8 @@
 // container and does NOT require a Docker daemon. CI runs the
 // gated test in a separate job.
 //
-// The contract test (`tests/contract.test.ts` if present) applies
-// the schema with raw `pg` SQL; the e2e test applies it with the
-// Prisma CLI (`prisma db push`) so a Prisma migration / schema
-// regression surfaces here, not just in the raw-SQL contract test.
+// The e2e test applies the schema with the Prisma CLI (`prisma db
+// push`) so a Prisma schema regression surfaces here.
 //
 // Run locally with a Docker daemon up:
 //
@@ -47,15 +39,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { PrismaClient } from '@prisma/client';
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  test,
-} from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 
 import { runJobRepositoryContract } from '../../core/tests/contracts/job-repository.contract';
@@ -66,91 +50,57 @@ const E2E_ENABLED = process.env.RUN_PRISMA_E2E === '1';
 
 const describeE2E = E2E_ENABLED ? describe : describe.skip;
 
-// Resolved once, lazily, only when the e2e actually runs. The Prisma
-// slot is driver-agnostic post-F4 (commit `a294162`) — its bundled
-// `prisma/schema.prisma` was moved to
-// `@nest-batch/postgresql/prisma/schema.prisma`. The schema here is
-// the canonical Postgres schema for the postgresql shell.
-const SCHEMA_PATH = resolve(
-  __dirname,
-  '..',
-  '..',
-  'postgresql',
-  'prisma',
-  'schema.prisma',
-);
+// Resolved once, lazily, only when the e2e actually runs.
+const SCHEMA_PATH = resolve(__dirname, 'fixtures', 'postgresql', 'schema.prisma');
 
-describeE2E(
-  'Prisma e2e (testcontainers Postgres, gated by RUN_PRISMA_E2E=1)',
-  () => {
-    let container: Awaited<ReturnType<PostgreSqlContainer['start']>>;
-    let prisma: PrismaClient;
-    let repo: PostgresPrismaJobRepository;
-    let tx: PostgresPrismaTransactionManager;
-    let dbUrl: string;
+describeE2E('Prisma e2e (testcontainers Postgres, gated by RUN_PRISMA_E2E=1)', () => {
+  let container: Awaited<ReturnType<PostgreSqlContainer['start']>>;
+  let prisma: PrismaClient;
+  let repo: PostgresPrismaJobRepository;
+  let tx: PostgresPrismaTransactionManager;
+  let dbUrl: string;
 
-    beforeAll(async () => {
-      if (!existsSync(SCHEMA_PATH)) {
-        throw new Error(
-          `Postgres Prisma schema not found at ${SCHEMA_PATH}. ` +
-            'The e2e harness requires the Postgres Prisma schema at ' +
-            '`packages/postgresql/prisma/schema.prisma` (the ' +
-            'canonical location post-F4 refactor).',
-        );
-      }
-
-      container = await new PostgreSqlContainer('postgres:16-alpine')
-        .withDatabase('nest_batch_prisma_e2e')
-        .withUsername('demo')
-        .withPassword('demo')
-        .start();
-
-      dbUrl = container.getConnectionUri();
-
-      // Apply the Postgres schema to the testcontainer. We use
-      // `prisma db push` (not `migrate deploy`) because the bundled
-      // schema at `packages/postgresql/prisma/schema.prisma` does
-      // not ship a `migrations/` directory — the migration lives at
-      // `packages/postgresql/prisma/migrations/20250101000000_init/migration.sql`
-      // but a `prisma migrate deploy` would require a `_prisma_migrations`
-      // table that we have not bootstrapped. `db push` is the
-      // schema-only path: it applies the `provider = "postgresql"`
-      // schema directly. For e2e purposes, the contract suite
-      // exercises the same 6 tables, so a `migrate deploy`
-      // regression would not surface here (and is covered by the
-      // postgresql package's own e2e suite).
-      execFileSync(
-        'pnpm',
-        [
-          'prisma',
-          'db',
-          'push',
-          '--schema',
-          SCHEMA_PATH,
-          '--skip-generate',
-        ],
-        {
-          env: { ...process.env, DATABASE_URL: dbUrl },
-          stdio: 'inherit',
-        },
+  beforeAll(async () => {
+    if (!existsSync(SCHEMA_PATH)) {
+      throw new Error(
+        `Postgres Prisma schema not found at ${SCHEMA_PATH}. ` +
+          'The e2e harness requires the test fixture at ' +
+          '`packages/prisma/tests/fixtures/postgresql/schema.prisma`.',
       );
-    }, 60_000);
+    }
 
-    afterAll(async () => {
-      if (container) await container.stop();
+    container = await new PostgreSqlContainer('postgres:16-alpine')
+      .withDatabase('nest_batch_prisma_e2e')
+      .withUsername('demo')
+      .withPassword('demo')
+      .start();
+
+    dbUrl = container.getConnectionUri();
+
+    // Apply the test schema to the testcontainer. This is e2e
+    // bootstrap only; the package does not ship a runnable Prisma
+    // migration artifact to consumers.
+    execFileSync('pnpm', ['prisma', 'db', 'push', '--schema', SCHEMA_PATH, '--skip-generate'], {
+      env: { ...process.env, DATABASE_URL: dbUrl },
+      stdio: 'inherit',
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    if (container) await container.stop();
+  });
+
+  beforeEach(async () => {
+    prisma = new PrismaClient({
+      datasources: {
+        db: {
+          url: dbUrl,
+        },
+      },
     });
 
-    beforeEach(async () => {
-      prisma = new PrismaClient({
-        datasources: {
-          db: {
-            url: dbUrl,
-          },
-        },
-      });
-
-      await prisma.$connect();
-      await prisma.$executeRawUnsafe(`
+    await prisma.$connect();
+    await prisma.$executeRawUnsafe(`
         TRUNCATE TABLE
           "batch_step_execution_context",
           "batch_job_execution_context",
@@ -160,36 +110,35 @@ describeE2E(
         RESTART IDENTITY CASCADE
       `);
 
-      repo = new PostgresPrismaJobRepository(prisma);
-      tx = new PostgresPrismaTransactionManager(prisma);
-    });
+    repo = new PostgresPrismaJobRepository(prisma);
+    tx = new PostgresPrismaTransactionManager(prisma);
+  });
 
-    afterEach(async () => {
-      if (prisma) await prisma.$disconnect();
-    });
+  afterEach(async () => {
+    if (prisma) await prisma.$disconnect();
+  });
 
-    // Re-run the shared `@nest-batch/core` contract suite against
-    // the Prisma-backed implementation. The suite is the same one
-    // `@nest-batch/mikro-orm` and `@nest-batch/typeorm` run; the
-    // package's "passes the contract" claim is the suite's verdict.
-    runJobRepositoryContract(
-      {
-        create: () => ({ repo, tx }),
-      },
-      'Prisma e2e (testcontainers Postgres, prisma db push, PostgresPrisma shell)',
-    );
+  // Re-run the shared `@nest-batch/core` contract suite against
+  // the Prisma-backed implementation. The suite is the same one
+  // `@nest-batch/mikro-orm` and `@nest-batch/typeorm` run; the
+  // package's "passes the contract" claim is the suite's verdict.
+  runJobRepositoryContract(
+    {
+      create: () => ({ repo, tx }),
+    },
+    'Prisma e2e (testcontainers Postgres, prisma db push, PostgresPrisma shell)',
+  );
 
-    // E2E-specific runtime smoke — pins the impl classes the
-    // contract suite just exercised.
-    test('PostgresPrismaJobRepository is the concrete impl wired by the e2e harness', () => {
-      expect(repo).toBeInstanceOf(PostgresPrismaJobRepository);
-    });
+  // E2E-specific runtime smoke — pins the impl classes the
+  // contract suite just exercised.
+  test('PostgresPrismaJobRepository is the concrete impl wired by the e2e harness', () => {
+    expect(repo).toBeInstanceOf(PostgresPrismaJobRepository);
+  });
 
-    test('PostgresPrismaTransactionManager is the concrete impl wired by the e2e harness', () => {
-      expect(tx).toBeInstanceOf(PostgresPrismaTransactionManager);
-    });
-  },
-);
+  test('PostgresPrismaTransactionManager is the concrete impl wired by the e2e harness', () => {
+    expect(tx).toBeInstanceOf(PostgresPrismaTransactionManager);
+  });
+});
 
 /**
  * Skip notice — printed when `RUN_PRISMA_E2E=1` is NOT set so a CI

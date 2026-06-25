@@ -17,15 +17,12 @@ const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
  * sibling package and asserts the inverse of the
  * `no-postgres-in-existing-packages.test.ts` core test — it scans
  * the 8 non-Postgres packages and asserts that no Postgres driver
- * import / peer dep / env literal / prisma schema with
- * `provider = "postgresql"` has leaked into them.
+ * import / peer dep / env literal has leaked into their runtime
+ * surfaces.
  *
  * Scans `src/**` and `package.json` ONLY. Does NOT scan `dist/**`
- * (build artifacts may carry stale strings) and does NOT scan
- * `README.md` (prose mentions are not a contract). Prisma's
- * `prisma/schema.prisma` is also scanned for the `postgresql`
- * provider — that is part of the source contract for the prisma
- * package.
+ * (build artifacts may carry stale strings), `README.md` (prose
+ * mentions are not a contract), or test-only fixtures.
  */
 
 const NON_POSTGRES_PACKAGES: readonly string[] = [
@@ -73,7 +70,7 @@ function* walkTypeScriptFiles(dir: string): Generator<string> {
 
 interface PackageViolation {
   packageName: string;
-  source: 'src-import' | 'package-json' | 'src-env' | 'prisma-schema';
+  source: 'src-import' | 'package-json' | 'src-env';
   detail: string;
   file: string;
 }
@@ -144,22 +141,6 @@ function findPostgresEnvLiteralsInSource(srcRoot: string): PackageViolation[] {
   return violations;
 }
 
-function findPostgresProviderInPrismaSchema(pkgRoot: string): PackageViolation[] {
-  const schemaPath = join(pkgRoot, 'prisma', 'schema.prisma');
-  if (!existsSync(schemaPath)) return [];
-  const text = readFileSync(schemaPath, 'utf8');
-  const m = text.match(/provider\s*=\s*["']postgresql["']/);
-  if (!m) return [];
-  return [
-    {
-      packageName: '',
-      source: 'prisma-schema',
-      detail: `declares "provider = \"postgresql\""`,
-      file: 'prisma/schema.prisma',
-    },
-  ];
-}
-
 describe('dependency boundary: no Postgres drivers in non-Postgres packages (postgresql-side watchlist)', () => {
   const allViolations: PackageViolation[] = [];
   const scannedPackages: { pkg: string; srcExists: boolean }[] = [];
@@ -188,9 +169,6 @@ describe('dependency boundary: no Postgres drivers in non-Postgres packages (pos
         allViolations.push({ ...v, packageName: pkg });
       }
     }
-    for (const v of findPostgresProviderInPrismaSchema(pkgRoot)) {
-      allViolations.push({ ...v, packageName: pkg });
-    }
   }
 
   it('scans every existing non-Postgres package (sanity check)', () => {
@@ -200,18 +178,15 @@ describe('dependency boundary: no Postgres drivers in non-Postgres packages (pos
     );
   });
 
-  it('contains no Postgres driver imports, peer deps, env literals, or prisma schemas in any non-Postgres package', () => {
+  it('contains no Postgres driver imports, peer deps, or env literals in any non-Postgres package runtime surface', () => {
     if (allViolations.length > 0) {
       const detail = allViolations
-        .map(
-          (v) =>
-            `  - packages/${v.packageName}/${v.file}: ${v.source} — ${v.detail}`,
-        )
+        .map((v) => `  - packages/${v.packageName}/${v.file}: ${v.source} — ${v.detail}`)
         .join('\n');
       throw new Error(
         `Postgres driver leak detected in a non-Postgres package:\n${detail}\n\n` +
           `Postgres drivers belong in @nest-batch/postgresql. ` +
-          `Sibling packages must stay driver-agnostic.`,
+          `Sibling package runtime surfaces must stay driver-agnostic.`,
       );
     }
     expect(allViolations).toEqual([]);

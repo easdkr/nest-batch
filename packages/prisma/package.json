@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/prisma",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Prisma adapter SLOT for @nest-batch/core — JobRepository and TransactionManager interface shape, paired with @nest-batch/postgresql (Postgres driver) or @nest-batch/mysql (MySQL driver).",
   "license": "MIT",
   "author": "easdkr",

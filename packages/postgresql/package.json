@@ -1,7 +1,7 @@
 {
   "name": "@nest-batch/postgresql",
-  "version": "0.3.1",
-  "description": "PostgreSQL driver shells for @nest-batch/core. Provides 4 Postgres adapter shells (MikroORM, TypeORM, Drizzle, Prisma), the 5-table Postgres DDL migration, the bundled Postgres Prisma schema, and the shared test-contracts e2e harness against a real Postgres testcontainer.",
+  "version": "0.3.2",
+  "description": "PostgreSQL driver shells for @nest-batch/core. Provides 4 Postgres adapter shells (MikroORM, TypeORM, Drizzle, Prisma) and the shared test-contracts e2e harness against a real Postgres testcontainer.",
   "license": "MIT",
   "author": "easdkr",
   "homepage": "https://github.com/easdkr/nest-batch/tree/main/packages/postgresql#readme",
@@ -30,8 +30,6 @@
   "files": [
     "dist/src",
     "src",
-    "migrations",
-    "prisma",
     "README.md"
   ],
   "publishConfig": {
