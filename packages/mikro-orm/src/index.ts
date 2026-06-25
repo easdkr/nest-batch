@@ -30,7 +30,8 @@
 // `BATCH_META_ENTITIES` and the MikroORM entity classes live here
 // because `MikroORMJobRepository` instantiates these class
 // identities. Driver siblings own dialect-specific shells,
-// migrations, schema carriers, and driver peer dependencies.
+// runtime bindings, and driver peer dependencies. Apps own the
+// runnable migrations generated from these entities.
 export * from './mikroorm-job-repository';
 export * from './mikroorm-transaction-manager';
 export * from './adapters';

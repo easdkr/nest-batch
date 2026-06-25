@@ -1,9 +1,9 @@
 # `@nest-batch/typeorm`
 
 The TypeORM 1.0.0 adapter for [`@nest-batch/core`](../core). It owns
-the same six Spring Batch-compatible batch meta-tables that
+the same five active batch meta-tables that
 `@nest-batch/mikro-orm` ships, expressed as TypeORM 1.0 entities plus
-a bundled migration. It exposes `TypeOrmJobRepository` and
+an exported entity tuple. It exposes `TypeOrmJobRepository` and
 `TypeOrmTransactionManager` and runs the shared core contract suite
 against a real TypeORM `DataSource`.
 
@@ -36,9 +36,9 @@ Why 1.0.0 and not 0.3? Two reasons:
    Maintaining 0.3 support would mean running the full codebase
    through `Connection → DataSource` shims, which is a waste of
    effort when 0.3 is on a separate support track.
-2. The entity / migration surface. A few decorators and migration
-   helpers moved between 0.3 and 1.0. Supporting both means
-   conditional entity definitions, which is a smell.
+2. The entity surface. A few decorators and metadata helpers moved
+   between 0.3 and 1.0. Supporting both means conditional entity
+   definitions, which is a smell.
 
 The peer range is `^1.0.0`, so any 1.x release works. The boundary
 test in core and a dedicated peer-range test in this package
@@ -72,25 +72,24 @@ without the host.
 
 ## Schema ownership
 
-This package owns the same six batch meta tables as
+This package owns the same five active batch meta tables as
 `@nest-batch/mikro-orm`:
 
 | Table                          | Purpose                                                                            |
 | ------------------------------ | ---------------------------------------------------------------------------------- |
 | `batch_job_instance`           | One row per logical job (unique on `job_name`+`job_key`).                          |
 | `batch_job_execution`          | One row per job run. Holds status, start/end, exit code/message.                   |
-| `batch_job_execution_params`   | Composite-keyed params (one row per param name).                                   |
 | `batch_step_execution`         | One row per step run. Holds step status, exit code/message, last-chunk checkpoint. |
 | `batch_job_execution_context`  | JSON checkpoint + execution context (job-scoped).                                  |
 | `batch_step_execution_context` | JSON checkpoint + execution context (step-scoped).                                 |
 
-The bundled migration lives at
-`src/migrations/1700000000000-CreateBatchMeta.ts` and is exported
-as `CreateBatchMeta1700000000000` from the package root. Apps that
-already have a TypeORM migration directory should copy the file in
-and renumber it to fit their own migration sequence.
+This package does not publish a runnable migration class. Apps that
+already have a TypeORM migration directory should spread
+`batchMetaEntities()` into their `entities` list, run TypeORM's
+`migration:generate` / `migration:create` flow in the app
+repository, and own the resulting migration file there.
 
-> **Note:** The six batch meta entities are also exported as a
+> **Note:** The five batch meta entities are also exported as a
 > single tuple under `batchMetaEntities` from the package root.
 > Because the adapter no longer bootstraps the `DataSource` (the
 > host owns the `TypeOrmModule.forRoot()` call), spreading
@@ -100,12 +99,11 @@ and renumber it to fit their own migration sequence.
 > for the meta tables fail silently and the repository throws at
 > first call.
 
-> The migration uses `datetime` (not `timestamptz`) on the SQLite
-> test driver and `timestamptz` on PostgreSQL production. The
-> entities declare `datetime` for portability, and the migration
-> handler emits the right per-driver type. This is intentional:
-> the test suite runs against `better-sqlite3` for speed, and the
-> production driver is PostgreSQL.
+> The entities declare portable logical column types because the
+> same contract is exercised against fast SQLite tests and real
+> PostgreSQL/MySQL driver shells. Host-owned migrations may map
+> those logical columns to dialect-specific types such as
+> `timestamptz` or `datetime(6)`.
 
 ---
 
@@ -130,11 +128,7 @@ into its `entities` array, and pass the adapter's no-arg
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NestBatchModule } from '@nest-batch/core';
-import {
-  batchMetaEntities,
-  CreateBatchMeta1700000000000,
-  TypeOrmAdapter,
-} from '@nest-batch/typeorm';
+import { batchMetaEntities, TypeOrmAdapter } from '@nest-batch/typeorm';
 import { ProductEntity } from './entities/product.entity';
 
 @Module({
@@ -147,7 +141,9 @@ import { ProductEntity } from './entities/product.entity';
       password: 'demo',
       database: 'nest_batch_demo',
       entities: [ProductEntity, ...batchMetaEntities()],
-      migrations: [CreateBatchMeta1700000000000 /* your other migrations */],
+      migrations: [
+        /* your app-owned migrations */
+      ],
       migrationsRun: true,
     }),
     NestBatchModule.forRoot({

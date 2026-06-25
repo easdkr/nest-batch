@@ -2,7 +2,7 @@
  * E2E harness for `@nest-batch/mysql` against a real MySQL 8.x.
  *
  * Spins up a MySQL 8.x testcontainer, applies the 6-table batch
- * meta-schema (via the bundled DDL), and runs the shared
+ * meta-schema via test bootstrap DDL, and runs the shared
  * `@nest-batch/core` contract suite against the MySQL-specific
  * repository / transaction manager implementations for each of the
  * 4 MySQL adapter shells:
@@ -150,7 +150,9 @@ describeE2E('MySQL e2e (testcontainers MySQL 8.x, gated by RUN_MYSQL_E2E=1)', ()
       connectionLimit: 5,
     });
 
-    for (const stmt of META_DDL.split(';').map((s) => s.trim()).filter(Boolean)) {
+    for (const stmt of META_DDL.split(';')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       await pool.query(stmt);
     }
   }, 180_000);
@@ -270,9 +272,9 @@ describeE2E('MySQL e2e (testcontainers MySQL 8.x, gated by RUN_MYSQL_E2E=1)', ()
   });
 
   describe('Prisma MySQL shell (shape smoke test)', () => {
-    // The Prisma MySQL shell needs a `prisma generate` step against
-    // the bundled `prisma/schema.prisma` (mysql provider). The
-    // generated client is **not** part of the default e2e path —
+    // The Prisma MySQL shell needs a host-generated PrismaClient
+    // from an app-owned schema. The generated client is **not**
+    // part of the default e2e path —
     // the 3 fully-wired contract suites above (MikroORM, TypeORM,
     // Drizzle) are the release-gate e2e. The Prisma contract
     // assertion below is the shape smoke test that the shell

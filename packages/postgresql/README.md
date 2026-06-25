@@ -3,9 +3,9 @@
 PostgreSQL driver sibling for [`@nest-batch/core`](../core). Owns
 the 4 Postgres adapter shells (`PostgresMikroOrmAdapter`,
 `PostgresTypeOrmAdapter`, `PostgresDrizzleAdapter`,
-`PostgresPrismaAdapter`), the bundled 5-table Postgres
-DDL migration, and the Postgres-specific schema carriers
-(Drizzle `pg-core` schema, Prisma `schema.prisma`). The package is
+`PostgresPrismaAdapter`) and the Postgres-specific runtime binding
+code. It does not publish runnable migration files; consuming apps
+generate and own migrations from the ORM contract they use. The package is
 the **only** `@nest-batch/*` sibling that declares Postgres provider
 peer dependencies (`pg`, `@mikro-orm/postgresql`,
 `@nestjs/typeorm`, `drizzle-orm/pg-core`, `@prisma/client`).
@@ -98,21 +98,21 @@ pnpm add @nest-batch/postgresql @nest-batch/prisma \
 The host must already provide these (or install them alongside
 this package). The full peer table:
 
-| Package                 | Range          | Notes                                                                                                                                              |
-| ----------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@nest-batch/core`      | `workspace:^`  | The batch engine. This package only extends its DI surface.                                                                                        |
-| `@nest-batch/mikro-orm` | `workspace:^`  | The MikroORM adapter slot; this package exports its Postgres shell (`PostgresMikroOrmAdapter`).                                                    |
-| `@nest-batch/typeorm`   | `workspace:^`  | The TypeORM adapter slot; this package exports its Postgres shell (`PostgresTypeOrmAdapter`).                                                      |
-| `@nest-batch/drizzle`   | `workspace:^`  | The Drizzle adapter slot; this package exports its Postgres shell (`PostgresDrizzleAdapter`) plus the bundled `drizzle-schema.postgres.ts` schema. |
-| `@nest-batch/prisma`    | `workspace:^`  | The Prisma adapter slot; this package exports its Postgres shell (`PostgresPrismaAdapter`) plus the bundled `prisma/schema.prisma`.                |
-| `@nestjs/common`        | `^10 \|\| ^11` | For `@Module` / `Module` / injection tokens. Nest 10 and 11 are both supported.                                                                    |
-| `pg`                    | `^8.11.0`      | The Postgres wire-protocol driver (used by the TypeORM shell and the e2e harness).                                                                 |
-| `@mikro-orm/postgresql` | `^6.0.0`       | The MikroORM 6.x Postgres driver.                                                                                                                  |
-| `@nestjs/typeorm`       | `^10 \|\| ^11` | NestJS-TypeORM bridge.                                                                                                                             |
-| `typeorm`               | `^1.0.0`       | TypeORM 1.0.0 line (the first version with the stable driver slot API).                                                                            |
-| `drizzle-orm`           | `^0.40.0`      | The Drizzle ORM core (the `pgTable` / `pg-core` factory imports).                                                                                  |
-| `prisma`                | `^6.0.0`       | The Prisma CLI (for the bundled schema's `prisma migrate` flow).                                                                                   |
-| `@prisma/client`        | `^6.0.0`       | The Prisma client runtime.                                                                                                                         |
+| Package                 | Range          | Notes                                                                                                                                         |
+| ----------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@nest-batch/core`      | `workspace:^`  | The batch engine. This package only extends its DI surface.                                                                                   |
+| `@nest-batch/mikro-orm` | `workspace:^`  | The MikroORM adapter slot; this package exports its Postgres shell (`PostgresMikroOrmAdapter`).                                               |
+| `@nest-batch/typeorm`   | `workspace:^`  | The TypeORM adapter slot; this package exports its Postgres shell (`PostgresTypeOrmAdapter`).                                                 |
+| `@nest-batch/drizzle`   | `workspace:^`  | The Drizzle adapter slot; this package exports its Postgres shell (`PostgresDrizzleAdapter`) plus the `postgresDrizzleSchema` table contract. |
+| `@nest-batch/prisma`    | `workspace:^`  | The Prisma adapter slot; this package exports its Postgres shell (`PostgresPrismaAdapter`).                                                   |
+| `@nestjs/common`        | `^10 \|\| ^11` | For `@Module` / `Module` / injection tokens. Nest 10 and 11 are both supported.                                                               |
+| `pg`                    | `^8.11.0`      | The Postgres wire-protocol driver (used by the TypeORM shell and the e2e harness).                                                            |
+| `@mikro-orm/postgresql` | `^6.0.0`       | The MikroORM 6.x Postgres driver.                                                                                                             |
+| `@nestjs/typeorm`       | `^10 \|\| ^11` | NestJS-TypeORM bridge.                                                                                                                        |
+| `typeorm`               | `^1.0.0`       | TypeORM 1.0.0 line (the first version with the stable driver slot API).                                                                       |
+| `drizzle-orm`           | `^0.40.0`      | The Drizzle ORM core (the `pgTable` / `pg-core` factory imports).                                                                             |
+| `prisma`                | `^6.0.0`       | The Prisma CLI used by consuming apps that generate their own migrations.                                                                     |
+| `@prisma/client`        | `^6.0.0`       | The Prisma client runtime.                                                                                                                    |
 
 The peer table is intentionally broad. A host that only uses one
 of the 4 shells still has the other 3 listed in `peerDependencies`
@@ -161,7 +161,7 @@ export class AppModule {}
 `PostgresMikroOrmAdapter` is a no-arg `BatchAdapter` shell. The
 MikroORM entity classes and `BATCH_META_ENTITIES` tuple come from
 `@nest-batch/mikro-orm`; this package provides the Postgres shell
-and driver/schema carriers.
+and runtime binding.
 
 ### 2. TypeORM Postgres
 
@@ -221,7 +221,7 @@ type Db = NodePgDatabase<typeof postgresDrizzleSchema>;
 export class AppModule {}
 ```
 
-The bundled `drizzle-schema.postgres.ts`
+The exported `postgresDrizzleSchema`
 (`import { postgresDrizzleSchema } from '@nest-batch/postgresql'`)
 provides the 5-table Drizzle schema
 for Postgres (`batch_job_instance`, `batch_job_execution`,
@@ -245,21 +245,18 @@ import { PostgresPrismaAdapter } from '@nest-batch/postgresql';
 export class AppModule {}
 ```
 
-The bundled `prisma/schema.prisma` (under `node_modules/@nest-batch/postgresql/prisma/`)
-declares the 5 batch meta models with a `postgresql` provider;
-the host points its `prisma generate` at the bundled schema and
-inherits the meta tables. See `prisma/migrations/` for the
-generated migration the bundled schema produces.
+Add the Prisma model contract documented in
+[`@nest-batch/prisma`](../prisma) to your app's `schema.prisma`.
+This package only supplies the Postgres runtime shell that binds a
+host-owned `PrismaClient` into the batch adapter.
 
 ---
 
-## Postgres 5-table migration
+## Migration Ownership
 
-The 5-table active batch meta-schema ships as raw SQL
-at `migrations/0001-create-batch-meta.sql`. It is the canonical
-DDL for the package: every shell binding reads and writes the
-same tables, and the column-type choices (PostgreSQL `timestamptz`,
-`text`, `varchar(N)`, `int`) are locked in this file.
+This package owns the Postgres runtime shells and dialect behavior;
+it does not package migration files. The consuming app owns the
+runnable migration generated by its chosen ORM.
 
 | Table                          | Purpose                                                                            |
 | ------------------------------ | ---------------------------------------------------------------------------------- |
@@ -277,35 +274,13 @@ active-execution unique index is also intentionally absent: the
 `createExecutionAtomic` serializes concurrent launches without
 the constraint's write-contention cost.)
 
-A Drizzle-kit / TypeORM / Prisma migration equivalent
-(`migrations/1700000000000-CreateBatchMeta.ts` and
-`prisma/migrations/`) is also bundled. Pick the one that matches
-your host's migration runner:
-
-| Runner      | File                                                                        |
-| ----------- | --------------------------------------------------------------------------- |
-| Raw SQL     | `migrations/0001-create-batch-meta.sql`                                     |
-| Drizzle Kit | `migrations/1700000000000-CreateBatchMeta.ts`                               |
-| Prisma      | `prisma/migrations/<timestamp>_create_batch_meta/migration.sql` (generated) |
-| TypeORM CLI | The host copies the raw SQL into its own `migrations/` directory.           |
-
-### Apply the raw SQL directly
-
-```bash
-psql "$DATABASE_URL" \
-  -f node_modules/@nest-batch/postgresql/migrations/0001-create-batch-meta.sql
-```
-
-This is the recommended path for hosts that want a one-shot
-setup. The file is `IF NOT EXISTS`-guarded and idempotent.
-
 ### Apply via Drizzle Kit
 
 ```ts
 // drizzle.config.ts
 import type { Config } from 'drizzle-kit';
 export default {
-  schema: './node_modules/@nest-batch/postgresql/src/drizzle-schema.postgres.ts',
+  schema: './src/db/batch-meta.schema.ts',
   out: './drizzle',
   dialect: 'postgresql',
   dbCredentials: { url: process.env.DATABASE_URL! },
@@ -313,15 +288,29 @@ export default {
 ```
 
 ```bash
+pnpm drizzle-kit generate
 pnpm drizzle-kit migrate
 ```
+
+The app-local schema file can re-export or copy
+`postgresDrizzleSchema` from `@nest-batch/postgresql`; the generated
+SQL migration stays in your app repository.
 
 ### Apply via Prisma
 
 ```bash
-pnpm prisma migrate deploy \
-  --schema node_modules/@nest-batch/postgresql/prisma/schema.prisma
+pnpm prisma migrate dev --schema prisma/schema.prisma
+pnpm prisma migrate deploy --schema prisma/schema.prisma
 ```
+
+Include the model block documented in `@nest-batch/prisma` before
+generating the app migration.
+
+### Apply via TypeORM
+
+Spread `batchMetaEntities()` from `@nest-batch/typeorm` into the
+host `DataSource` entities list and generate the app migration with
+your normal TypeORM CLI flow.
 
 ---
 
@@ -417,10 +406,10 @@ extraction rationale.
 - A transport. Use `@nest-batch/bullmq` or `@nest-batch/kafka`
   to wire an execution strategy. This package is persistence-
   only.
-- A schema migration runner. The package ships the canonical
-  SQL + Drizzle-kit / Prisma migration files, but the host
-  picks the runner. Drizzle Kit, Prisma Migrate, raw `psql`,
-  and TypeORM CLI are all supported.
+- A schema migration runner or runnable migration artifact. The
+  host picks the runner and owns the generated migration. Drizzle
+  Kit, Prisma Migrate, raw SQL, and TypeORM CLI are all supported
+  as app-level workflows.
 - A SQLite driver. SQLite is on the 0.3.0 roadmap
   ([`@nest-batch/sqlite`](../../docs/RELEASE-0.2.0.md#91-sqlite-nest-batchsqlite)).
 - An admin UI, metrics, tracing, webhook, or job visualization
@@ -455,6 +444,6 @@ pnpm --filter @nest-batch/postgresql test -- tests/boundary
 
 The e2e test (`tests/e2e/`) requires a Docker daemon and is
 gated by `RUN_POSTGRES_E2E=1`. The e2e harness brings up a
-fresh Postgres 15 testcontainer, applies the 5-table
-migration, runs the shared `@nest-batch/core` contract suite
+fresh Postgres 15 testcontainer, applies a test-only 5-table
+bootstrap fixture, runs the shared `@nest-batch/core` contract suite
 against a real ORM binding, and tears the container down.

@@ -29,14 +29,18 @@
 //     },
 //   });
 //
-// The original `batchMetaEntities()` factory and the bundled
-// `CreateBatchMeta1700000000000` migration moved to
-// `@nest-batch/postgresql/src/migrations/`. The driver sibling owns
-// the TypeORM-specific entity classes and the migration scripts;
-// this package owns only the repository / transaction manager
-// shape and the driver-provider token.
+// The TypeORM entity tuple stays in this package because it is the
+// schema contract consumed by a host-owned TypeORM DataSource. Apps
+// generate and own their runnable migration files in their own
+// migration workflow. Driver siblings bind the
+// `TypeOrmDriverProvider` token to a concrete database connection.
+import { BATCH_META_ENTITIES } from './entities';
+
 export { TypeOrmJobRepository } from './repository/typeorm-job-repository';
 export type { TypeOrmTransactionContext } from './transaction/typeorm-transaction-manager';
 export { TypeOrmTransactionManager } from './transaction/typeorm-transaction-manager';
 export * from './adapters';
+export { BATCH_META_ENTITIES } from './entities';
 export * from './typeorm.driver-provider';
+
+export const batchMetaEntities = (): typeof BATCH_META_ENTITIES => BATCH_META_ENTITIES;

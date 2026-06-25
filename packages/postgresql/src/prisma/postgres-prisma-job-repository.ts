@@ -80,11 +80,7 @@ function mapJobExecution(e: {
         ? e.start_time
         : new Date(e.start_time)
       : null,
-    endTime: e.end_time
-      ? e.end_time instanceof Date
-        ? e.end_time
-        : new Date(e.end_time)
-      : null,
+    endTime: e.end_time ? (e.end_time instanceof Date ? e.end_time : new Date(e.end_time)) : null,
     exitCode: e.exit_code,
     exitMessage: e.exit_message,
     params,
@@ -130,8 +126,7 @@ function mapStepExecution(e: {
  * invariants. The raw SQL uses Postgres-compatible syntax
  * (double-quote identifiers, `INSERT ... ON CONFLICT (...) DO NOTHING`,
  * `NOW()`) because the host provides a `PrismaClient` generated
- * against the PostgreSQL schema bundled in
- * `prisma/schema.prisma`.
+ * against the PostgreSQL Prisma schema owned by `@nest-batch/prisma`.
  */
 @Injectable()
 export class PostgresPrismaJobRepository extends JobRepository {
@@ -185,9 +180,7 @@ export class PostgresPrismaJobRepository extends JobRepository {
     return rows.length > 0 ? mapJobInstance(rows[0]!) : null;
   }
 
-  override async findJobInstances(
-    filter: JobInstanceFilter = {},
-  ): Promise<JobInstance[]> {
+  override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filter.jobName !== undefined) {
@@ -209,10 +202,7 @@ export class PostgresPrismaJobRepository extends JobRepository {
     return rows.map(mapJobInstance);
   }
 
-  async createJobExecution(
-    jobInstanceId: string,
-    params: JobParameters,
-  ): Promise<JobExecution> {
+  async createJobExecution(jobInstanceId: string, params: JobParameters): Promise<JobExecution> {
     const execId = randomUUID();
     const execParams = serializeContext(deepClone(params));
     const exec = await this.prisma.$queryRaw<JobExecutionRow[]>(
@@ -313,9 +303,7 @@ export class PostgresPrismaJobRepository extends JobRepository {
     return e.length > 0 ? mapJobExecution(e[0]!) : null;
   }
 
-  override async findJobExecutions(
-    filter: JobExecutionFilter = {},
-  ): Promise<JobExecution[]> {
+  override async findJobExecutions(filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filter.jobInstanceId !== undefined) {
@@ -364,10 +352,7 @@ export class PostgresPrismaJobRepository extends JobRepository {
     return e.length > 0 ? mapJobExecution(e[0]!) : null;
   }
 
-  async createStepExecution(
-    jobExecutionId: string,
-    stepName: string,
-  ): Promise<StepExecution> {
+  async createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution> {
     const stepId = randomUUID();
     const step = await this.prisma.$queryRaw<StepExecutionRow[]>(
       Prisma.sql`INSERT INTO "batch_step_execution"
@@ -383,10 +368,7 @@ export class PostgresPrismaJobRepository extends JobRepository {
     return mapStepExecution(step[0]!);
   }
 
-  async updateStepExecution(
-    stepExecutionId: string,
-    patch: StepExecutionPatch,
-  ): Promise<void> {
+  async updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void> {
     if (patch.status !== undefined) {
       await this.prisma.$executeRaw(
         Prisma.sql`UPDATE "batch_step_execution" SET "status" = ${patch.status} WHERE "id" = ${stepExecutionId}`,
@@ -512,11 +494,7 @@ export class PostgresPrismaJobRepository extends JobRepository {
                    WHERE "job_execution_id" = ${jobExecutionId} LIMIT 1`,
       );
       const nextVersion =
-        version !== undefined
-          ? version
-          : existing.length > 0
-            ? existing[0]!.version + 1
-            : 1;
+        version !== undefined ? version : existing.length > 0 ? existing[0]!.version + 1 : 1;
       if (existing.length > 0) {
         await this.prisma.$executeRaw(
           Prisma.sql`UPDATE "batch_job_execution_context"
@@ -536,11 +514,7 @@ export class PostgresPrismaJobRepository extends JobRepository {
                    WHERE "step_execution_id" = ${stepExecutionId} LIMIT 1`,
       );
       const nextVersion =
-        version !== undefined
-          ? version
-          : existing.length > 0
-            ? existing[0]!.version + 1
-            : 1;
+        version !== undefined ? version : existing.length > 0 ? existing[0]!.version + 1 : 1;
       if (existing.length > 0) {
         await this.prisma.$executeRaw(
           Prisma.sql`UPDATE "batch_step_execution_context"

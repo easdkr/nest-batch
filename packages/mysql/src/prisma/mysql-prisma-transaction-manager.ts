@@ -12,7 +12,7 @@ export interface MysqlPrismaTransactionContext extends TransactionContext {
 /**
  * TransactionManager bound to Prisma's `$transaction()` over a MySQL
  * connection. The shell accepts a `PrismaClient` generated against
- * the MySQL schema bundled in `prisma/schema.prisma`.
+ * the host app's MySQL Prisma schema.
  */
 @Injectable()
 export class MysqlPrismaTransactionManager extends TransactionManager {
@@ -20,9 +20,7 @@ export class MysqlPrismaTransactionManager extends TransactionManager {
     super();
   }
 
-  async withTransaction<T>(
-    fn: (ctx: MysqlPrismaTransactionContext) => Promise<T>,
-  ): Promise<T> {
+  async withTransaction<T>(fn: (ctx: MysqlPrismaTransactionContext) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(async (tx) => {
       const ctx: MysqlPrismaTransactionContext = {
         isActive: true,

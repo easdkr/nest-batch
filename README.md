@@ -46,8 +46,8 @@ breakdown.
 @nest-batch/prisma         ← Prisma adapter slot (driver-agnostic in 0.2.0)
 @nest-batch/bullmq         ← BullMQ transport strategy (Queue/Worker/QueueEvents, partition-aware)
 @nest-batch/kafka          ← Kafka transport strategy (partition-aware)
-@nest-batch/postgresql     ← NEW. 4 Postgres adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma) + 5-table migration
-@nest-batch/mysql          ← NEW. 4 MySQL adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma) + 6-table migration
+@nest-batch/postgresql     ← NEW. 4 Postgres adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma)
+@nest-batch/mysql          ← NEW. 4 MySQL adapter shells (MikroOrm/TypeOrm/Drizzle/Prisma)
 @nest-batch/webhook        ← NEW. WebhookBatchObserver with HMAC-SHA256 + exponential backoff + dead-letter
 ```
 
@@ -72,12 +72,14 @@ this release. See [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md)
 | Webhook delivery observer       | `@nest-batch/webhook`    |
 
 The 0.2.0 release splits the previous 4 packages into 10. The 4 DB
-adapter packages (`mikro-orm`, `typeorm`, `drizzle`, `prisma`) become
-**driver-agnostic adapter slots**; the 4 Postgres shells and the 4
-MySQL shells move into the new `@nest-batch/postgresql` and
-`@nest-batch/mysql` sibling packages. The 10-package list, the
-peer-dep table, and the user-facing guardrail (no DB provider in
-any of the 8 non-target-DB packages) are documented in
+adapter packages (`mikro-orm`, `typeorm`, `drizzle`, `prisma`) own
+the ORM surface and schema/entity contract; consuming apps generate
+and own their runnable migrations. The 4 Postgres shells and the 4
+MySQL shells live in the new
+`@nest-batch/postgresql` and `@nest-batch/mysql` sibling packages.
+The 10-package list, the peer-dep table, and the user-facing
+guardrail (no DB provider in runtime surfaces of the non-target-DB
+packages) are documented in
 [`docs/RELEASE-0.2.0.md`](./docs/RELEASE-0.2.0.md) §2.
 
 Read the per-package README for the contract, the peer
@@ -160,19 +162,19 @@ docker compose up -d redis
 The default ports are `5434` (Postgres) and `6379` (Redis). The
 demo app and the integration tests connect to these.
 
-### 3. Run the migrations
+### 3. Run the demo migrations
 
-The MikroORM migrations ship inside `@nest-batch/mikro-orm` and
-are applied by the demo app's `migration:up` script (which loads
-`@nest-batch/mikro-orm`'s `createBatchMikroOrmConfig` helper
-internally):
+The demo app owns its MikroORM migration flow. Run it once after
+the first `docker compose up` to create the demo tables and the
+batch meta tables:
 
 ```bash
 pnpm --filter @nest-batch/demo migration:up
 ```
 
-The TypeORM migration is bundled with `@nest-batch/typeorm` and is
-applied via your host's standard TypeORM migration runner.
+Library packages do not publish runnable migration files. In a
+consumer app, include the relevant exported entities/schema/model
+contract and generate migrations with that app's normal ORM tool.
 
 ### 4. Environment variables
 

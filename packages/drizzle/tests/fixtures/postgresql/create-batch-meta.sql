@@ -1,11 +1,10 @@
 -- Migration: 0001 — 5-table batch meta-schema for PostgreSQL.
 --
--- This file is the canonical raw-SQL DDL for the `@nest-batch/postgresql`
--- driver sibling. It is the source of truth for the meta-schema shape
--- and the column-type choices (PostgreSQL `timestamptz`, `text`,
--- `varchar(N)`, `int`). The 4 adapter slots (MikroORM, TypeORM, Drizzle,
--- Prisma) all use the column names defined here via the
--- *DriverProvider token binding.
+-- This file is a test-only PostgreSQL DDL fixture for the
+-- Drizzle/raw-SQL e2e harness. It mirrors the documented table
+-- contract and column-type choices (PostgreSQL `timestamptz`,
+-- `text`, `varchar(N)`, `int`). It is not published as a runnable
+-- migration artifact.
 --
 -- The 5 tables (the classic 6 minus the dropped
 -- `batch_step_execution_params`):

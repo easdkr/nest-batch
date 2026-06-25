@@ -1,5 +1,17 @@
 # @nest-batch/postgresql
 
+## 0.3.2
+
+### Patch Changes
+
+- Remove public runnable migration artifacts and document app-owned migration ownership.
+- Updated dependencies
+  - @nest-batch/typeorm@0.2.1
+  - @nest-batch/prisma@0.2.1
+  - @nest-batch/drizzle@0.2.1
+  - @nest-batch/core@0.2.2
+  - @nest-batch/mikro-orm@0.3.2
+
 ## 0.3.1
 
 ### Patch Changes

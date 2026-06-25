@@ -34,9 +34,9 @@ const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
  *
  * Scans `src/**` and `package.json` ONLY. Does NOT scan `dist/**`
  * (build artifacts may carry stale strings) and does NOT scan
- * `README.md` (prose mentions are not a contract). Prisma's
- * `prisma/schema.prisma` is also scanned for the `mysql` provider —
- * that is part of the source contract for the prisma package.
+ * `README.md` (prose mentions are not a contract). If a non-MySQL
+ * package still contains `prisma/schema.prisma`, it is scanned for
+ * a `mysql` provider leak.
  */
 
 const NON_MYSQL_PACKAGES: readonly string[] = [
@@ -220,10 +220,7 @@ describe('dependency boundary: no MySQL drivers in non-MySQL packages (mysql-sid
   it('contains no MySQL driver imports, peer deps, env literals, or prisma schemas in any non-MySQL package', () => {
     if (allViolations.length > 0) {
       const detail = allViolations
-        .map(
-          (v) =>
-            `  - packages/${v.packageName}/${v.file}: ${v.source} — ${v.detail}`,
-        )
+        .map((v) => `  - packages/${v.packageName}/${v.file}: ${v.source} — ${v.detail}`)
         .join('\n');
       throw new Error(
         `MySQL driver leak detected in a non-MySQL package:\n${detail}\n\n` +

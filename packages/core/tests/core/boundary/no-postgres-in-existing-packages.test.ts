@@ -26,11 +26,8 @@ const REPO_ROOT = join(__dirname, '..', '..', '..', '..', '..');
  * state is the spec, not a bug to suppress.
  *
  * Scans `src/**` and `package.json` ONLY. Does NOT scan `dist/**`
- * (build artifacts may carry stale strings) and does NOT scan
- * `README.md` (prose mentions are not a contract). Prisma's
- * `prisma/schema.prisma` is also scanned for the `postgresql`
- * provider — that is part of the source contract for the prisma
- * package.
+ * (build artifacts may carry stale strings), `README.md` (prose
+ * mentions are not a contract), or test-only fixtures.
  */
 
 // Packages that must NOT contain Postgres providers.
@@ -87,11 +84,7 @@ const DEP_FIELDS: readonly string[] = [
  * (`drizzle-orm/pg-core`, `drizzle-orm/node-postgres`) which is the
  * precise leak signal.
  */
-const POSTGRES_DEP_KEY_SUBSTRINGS: readonly string[] = [
-  'pg-core',
-  'postgresql',
-  '@nestjs/typeorm',
-];
+const POSTGRES_DEP_KEY_SUBSTRINGS: readonly string[] = ['pg-core', 'postgresql', '@nestjs/typeorm'];
 
 /**
  * devDependency packages that are NOT Postgres provider leaks. The
@@ -136,12 +129,7 @@ function* walkTypeScriptFiles(dir: string): Generator<string> {
 
 interface PackageViolation {
   packageName: string;
-  source:
-    | 'src-import'
-    | 'package-json'
-    | 'src-env'
-    | 'prisma-schema'
-    | 'prisma-schema-missing';
+  source: 'src-import' | 'package-json' | 'src-env';
   detail: string;
   file: string;
 }
@@ -226,23 +214,6 @@ function findPostgresEnvLiteralsInSource(srcRoot: string): PackageViolation[] {
   return violations;
 }
 
-function findPostgresInPrismaSchema(prismaSchemaPath: string): PackageViolation[] {
-  const violations: PackageViolation[] = [];
-  const text = readFileSync(prismaSchemaPath, 'utf8');
-  // Match `provider = "postgresql"` (whitespace tolerant).
-  const providerRe = /provider\s*=\s*["']postgresql["']/g;
-  let match: RegExpExecArray | null;
-  while ((match = providerRe.exec(text)) !== null) {
-    violations.push({
-      packageName: '',
-      source: 'prisma-schema',
-      detail: `declares "${match[0]}"`,
-      file: relative(REPO_ROOT, prismaSchemaPath),
-    });
-  }
-  return violations;
-}
-
 describe('dependency boundary: no Postgres providers in non-Postgres packages', () => {
   const allViolations: PackageViolation[] = [];
   const scannedPackages: { pkg: string; srcExists: boolean }[] = [];
@@ -258,7 +229,6 @@ describe('dependency boundary: no Postgres providers in non-Postgres packages', 
 
     const srcRoot = join(pkgRoot, 'src');
     const pkgJsonPath = join(pkgRoot, 'package.json');
-    const prismaSchemaPath = join(pkgRoot, 'prisma', 'schema.prisma');
 
     if (existsSync(srcRoot)) {
       for (const v of findPostgresSpecifiersInSource(srcRoot)) {
@@ -273,11 +243,6 @@ describe('dependency boundary: no Postgres providers in non-Postgres packages', 
         allViolations.push({ ...v, packageName: pkg });
       }
     }
-    if (existsSync(prismaSchemaPath)) {
-      for (const v of findPostgresInPrismaSchema(prismaSchemaPath)) {
-        allViolations.push({ ...v, packageName: pkg });
-      }
-    }
   }
 
   it('scans every existing non-Postgres package (sanity check)', () => {
@@ -287,18 +252,15 @@ describe('dependency boundary: no Postgres providers in non-Postgres packages', 
     );
   });
 
-  it('contains no Postgres provider imports, peer deps, env literals, or prisma schemas in any non-Postgres package', () => {
+  it('contains no Postgres provider imports, peer deps, or env literals in any non-Postgres package runtime surface', () => {
     if (allViolations.length > 0) {
       const detail = allViolations
-        .map(
-          (v) =>
-            `  - packages/${v.packageName}/${v.file}: ${v.source} — ${v.detail}`,
-        )
+        .map((v) => `  - packages/${v.packageName}/${v.file}: ${v.source} — ${v.detail}`)
         .join('\n');
       throw new Error(
         `Postgres provider leak detected in a non-Postgres package:\n${detail}\n\n` +
-          `Postgres providers belong in @nest-batch/postgresql (not yet shipped). ` +
-          `Sibling DB-adapter packages must become driver-agnostic slots.`,
+          `Postgres providers belong in driver-shell packages. ` +
+          `Sibling DB-adapter runtime surfaces must stay driver-agnostic.`,
       );
     }
     expect(allViolations).toEqual([]);

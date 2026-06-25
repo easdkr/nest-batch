@@ -100,7 +100,11 @@ function mapJobExecution(r: JobExecutionRow): JobExecution {
     id: r.id,
     jobInstanceId: r.job_instance_id,
     status: r.status as JobStatus,
-    startTime: r.start_time ? (r.start_time instanceof Date ? r.start_time : new Date(r.start_time)) : null,
+    startTime: r.start_time
+      ? r.start_time instanceof Date
+        ? r.start_time
+        : new Date(r.start_time)
+      : null,
     endTime: r.end_time ? (r.end_time instanceof Date ? r.end_time : new Date(r.end_time)) : null,
     exitCode: r.exit_code,
     exitMessage: r.exit_message,
@@ -134,14 +138,12 @@ function mapStepExecution(r: StepExecutionRow): StepExecution {
  * `@nest-batch/mysql`) driver sibling via the `PrismaDriverProvider`
  * token. The repository uses raw SQL via `prisma.$queryRaw` /
  * `prisma.$executeRaw` so it does NOT depend on Prisma's generated
- * client model names (those are owned by the driver sibling's
- * bundled `prisma/schema.prisma`).
+ * client model names. The host's app-owned Prisma schema must still
+ * create the documented batch meta tables.
  */
 @Injectable()
 export class PrismaJobRepository extends JobRepository {
-  constructor(
-    @Inject(PrismaDriverProvider) private readonly prisma: PrismaClient,
-  ) {
+  constructor(@Inject(PrismaDriverProvider) private readonly prisma: PrismaClient) {
     super();
   }
 
@@ -173,15 +175,14 @@ export class PrismaJobRepository extends JobRepository {
       LIMIT 1
     `) as JobInstanceRow[];
     if (winner.length === 0) {
-      throw new Error(`Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`);
+      throw new Error(
+        `Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`,
+      );
     }
     return mapJobInstance(winner[0]!);
   }
 
-  async createJobExecution(
-    jobInstanceId: string,
-    params: JobParameters,
-  ): Promise<JobExecution> {
+  async createJobExecution(jobInstanceId: string, params: JobParameters): Promise<JobExecution> {
     const execId = randomUUID();
     const execParams = serializeContext(deepClone(params));
     const rows = (await this.prisma.$queryRaw`
@@ -244,19 +245,24 @@ export class PrismaJobRepository extends JobRepository {
 
   async updateJobExecution(executionId: string, patch: JobExecutionPatch): Promise<void> {
     if (patch.status !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "status" = ${patch.status} WHERE "id" = ${executionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_job_execution" SET "status" = ${patch.status} WHERE "id" = ${executionId}`;
     }
     if (patch.startTime !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "start_time" = ${patch.startTime} WHERE "id" = ${executionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_job_execution" SET "start_time" = ${patch.startTime} WHERE "id" = ${executionId}`;
     }
     if (patch.endTime !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "end_time" = ${patch.endTime} WHERE "id" = ${executionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_job_execution" SET "end_time" = ${patch.endTime} WHERE "id" = ${executionId}`;
     }
     if (patch.exitCode !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "exit_code" = ${patch.exitCode} WHERE "id" = ${executionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_job_execution" SET "exit_code" = ${patch.exitCode} WHERE "id" = ${executionId}`;
     }
     if (patch.exitMessage !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_job_execution" SET "exit_message" = ${patch.exitMessage} WHERE "id" = ${executionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_job_execution" SET "exit_message" = ${patch.exitMessage} WHERE "id" = ${executionId}`;
     }
   }
 
@@ -279,28 +285,29 @@ export class PrismaJobRepository extends JobRepository {
   }
 
   override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
-    const rows = filter.jobName !== undefined && filter.jobKey !== undefined
-      ? ((await this.prisma.$queryRaw`
+    const rows =
+      filter.jobName !== undefined && filter.jobKey !== undefined
+        ? ((await this.prisma.$queryRaw`
           SELECT "id", "job_name", "job_key", "created_at"
           FROM "batch_job_instance"
           WHERE "job_name" = ${filter.jobName} AND "job_key" = ${filter.jobKey}
           ORDER BY "created_at" ASC, "id" ASC
         `) as JobInstanceRow[])
-      : filter.jobName !== undefined
-        ? ((await this.prisma.$queryRaw`
+        : filter.jobName !== undefined
+          ? ((await this.prisma.$queryRaw`
             SELECT "id", "job_name", "job_key", "created_at"
             FROM "batch_job_instance"
             WHERE "job_name" = ${filter.jobName}
             ORDER BY "created_at" ASC, "id" ASC
           `) as JobInstanceRow[])
-        : filter.jobKey !== undefined
-          ? ((await this.prisma.$queryRaw`
+          : filter.jobKey !== undefined
+            ? ((await this.prisma.$queryRaw`
               SELECT "id", "job_name", "job_key", "created_at"
               FROM "batch_job_instance"
               WHERE "job_key" = ${filter.jobKey}
               ORDER BY "created_at" ASC, "id" ASC
             `) as JobInstanceRow[])
-          : ((await this.prisma.$queryRaw`
+            : ((await this.prisma.$queryRaw`
               SELECT "id", "job_name", "job_key", "created_at"
               FROM "batch_job_instance"
               ORDER BY "created_at" ASC, "id" ASC
@@ -319,12 +326,27 @@ export class PrismaJobRepository extends JobRepository {
         ? undefined
         : new Set(Array.isArray(filter.status) ? filter.status : [filter.status]);
     return allRows
-      .filter((row) => filter.jobInstanceId === undefined || row.job_instance_id === filter.jobInstanceId)
+      .filter(
+        (row) => filter.jobInstanceId === undefined || row.job_instance_id === filter.jobInstanceId,
+      )
       .filter((row) => statuses === undefined || statuses.has(row.status as JobStatus))
       .filter((row) => {
-        const startTime = row.start_time instanceof Date ? row.start_time : row.start_time ? new Date(row.start_time) : null;
-        if (filter.startedAfter !== undefined && (startTime === null || startTime < filter.startedAfter)) return false;
-        if (filter.startedBefore !== undefined && (startTime === null || startTime > filter.startedBefore)) return false;
+        const startTime =
+          row.start_time instanceof Date
+            ? row.start_time
+            : row.start_time
+              ? new Date(row.start_time)
+              : null;
+        if (
+          filter.startedAfter !== undefined &&
+          (startTime === null || startTime < filter.startedAfter)
+        )
+          return false;
+        if (
+          filter.startedBefore !== undefined &&
+          (startTime === null || startTime > filter.startedBefore)
+        )
+          return false;
         return true;
       })
       .map(mapJobExecution);
@@ -343,10 +365,7 @@ export class PrismaJobRepository extends JobRepository {
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
-  async createStepExecution(
-    jobExecutionId: string,
-    stepName: string,
-  ): Promise<StepExecution> {
+  async createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution> {
     const stepId = randomUUID();
     const rows = (await this.prisma.$queryRaw`
       INSERT INTO "batch_step_execution" ("id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at")
@@ -356,33 +375,38 @@ export class PrismaJobRepository extends JobRepository {
     return mapStepExecution(rows[0]!);
   }
 
-  async updateStepExecution(
-    stepExecutionId: string,
-    patch: StepExecutionPatch,
-  ): Promise<void> {
+  async updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void> {
     if (patch.status !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "status" = ${patch.status} WHERE "id" = ${stepExecutionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_step_execution" SET "status" = ${patch.status} WHERE "id" = ${stepExecutionId}`;
     }
     if (patch.readCount !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "read_count" = ${patch.readCount} WHERE "id" = ${stepExecutionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_step_execution" SET "read_count" = ${patch.readCount} WHERE "id" = ${stepExecutionId}`;
     }
     if (patch.writeCount !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "write_count" = ${patch.writeCount} WHERE "id" = ${stepExecutionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_step_execution" SET "write_count" = ${patch.writeCount} WHERE "id" = ${stepExecutionId}`;
     }
     if (patch.skipCount !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "skip_count" = ${patch.skipCount} WHERE "id" = ${stepExecutionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_step_execution" SET "skip_count" = ${patch.skipCount} WHERE "id" = ${stepExecutionId}`;
     }
     if (patch.rollbackCount !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "rollback_count" = ${patch.rollbackCount} WHERE "id" = ${stepExecutionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_step_execution" SET "rollback_count" = ${patch.rollbackCount} WHERE "id" = ${stepExecutionId}`;
     }
     if (patch.commitCount !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "commit_count" = ${patch.commitCount} WHERE "id" = ${stepExecutionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_step_execution" SET "commit_count" = ${patch.commitCount} WHERE "id" = ${stepExecutionId}`;
     }
     if (patch.exitCode !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "exit_code" = ${patch.exitCode} WHERE "id" = ${stepExecutionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_step_execution" SET "exit_code" = ${patch.exitCode} WHERE "id" = ${stepExecutionId}`;
     }
     if (patch.exitMessage !== undefined) {
-      await this.prisma.$executeRaw`UPDATE "batch_step_execution" SET "exit_message" = ${patch.exitMessage} WHERE "id" = ${stepExecutionId}`;
+      await this.prisma
+        .$executeRaw`UPDATE "batch_step_execution" SET "exit_message" = ${patch.exitMessage} WHERE "id" = ${stepExecutionId}`;
     }
   }
 
@@ -457,7 +481,8 @@ export class PrismaJobRepository extends JobRepository {
       const existing = (await this.prisma.$queryRaw`
         SELECT "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = ${jobExecutionId} LIMIT 1
       `) as ContextRow[];
-      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
+      const nextVersion =
+        version !== undefined ? version : existing.length > 0 ? existing[0]!.version + 1 : 0;
       if (existing.length > 0) {
         await this.prisma.$executeRaw`
           UPDATE "batch_job_execution_context" SET "data" = ${serialized}, "version" = ${nextVersion} WHERE "job_execution_id" = ${jobExecutionId}
@@ -472,7 +497,8 @@ export class PrismaJobRepository extends JobRepository {
       const existing = (await this.prisma.$queryRaw`
         SELECT "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = ${stepExecutionId} LIMIT 1
       `) as ContextRow[];
-      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
+      const nextVersion =
+        version !== undefined ? version : existing.length > 0 ? existing[0]!.version + 1 : 0;
       if (existing.length > 0) {
         await this.prisma.$executeRaw`
           UPDATE "batch_step_execution_context" SET "data" = ${serialized}, "version" = ${nextVersion} WHERE "step_execution_id" = ${stepExecutionId}

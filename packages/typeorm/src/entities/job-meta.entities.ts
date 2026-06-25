@@ -6,8 +6,8 @@ import { Entity, PrimaryColumn, Column, Index } from 'typeorm';
  * One row per logical job instance. Uniqueness is enforced on
  * (jobName, jobKey) so that the same canonical key resolves to the
  * same instance across restarts. The composite unique index is
- * declared on the entity and is also reified in the bundled
- * migration under the same name.
+ * declared on the entity so host-owned TypeORM migrations can
+ * generate the matching database constraint.
  */
 @Entity('batch_job_instance')
 @Index('batch_job_instance_job_name_job_key_unique', ['jobName', 'jobKey'], { unique: true })
@@ -24,10 +24,9 @@ export class JobInstanceEntity {
   @Column({
     name: 'created_at',
     // `datetime` is portable across PostgreSQL and SQLite (the test
-    // driver). The bundled migration uses timestamptz on
-    // PostgreSQL by hand; SQLite loses the timezone qualifier,
-    // which is acceptable for a creation-time stamp that is never
-    // compared with sub-second precision in queries.
+    // driver). Hosts that generate PostgreSQL migrations can map the
+    // same logical column to timestamptz in their own migration
+    // pipeline.
     type: 'datetime',
     default: () => 'CURRENT_TIMESTAMP',
   })

@@ -18,8 +18,8 @@
 //      `POSTGRES_E2E_DATABASE_URL` is present, the harness uses
 //      that external database; otherwise it starts a
 //      `PostgreSqlContainer`.
-//   2. Applies the 5-table batch meta-schema DDL from
-//      `packages/postgresql/migrations/0001-create-batch-meta.sql`
+//   2. Applies the 5-table batch meta-schema DDL from the Drizzle
+//      package's test fixture
 //      ONCE against the live database (the file lists `CREATE INDEX`
 //      statements interleaved with their target tables, so we
 //      reorder to run all `CREATE TABLE` first, then `CREATE INDEX`
@@ -106,17 +106,34 @@ const EXTERNAL_DATABASE_URL = process.env.POSTGRES_E2E_DATABASE_URL;
 
 const describeE2E = E2E_ENABLED ? describe : describe.skip;
 
-// Resolved once, lazily. The DDL lives in this package's own
-// `migrations/` directory (the canonical F4 location). The file
-// is read from the filesystem (not bundled into the test source)
-// so a schema change to the migration only requires re-running
-// the e2e — no test source update.
-const MIGRATION_PATH = resolve(__dirname, '..', '..', 'migrations', '0001-create-batch-meta.sql');
+// Resolved once, lazily. This is a test-only bootstrap fixture; the
+// Postgres driver shell does not package runnable migration files.
+const MIGRATION_PATH = resolve(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  'drizzle',
+  'tests',
+  'fixtures',
+  'postgresql',
+  'create-batch-meta.sql',
+);
 
-// The Prisma schema bundled with the postgresql package. The
-// Prisma shell applies it via `prisma db push` against the live
-// database before the Prisma shell's describe block runs.
-const PRISMA_SCHEMA_PATH = resolve(__dirname, '..', '..', 'prisma', 'schema.prisma');
+// Test-only Prisma schema fixture. The Prisma shell applies it via
+// `prisma db push` against the live database before the Prisma
+// shell's describe block runs.
+const PRISMA_SCHEMA_PATH = resolve(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  'prisma',
+  'tests',
+  'fixtures',
+  'postgresql',
+  'schema.prisma',
+);
 
 interface PostgresConnectionDetails {
   readonly host: string;
@@ -158,8 +175,8 @@ describeE2E(
         throw new Error(
           `Postgres migration not found at ${MIGRATION_PATH}. ` +
             'The e2e harness requires the 5-table batch meta ' +
-            'migration at ' +
-            '`packages/postgresql/migrations/0001-create-batch-meta.sql`.',
+            'test bootstrap fixture at ' +
+            '`packages/drizzle/tests/fixtures/postgresql/create-batch-meta.sql`.',
         );
       }
       const ddl = readFileSync(MIGRATION_PATH, 'utf8');
@@ -464,8 +481,8 @@ describeE2E(
       beforeAll(async () => {
         await truncateAll();
         // The `prisma db push` run in the file-level `beforeAll`
-        // already applied the bundled `prisma/schema.prisma` to
-        // the testcontainer. The shell's classes take a
+        // already applied the Prisma package's test-only schema
+        // fixture to the testcontainer. The shell's classes take a
         // `PrismaClient` directly. The `PostgresPrismaBatchModule`
         // carrier is wired into the test module; the `useValue`
         // providers below take the host's `PrismaClient`

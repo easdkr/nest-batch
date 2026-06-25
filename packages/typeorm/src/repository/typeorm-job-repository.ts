@@ -100,7 +100,11 @@ function mapJobExecution(r: JobExecutionRow): JobExecution {
     id: r.id,
     jobInstanceId: r.job_instance_id,
     status: r.status as JobStatus,
-    startTime: r.start_time ? (r.start_time instanceof Date ? r.start_time : new Date(r.start_time)) : null,
+    startTime: r.start_time
+      ? r.start_time instanceof Date
+        ? r.start_time
+        : new Date(r.start_time)
+      : null,
     endTime: r.end_time ? (r.end_time instanceof Date ? r.end_time : new Date(r.end_time)) : null,
     exitCode: r.exit_code,
     exitMessage: r.exit_message,
@@ -133,8 +137,8 @@ function mapStepExecution(r: StepExecutionRow): StepExecution {
  * provided by the `@nest-batch/postgresql` (or future
  * `@nest-batch/mysql`) driver sibling via the `TypeOrmDriverProvider`
  * token. The repository itself uses raw SQL via `EntityManager.query`
- * so the column-shape contract is owned by the driver sibling
- * (the bundled 6-table migration).
+ * against the table contract represented by this package's exported
+ * TypeORM entities. The consuming app owns the runnable migration.
  *
  * The contract guarantees:
  *   - `getOrCreateJobInstance` is race-safe via the (jobName, jobKey)
@@ -151,9 +155,7 @@ function mapStepExecution(r: StepExecutionRow): StepExecution {
  */
 @Injectable()
 export class TypeOrmJobRepository extends JobRepository {
-  constructor(
-    @Inject(TypeOrmDriverProvider) private readonly dataSource: DataSource,
-  ) {
+  constructor(@Inject(TypeOrmDriverProvider) private readonly dataSource: DataSource) {
     super();
   }
 
@@ -162,35 +164,35 @@ export class TypeOrmJobRepository extends JobRepository {
   }
 
   async getOrCreateJobInstance(name: string, jobKey: string): Promise<JobInstance> {
-    const existing = await this.em().query(
+    const existing = (await this.em().query(
       `SELECT "id", "job_name", "job_key", "created_at"
        FROM "batch_job_instance"
        WHERE "job_name" = $1 AND "job_key" = $2
        LIMIT 1`,
       [name, jobKey],
-    ) as JobInstanceRow[];
+    )) as JobInstanceRow[];
     if (existing.length > 0) return mapJobInstance(existing[0]!);
 
     const id = randomUUID();
     try {
-      const inserted = await this.em().query(
+      const inserted = (await this.em().query(
         `INSERT INTO "batch_job_instance" ("id", "job_name", "job_key", "created_at")
          VALUES ($1, $2, $3, NOW())
          ON CONFLICT ("job_name", "job_key") DO NOTHING
          RETURNING "id", "job_name", "job_key", "created_at"`,
         [id, name, jobKey],
-      ) as JobInstanceRow[];
+      )) as JobInstanceRow[];
       if (inserted.length > 0) return mapJobInstance(inserted[0]!);
     } catch {
       // Fall through to read-back.
     }
-    const winner = await this.em().query(
+    const winner = (await this.em().query(
       `SELECT "id", "job_name", "job_key", "created_at"
        FROM "batch_job_instance"
        WHERE "job_name" = $1 AND "job_key" = $2
        LIMIT 1`,
       [name, jobKey],
-    ) as JobInstanceRow[];
+    )) as JobInstanceRow[];
     if (winner.length === 0) {
       throw new Error(
         `Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`,
@@ -199,10 +201,7 @@ export class TypeOrmJobRepository extends JobRepository {
     return mapJobInstance(winner[0]!);
   }
 
-  async createJobExecution(
-    jobInstanceId: string,
-    params: JobParameters,
-  ): Promise<JobExecution> {
+  async createJobExecution(jobInstanceId: string, params: JobParameters): Promise<JobExecution> {
     const exec = {
       id: randomUUID(),
       job_instance_id: jobInstanceId,
@@ -213,12 +212,12 @@ export class TypeOrmJobRepository extends JobRepository {
       exit_message: '',
       params: serializeContext(deepClone(params)),
     };
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
        VALUES ($1, $2, $3, NULL, NULL, $4, $5, $6)
        RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
       [exec.id, exec.job_instance_id, exec.status, exec.exit_code, exec.exit_message, exec.params],
-    ) as JobExecutionRow[];
+    )) as JobExecutionRow[];
     return mapJobExecution(rows[0]!);
   }
 
@@ -241,23 +240,23 @@ export class TypeOrmJobRepository extends JobRepository {
       const isSqlite = this.dataSource.options.type === 'better-sqlite3';
       let instanceId: string;
       if (isSqlite) {
-        const rows = await em.query(
+        const rows = (await em.query(
           `SELECT "id" FROM "batch_job_instance"
            WHERE "job_name" = $1 AND "job_key" = $2
            LIMIT 1`,
           [name, jobKey],
-        ) as Array<{ id: string }>;
+        )) as Array<{ id: string }>;
         if (rows.length === 0) {
           throw new JobExecutionAlreadyRunningError(name);
         }
         instanceId = rows[0]!.id;
       } else {
-        const rows = await em.query(
+        const rows = (await em.query(
           `SELECT "id" FROM "batch_job_instance"
            WHERE "job_name" = $1 AND "job_key" = $2
            FOR UPDATE SKIP LOCKED`,
           [name, jobKey],
-        ) as Array<{ id: string }>;
+        )) as Array<{ id: string }>;
         if (rows.length === 0) {
           throw new JobExecutionAlreadyRunningError(name);
         }
@@ -265,24 +264,24 @@ export class TypeOrmJobRepository extends JobRepository {
       }
 
       // 3. Under the lock, verify no running execution.
-      const running = await em.query(
+      const running = (await em.query(
         `SELECT "id" FROM "batch_job_execution"
          WHERE "job_instance_id" = $1 AND "status" IN ($2, $3)
          LIMIT 1`,
         [instanceId, JobStatus.STARTING, JobStatus.STARTED],
-      ) as Array<{ id: string }>;
+      )) as Array<{ id: string }>;
       if (running.length > 0) {
         throw new JobExecutionAlreadyRunningError(running[0]!.id);
       }
 
       // 4. Create the new execution row.
       const execId = randomUUID();
-      const inserted = await em.query(
+      const inserted = (await em.query(
         `INSERT INTO "batch_job_execution" ("id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params")
          VALUES ($1, $2, $3, NULL, NULL, '', '', $4)
          RETURNING "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"`,
         [execId, instanceId, JobStatus.STARTING, serializeContext(deepClone(params))],
-      ) as JobExecutionRow[];
+      )) as JobExecutionRow[];
       return mapJobExecution(inserted[0]!);
     });
   }
@@ -291,11 +290,26 @@ export class TypeOrmJobRepository extends JobRepository {
     const sets: string[] = [];
     const values: unknown[] = [];
     let i = 1;
-    if (patch.status !== undefined) { sets.push(`"status" = $${i++}`); values.push(patch.status); }
-    if (patch.startTime !== undefined) { sets.push(`"start_time" = $${i++}`); values.push(patch.startTime); }
-    if (patch.endTime !== undefined) { sets.push(`"end_time" = $${i++}`); values.push(patch.endTime); }
-    if (patch.exitCode !== undefined) { sets.push(`"exit_code" = $${i++}`); values.push(patch.exitCode); }
-    if (patch.exitMessage !== undefined) { sets.push(`"exit_message" = $${i++}`); values.push(patch.exitMessage); }
+    if (patch.status !== undefined) {
+      sets.push(`"status" = $${i++}`);
+      values.push(patch.status);
+    }
+    if (patch.startTime !== undefined) {
+      sets.push(`"start_time" = $${i++}`);
+      values.push(patch.startTime);
+    }
+    if (patch.endTime !== undefined) {
+      sets.push(`"end_time" = $${i++}`);
+      values.push(patch.endTime);
+    }
+    if (patch.exitCode !== undefined) {
+      sets.push(`"exit_code" = $${i++}`);
+      values.push(patch.exitCode);
+    }
+    if (patch.exitMessage !== undefined) {
+      sets.push(`"exit_message" = $${i++}`);
+      values.push(patch.exitMessage);
+    }
     if (sets.length === 0) return;
     values.push(executionId);
     await this.em().query(
@@ -305,22 +319,22 @@ export class TypeOrmJobRepository extends JobRepository {
   }
 
   async getJobExecution(executionId: string): Promise<JobExecution | null> {
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
        FROM "batch_job_execution" WHERE "id" = $1 LIMIT 1`,
       [executionId],
-    ) as JobExecutionRow[];
+    )) as JobExecutionRow[];
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
   override async getJobInstance(jobInstanceId: string): Promise<JobInstance | null> {
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `SELECT "id", "job_name", "job_key", "created_at"
        FROM "batch_job_instance"
        WHERE "id" = $1
        LIMIT 1`,
       [jobInstanceId],
-    ) as JobInstanceRow[];
+    )) as JobInstanceRow[];
     return rows.length > 0 ? mapJobInstance(rows[0]!) : null;
   }
 
@@ -336,13 +350,13 @@ export class TypeOrmJobRepository extends JobRepository {
       where.push(`"job_key" = $${i++}`);
       values.push(filter.jobKey);
     }
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `SELECT "id", "job_name", "job_key", "created_at"
        FROM "batch_job_instance"
        ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY "created_at" ASC, "id" ASC`,
       values,
-    ) as JobInstanceRow[];
+    )) as JobInstanceRow[];
     return rows.map(mapJobInstance);
   }
 
@@ -368,57 +382,75 @@ export class TypeOrmJobRepository extends JobRepository {
       where.push(`"start_time" <= $${i++}`);
       values.push(filter.startedBefore);
     }
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
        FROM "batch_job_execution"
        ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY "start_time" DESC NULLS LAST, "id" DESC`,
       values,
-    ) as JobExecutionRow[];
+    )) as JobExecutionRow[];
     return rows.map(mapJobExecution);
   }
 
   async getRunningJobExecution(jobInstanceId: string): Promise<JobExecution | null> {
     if (!jobInstanceId) return null;
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `SELECT "id", "job_instance_id", "status", "start_time", "end_time", "exit_code", "exit_message", "params"
        FROM "batch_job_execution"
        WHERE "job_instance_id" = $1 AND "status" IN ($2, $3)
        ORDER BY "start_time" DESC NULLS LAST LIMIT 1`,
       [jobInstanceId, JobStatus.STARTING, JobStatus.STARTED],
-    ) as JobExecutionRow[];
+    )) as JobExecutionRow[];
     return rows.length > 0 ? mapJobExecution(rows[0]!) : null;
   }
 
-  async createStepExecution(
-    jobExecutionId: string,
-    stepName: string,
-  ): Promise<StepExecution> {
+  async createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution> {
     const stepId = randomUUID();
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `INSERT INTO "batch_step_execution" ("id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at")
        VALUES ($1, $2, $3, $4, 0, 0, 0, 0, 0, '', '', NOW())
        RETURNING "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"`,
       [stepId, jobExecutionId, stepName, StepStatus.STARTING],
-    ) as StepExecutionRow[];
+    )) as StepExecutionRow[];
     return mapStepExecution(rows[0]!);
   }
 
-  async updateStepExecution(
-    stepExecutionId: string,
-    patch: StepExecutionPatch,
-  ): Promise<void> {
+  async updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void> {
     const sets: string[] = [];
     const values: unknown[] = [];
     let i = 1;
-    if (patch.status !== undefined) { sets.push(`"status" = $${i++}`); values.push(patch.status); }
-    if (patch.readCount !== undefined) { sets.push(`"read_count" = $${i++}`); values.push(patch.readCount); }
-    if (patch.writeCount !== undefined) { sets.push(`"write_count" = $${i++}`); values.push(patch.writeCount); }
-    if (patch.skipCount !== undefined) { sets.push(`"skip_count" = $${i++}`); values.push(patch.skipCount); }
-    if (patch.rollbackCount !== undefined) { sets.push(`"rollback_count" = $${i++}`); values.push(patch.rollbackCount); }
-    if (patch.commitCount !== undefined) { sets.push(`"commit_count" = $${i++}`); values.push(patch.commitCount); }
-    if (patch.exitCode !== undefined) { sets.push(`"exit_code" = $${i++}`); values.push(patch.exitCode); }
-    if (patch.exitMessage !== undefined) { sets.push(`"exit_message" = $${i++}`); values.push(patch.exitMessage); }
+    if (patch.status !== undefined) {
+      sets.push(`"status" = $${i++}`);
+      values.push(patch.status);
+    }
+    if (patch.readCount !== undefined) {
+      sets.push(`"read_count" = $${i++}`);
+      values.push(patch.readCount);
+    }
+    if (patch.writeCount !== undefined) {
+      sets.push(`"write_count" = $${i++}`);
+      values.push(patch.writeCount);
+    }
+    if (patch.skipCount !== undefined) {
+      sets.push(`"skip_count" = $${i++}`);
+      values.push(patch.skipCount);
+    }
+    if (patch.rollbackCount !== undefined) {
+      sets.push(`"rollback_count" = $${i++}`);
+      values.push(patch.rollbackCount);
+    }
+    if (patch.commitCount !== undefined) {
+      sets.push(`"commit_count" = $${i++}`);
+      values.push(patch.commitCount);
+    }
+    if (patch.exitCode !== undefined) {
+      sets.push(`"exit_code" = $${i++}`);
+      values.push(patch.exitCode);
+    }
+    if (patch.exitMessage !== undefined) {
+      sets.push(`"exit_message" = $${i++}`);
+      values.push(patch.exitMessage);
+    }
     if (sets.length === 0) return;
     values.push(stepExecutionId);
     await this.em().query(
@@ -428,22 +460,22 @@ export class TypeOrmJobRepository extends JobRepository {
   }
 
   async getStepExecution(stepExecutionId: string): Promise<StepExecution | null> {
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
        FROM "batch_step_execution" WHERE "id" = $1 LIMIT 1`,
       [stepExecutionId],
-    ) as StepExecutionRow[];
+    )) as StepExecutionRow[];
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
   }
 
   override async findStepExecutions(jobExecutionId: string): Promise<StepExecution[]> {
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
        FROM "batch_step_execution"
        WHERE "job_execution_id" = $1
        ORDER BY "created_at" ASC, "id" ASC`,
       [jobExecutionId],
-    ) as StepExecutionRow[];
+    )) as StepExecutionRow[];
     return rows.map(mapStepExecution);
   }
 
@@ -460,24 +492,24 @@ export class TypeOrmJobRepository extends JobRepository {
     jobExecutionId: string,
     stepName: string,
   ): Promise<StepExecution | null> {
-    const rows = await this.em().query(
+    const rows = (await this.em().query(
       `SELECT "id", "job_execution_id", "step_name", "status", "read_count", "write_count", "skip_count", "rollback_count", "commit_count", "exit_code", "exit_message", "created_at"
        FROM "batch_step_execution"
        WHERE "job_execution_id" = $1 AND "step_name" = $2
        ORDER BY "created_at" DESC, "id" DESC
        LIMIT 1`,
       [jobExecutionId, stepName],
-    ) as StepExecutionRow[];
+    )) as StepExecutionRow[];
     return rows.length > 0 ? mapStepExecution(rows[0]!) : null;
   }
 
   async getExecutionContext(scope: ExecutionScope): Promise<ExecutionContext> {
     const key = scopeKey(scope);
     if (key.startsWith('job::')) {
-      const rows = await this.em().query(
+      const rows = (await this.em().query(
         `SELECT "data", "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = $1 LIMIT 1`,
         [key.slice(5)],
-      ) as ContextRow[];
+      )) as ContextRow[];
       if (rows.length > 0) {
         return {
           data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
@@ -485,10 +517,10 @@ export class TypeOrmJobRepository extends JobRepository {
         };
       }
     } else {
-      const rows = await this.em().query(
+      const rows = (await this.em().query(
         `SELECT "data", "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = $1 LIMIT 1`,
         [key.slice(6)],
-      ) as ContextRow[];
+      )) as ContextRow[];
       if (rows.length > 0) {
         return {
           data: rows[0]!.data.length > 0 ? deserializeContext(rows[0]!.data) : null,
@@ -509,11 +541,12 @@ export class TypeOrmJobRepository extends JobRepository {
     const serialized = serializeContext(deepClone(ctx.data));
     if (key.startsWith('job::')) {
       const jobExecutionId = key.slice(5);
-      const existing = await this.em().query(
+      const existing = (await this.em().query(
         `SELECT "version" FROM "batch_job_execution_context" WHERE "job_execution_id" = $1 LIMIT 1`,
         [jobExecutionId],
-      ) as ContextRow[];
-      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
+      )) as ContextRow[];
+      const nextVersion =
+        version !== undefined ? version : existing.length > 0 ? existing[0]!.version + 1 : 0;
       if (existing.length > 0) {
         await this.em().query(
           `UPDATE "batch_job_execution_context" SET "data" = $1, "version" = $2 WHERE "job_execution_id" = $3`,
@@ -527,11 +560,12 @@ export class TypeOrmJobRepository extends JobRepository {
       }
     } else {
       const stepExecutionId = key.slice(6);
-      const existing = await this.em().query(
+      const existing = (await this.em().query(
         `SELECT "version" FROM "batch_step_execution_context" WHERE "step_execution_id" = $1 LIMIT 1`,
         [stepExecutionId],
-      ) as ContextRow[];
-      const nextVersion = version !== undefined ? version : (existing.length > 0 ? existing[0]!.version + 1 : 0);
+      )) as ContextRow[];
+      const nextVersion =
+        version !== undefined ? version : existing.length > 0 ? existing[0]!.version + 1 : 0;
       if (existing.length > 0) {
         await this.em().query(
           `UPDATE "batch_step_execution_context" SET "data" = $1, "version" = $2 WHERE "step_execution_id" = $3`,

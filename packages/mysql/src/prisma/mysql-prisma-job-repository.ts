@@ -151,7 +151,7 @@ type MysqlStepExecutionRecord = {
  * Mirrors the PostgreSQL `PrismaJobRepository` in `@nest-batch/prisma`
  * exactly: same model shape, same column names, same contract
  * invariants. The host provides a `PrismaClient` generated against
- * the MySQL schema bundled in `prisma/schema.prisma`.
+ * its own MySQL Prisma schema.
  */
 @Injectable()
 export class MysqlPrismaJobRepository extends JobRepository {
@@ -163,19 +163,27 @@ export class MysqlPrismaJobRepository extends JobRepository {
     const existing = await this.prisma.batchJobInstance.findUnique({
       where: { jobName_jobKey: { jobName: name, jobKey } },
     });
-    if (existing) return mapJobInstance(existing as unknown as { id: string; jobName: string; jobKey: string; createdAt: Date });
+    if (existing)
+      return mapJobInstance(
+        existing as unknown as { id: string; jobName: string; jobKey: string; createdAt: Date },
+      );
 
     const id = randomUUID();
     try {
       const created = await this.prisma.batchJobInstance.create({
         data: { id, jobName: name, jobKey, createdAt: new Date() },
       });
-      return mapJobInstance(created as unknown as { id: string; jobName: string; jobKey: string; createdAt: Date });
+      return mapJobInstance(
+        created as unknown as { id: string; jobName: string; jobKey: string; createdAt: Date },
+      );
     } catch {
       const winner = await this.prisma.batchJobInstance.findUnique({
         where: { jobName_jobKey: { jobName: name, jobKey } },
       });
-      if (winner) return mapJobInstance(winner as unknown as { id: string; jobName: string; jobKey: string; createdAt: Date });
+      if (winner)
+        return mapJobInstance(
+          winner as unknown as { id: string; jobName: string; jobKey: string; createdAt: Date },
+        );
       throw new Error(
         `Failed to upsert JobInstance (${name}, ${jobKey}) and could not read it back`,
       );
@@ -189,9 +197,7 @@ export class MysqlPrismaJobRepository extends JobRepository {
     return instance ? mapJobInstance(instance as unknown as MysqlJobInstanceRecord) : null;
   }
 
-  override async findJobInstances(
-    filter: JobInstanceFilter = {},
-  ): Promise<JobInstance[]> {
+  override async findJobInstances(filter: JobInstanceFilter = {}): Promise<JobInstance[]> {
     const where: Record<string, unknown> = {};
     if (filter.jobName !== undefined) where.jobName = filter.jobName;
     if (filter.jobKey !== undefined) where.jobKey = filter.jobKey;
@@ -203,10 +209,7 @@ export class MysqlPrismaJobRepository extends JobRepository {
     return rows.map((row) => mapJobInstance(row as unknown as MysqlJobInstanceRecord));
   }
 
-  async createJobExecution(
-    jobInstanceId: string,
-    params: JobParameters,
-  ): Promise<JobExecution> {
+  async createJobExecution(jobInstanceId: string, params: JobParameters): Promise<JobExecution> {
     const exec = await this.prisma.batchJobExecution.create({
       data: {
         id: randomUUID(),
@@ -219,7 +222,18 @@ export class MysqlPrismaJobRepository extends JobRepository {
         params: serializeContext(deepClone(params)),
       },
     });
-    return mapJobExecution(exec as unknown as { id: string; jobInstanceId: string; status: string; startTime: Date | null; endTime: Date | null; exitCode: string; exitMessage: string; params: string });
+    return mapJobExecution(
+      exec as unknown as {
+        id: string;
+        jobInstanceId: string;
+        status: string;
+        startTime: Date | null;
+        endTime: Date | null;
+        exitCode: string;
+        exitMessage: string;
+        params: string;
+      },
+    );
   }
 
   async createExecutionAtomic(
@@ -277,7 +291,18 @@ export class MysqlPrismaJobRepository extends JobRepository {
           params: serializeContext(deepClone(params)),
         },
       });
-      return mapJobExecution(exec as unknown as { id: string; jobInstanceId: string; status: string; startTime: Date | null; endTime: Date | null; exitCode: string; exitMessage: string; params: string });
+      return mapJobExecution(
+        exec as unknown as {
+          id: string;
+          jobInstanceId: string;
+          status: string;
+          startTime: Date | null;
+          endTime: Date | null;
+          exitCode: string;
+          exitMessage: string;
+          params: string;
+        },
+      );
     });
   }
 
@@ -298,18 +323,27 @@ export class MysqlPrismaJobRepository extends JobRepository {
     const e = await this.prisma.batchJobExecution.findUnique({
       where: { id: executionId },
     });
-    return e ? mapJobExecution(e as unknown as { id: string; jobInstanceId: string; status: string; startTime: Date | null; endTime: Date | null; exitCode: string; exitMessage: string; params: string }) : null;
+    return e
+      ? mapJobExecution(
+          e as unknown as {
+            id: string;
+            jobInstanceId: string;
+            status: string;
+            startTime: Date | null;
+            endTime: Date | null;
+            exitCode: string;
+            exitMessage: string;
+            params: string;
+          },
+        )
+      : null;
   }
 
-  override async findJobExecutions(
-    filter: JobExecutionFilter = {},
-  ): Promise<JobExecution[]> {
+  override async findJobExecutions(filter: JobExecutionFilter = {}): Promise<JobExecution[]> {
     const where: Record<string, unknown> = {};
     if (filter.jobInstanceId !== undefined) where.jobInstanceId = filter.jobInstanceId;
     if (filter.status !== undefined) {
-      where.status = Array.isArray(filter.status)
-        ? { in: [...filter.status] }
-        : filter.status;
+      where.status = Array.isArray(filter.status) ? { in: [...filter.status] } : filter.status;
     }
     if (filter.startedAfter !== undefined || filter.startedBefore !== undefined) {
       const startTime: Record<string, Date> = {};
@@ -334,13 +368,23 @@ export class MysqlPrismaJobRepository extends JobRepository {
       },
       orderBy: { startTime: 'desc' },
     });
-    return e ? mapJobExecution(e as unknown as { id: string; jobInstanceId: string; status: string; startTime: Date | null; endTime: Date | null; exitCode: string; exitMessage: string; params: string }) : null;
+    return e
+      ? mapJobExecution(
+          e as unknown as {
+            id: string;
+            jobInstanceId: string;
+            status: string;
+            startTime: Date | null;
+            endTime: Date | null;
+            exitCode: string;
+            exitMessage: string;
+            params: string;
+          },
+        )
+      : null;
   }
 
-  async createStepExecution(
-    jobExecutionId: string,
-    stepName: string,
-  ): Promise<StepExecution> {
+  async createStepExecution(jobExecutionId: string, stepName: string): Promise<StepExecution> {
     const step = await this.prisma.batchStepExecution.create({
       data: {
         id: randomUUID(),
@@ -357,13 +401,24 @@ export class MysqlPrismaJobRepository extends JobRepository {
         createdAt: new Date(),
       },
     });
-    return mapStepExecution(step as unknown as { id: string; jobExecutionId: string; stepName: string; status: string; readCount: number; writeCount: number; skipCount: number; rollbackCount: number; commitCount: number; exitCode: string; exitMessage: string });
+    return mapStepExecution(
+      step as unknown as {
+        id: string;
+        jobExecutionId: string;
+        stepName: string;
+        status: string;
+        readCount: number;
+        writeCount: number;
+        skipCount: number;
+        rollbackCount: number;
+        commitCount: number;
+        exitCode: string;
+        exitMessage: string;
+      },
+    );
   }
 
-  async updateStepExecution(
-    stepExecutionId: string,
-    patch: StepExecutionPatch,
-  ): Promise<void> {
+  async updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void> {
     const data: Record<string, unknown> = {};
     if (patch.status !== undefined) data.status = patch.status;
     if (patch.readCount !== undefined) data.readCount = patch.readCount;
@@ -383,7 +438,23 @@ export class MysqlPrismaJobRepository extends JobRepository {
     const s = await this.prisma.batchStepExecution.findUnique({
       where: { id: stepExecutionId },
     });
-    return s ? mapStepExecution(s as unknown as { id: string; jobExecutionId: string; stepName: string; status: string; readCount: number; writeCount: number; skipCount: number; rollbackCount: number; commitCount: number; exitCode: string; exitMessage: string }) : null;
+    return s
+      ? mapStepExecution(
+          s as unknown as {
+            id: string;
+            jobExecutionId: string;
+            stepName: string;
+            status: string;
+            readCount: number;
+            writeCount: number;
+            skipCount: number;
+            rollbackCount: number;
+            commitCount: number;
+            exitCode: string;
+            exitMessage: string;
+          },
+        )
+      : null;
   }
 
   override async findStepExecutions(jobExecutionId: string): Promise<StepExecution[]> {
@@ -404,7 +475,21 @@ export class MysqlPrismaJobRepository extends JobRepository {
       take: 1,
     });
     return rows.length > 0
-      ? mapStepExecution(rows[0] as unknown as { id: string; jobExecutionId: string; stepName: string; status: string; readCount: number; writeCount: number; skipCount: number; rollbackCount: number; commitCount: number; exitCode: string; exitMessage: string })
+      ? mapStepExecution(
+          rows[0] as unknown as {
+            id: string;
+            jobExecutionId: string;
+            stepName: string;
+            status: string;
+            readCount: number;
+            writeCount: number;
+            skipCount: number;
+            rollbackCount: number;
+            commitCount: number;
+            exitCode: string;
+            exitMessage: string;
+          },
+        )
       : null;
   }
 

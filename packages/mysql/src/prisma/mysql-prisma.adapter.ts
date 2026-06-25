@@ -15,9 +15,8 @@ import { MysqlPrismaBatchModule } from './mysql-prisma.module';
  * `@nest-batch/prisma` adapter slot.
  *
  * This shell pairs the driver-agnostic `PrismaClient` shape (owned by
- * `@nest-batch/prisma`) with the MySQL provider configuration
- * (the `provider = "mysql"` schema bundled in this package's
- * `prisma/schema.prisma`).
+ * `@nest-batch/prisma`) with a host-owned Prisma schema that uses
+ * the MySQL provider and includes the documented batch meta models.
  *
  * The host owns the `PrismaClient` instance — the shell does **not**
  * call `prisma generate` or instantiate the client.

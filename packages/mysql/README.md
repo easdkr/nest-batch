@@ -3,9 +3,10 @@
 MySQL driver sibling for [`@nest-batch/core`](../core). Owns the
 4 MySQL adapter shells (`MysqlMikroOrmAdapter`,
 `MysqlTypeOrmAdapter`, `MysqlDrizzleAdapter`,
-`MysqlPrismaAdapter`), the bundled 6-table MySQL DDL migration,
-and the MySQL-specific schema carriers (Drizzle `mysql-core`
-schema, Prisma `schema.prisma` with `mysql` provider). The
+`MysqlPrismaAdapter`), MySQL runtime binding code, and
+dialect-specific Drizzle table definitions. It does not publish
+runnable migration files; consuming apps generate and own migrations
+from the ORM contract they use. The
 package is the **only** `@nest-batch/*` sibling that declares
 MySQL provider peer dependencies (`mysql2`,
 `@mikro-orm/mysql`, `drizzle-orm/mysql-core`).
@@ -95,19 +96,19 @@ pnpm add @nest-batch/mysql @nest-batch/prisma \
 
 ## Peer dependencies
 
-| Package                  | Range         | Notes                                                                                          |
-| ------------------------ | ------------- | ---------------------------------------------------------------------------------------------- |
-| `@nest-batch/core`       | `workspace:^` | The batch engine. This package only extends its DI surface.                                    |
-| `@nest-batch/mikro-orm`  | `workspace:^` | The MikroORM adapter slot; this package re-exports its MySQL shell (`MysqlMikroOrmAdapter` + `MysqlMikroOrmBatchModule`). |
-| `@nest-batch/typeorm`    | `workspace:^` | The TypeORM adapter slot; this package re-exports its MySQL shell (`MysqlTypeOrmAdapter` + `MysqlTypeOrmBatchModule`). |
-| `@nest-batch/drizzle`    | `workspace:^` | The Drizzle adapter slot; this package re-exports its MySQL shell (`MysqlDrizzleAdapter` + `MysqlDrizzleBatchModule`) plus the bundled `mysqlDrizzleSchema` namespace. |
-| `@nest-batch/prisma`     | `workspace:^` | The Prisma adapter slot; this package re-exports its MySQL shell (`MysqlPrismaAdapter` + `MysqlPrismaBatchModule`). |
-| `@nestjs/common`         | `^10 \|\| ^11`| For `@Module` / `Module` / injection tokens. Nest 10 and 11 are both supported.                |
-| `mysql2`                 | `^3.0.0`      | The MySQL wire-protocol driver (used by the TypeORM shell and the e2e harness).               |
-| `@mikro-orm/mysql`       | `^6.0.0`      | The MikroORM 6.x MySQL driver.                                                                 |
-| `drizzle-orm`            | `^0.40.0`     | The Drizzle ORM core (the `mysqlTable` / `mysql-core` factory imports).                        |
-| `prisma`                 | `^6.0.0`      | The Prisma CLI (for the bundled schema's `prisma migrate` flow).                              |
-| `@prisma/client`         | `^6.0.0`      | The Prisma client runtime.                                                                      |
+| Package                 | Range          | Notes                                                                                                                                                               |
+| ----------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@nest-batch/core`      | `workspace:^`  | The batch engine. This package only extends its DI surface.                                                                                                         |
+| `@nest-batch/mikro-orm` | `workspace:^`  | The MikroORM adapter slot; this package re-exports its MySQL shell (`MysqlMikroOrmAdapter` + `MysqlMikroOrmBatchModule`).                                           |
+| `@nest-batch/typeorm`   | `workspace:^`  | The TypeORM adapter slot; this package re-exports its MySQL shell (`MysqlTypeOrmAdapter` + `MysqlTypeOrmBatchModule`).                                              |
+| `@nest-batch/drizzle`   | `workspace:^`  | The Drizzle adapter slot; this package re-exports its MySQL shell (`MysqlDrizzleAdapter` + `MysqlDrizzleBatchModule`) plus the `mysqlDrizzleSchema` table contract. |
+| `@nest-batch/prisma`    | `workspace:^`  | The Prisma adapter slot; this package re-exports its MySQL shell (`MysqlPrismaAdapter` + `MysqlPrismaBatchModule`).                                                 |
+| `@nestjs/common`        | `^10 \|\| ^11` | For `@Module` / `Module` / injection tokens. Nest 10 and 11 are both supported.                                                                                     |
+| `mysql2`                | `^3.0.0`       | The MySQL wire-protocol driver (used by the TypeORM shell and the e2e harness).                                                                                     |
+| `@mikro-orm/mysql`      | `^6.0.0`       | The MikroORM 6.x MySQL driver.                                                                                                                                      |
+| `drizzle-orm`           | `^0.40.0`      | The Drizzle ORM core (the `mysqlTable` / `mysql-core` factory imports).                                                                                             |
+| `prisma`                | `^6.0.0`       | The Prisma CLI used by consuming apps that generate their own migrations.                                                                                           |
+| `@prisma/client`        | `^6.0.0`       | The Prisma client runtime.                                                                                                                                          |
 
 The peer table is intentionally broad. A host that only uses one
 of the 4 shells still has the other 3 listed in
@@ -197,8 +198,14 @@ type Db = MySql2Database<typeof mysqlDrizzleSchema>;
 
 @Module({
   providers: [
-    { provide: 'DB', useFactory: (): Db =>
-      drizzle(createPool({ uri: process.env.DATABASE_URL }), { schema: mysqlDrizzleSchema, mode: 'default' }) },
+    {
+      provide: 'DB',
+      useFactory: (): Db =>
+        drizzle(createPool({ uri: process.env.DATABASE_URL }), {
+          schema: mysqlDrizzleSchema,
+          mode: 'default',
+        }),
+    },
   ],
   exports: ['DB'],
   imports: [
@@ -213,7 +220,7 @@ type Db = MySql2Database<typeof mysqlDrizzleSchema>;
 export class AppModule {}
 ```
 
-The bundled `mysqlDrizzleSchema` namespace
+The exported `mysqlDrizzleSchema` namespace
 (`import { mysqlDrizzleSchema } from '@nest-batch/mysql'`)
 provides the 5-table Drizzle schema for MySQL
 (`batch_job_instance`, `batch_job_execution`,
@@ -240,22 +247,18 @@ import { MysqlPrismaAdapter } from '@nest-batch/mysql';
 export class AppModule {}
 ```
 
-The bundled `prisma/schema.prisma` declares the 5 batch meta
-models with a `mysql` provider; the host points its
-`prisma generate` at the bundled schema and inherits the meta
-tables. See `prisma/migrations/20250101000000_init/` for the
-generated migration the bundled schema produces.
+Add the Prisma model contract documented in
+[`@nest-batch/prisma`](../prisma) to your app's `schema.prisma`
+with a `mysql` datasource provider, then generate the app's
+`PrismaClient` and migration in that repository.
 
 ---
 
-## MySQL 6-table migration
+## Migration Ownership
 
-The 6-table Spring Batch-compatible meta-schema ships as a
-TypeORM 1.0.0 migration class at
-`src/migrations/1700000000001-CreateBatchMetaMysql.ts` (re-exported
-as `CreateBatchMetaMysql1700000000001`). The migration is the
-canonical DDL for the package; the host wires it into its own
-TypeORM / Prisma / Drizzle-kit migration runner.
+This package owns the MySQL runtime shells and dialect behavior; it
+does not package migration files. The consuming app owns the
+runnable migration generated by its chosen ORM.
 
 | Table                          | Purpose                                                                            |
 | ------------------------------ | ---------------------------------------------------------------------------------- |
@@ -273,44 +276,38 @@ active-execution unique index is also intentionally absent: the
 `createExecutionAtomic` serializes concurrent launches without
 the constraint's write-contention cost.)
 
-The MySQL column-type choices are `VARCHAR(255)`, `TEXT`,
+The MySQL column-type choices are typically `VARCHAR(255)`, `TEXT`,
 `DATETIME(6)` (microsecond precision), and `INT`. They map
 symmetrically to the Postgres choices in
-[`@nest-batch/postgresql`](../postgresql); a host migrating
-between the two drivers gets the same row shape.
+[`@nest-batch/postgresql`](../postgresql); a host migrating between
+the two drivers keeps the same logical row shape.
 
-### Apply the TypeORM migration
+### TypeORM
 
-```ts
-// data-source.ts
-import { DataSource } from 'typeorm';
-import { CreateBatchMetaMysql1700000000001 } from '@nest-batch/mysql';
+Spread `batchMetaEntities()` from `@nest-batch/typeorm` into the
+host `DataSource` entities list and generate the app migration with
+your normal TypeORM CLI flow.
 
-export default new DataSource({
-  type: 'mysql',
-  url: process.env.DATABASE_URL,
-  entities: [/* ... */],
-  migrations: [CreateBatchMetaMysql1700000000001],
-});
-```
+### Prisma
+
+Add the model block documented in `@nest-batch/prisma` to the app
+schema with `provider = "mysql"`, then run:
 
 ```bash
-pnpm typeorm-ts-node-commonjs migration:run -d data-source.ts
+pnpm prisma migrate dev --schema prisma/schema.prisma
+pnpm prisma migrate deploy --schema prisma/schema.prisma
 ```
 
-### Apply via Prisma
+### Drizzle Kit
+
+Use `mysqlDrizzleSchema` from `@nest-batch/mysql` in an app-local
+Drizzle schema/config file, then generate/apply the migration in
+the app repository:
 
 ```bash
-pnpm prisma migrate deploy \
-  --schema node_modules/@nest-batch/mysql/prisma/schema.prisma
+pnpm drizzle-kit generate
+pnpm drizzle-kit migrate
 ```
-
-### Apply via Drizzle Kit
-
-Point `drizzle.config.ts` at the bundled schema and run
-`drizzle-kit migrate`. The bundled `src/drizzle/schema.ts`
-re-exports the `mysqlTable` definitions; import them into your
-host's drizzle config and run.
 
 ---
 
@@ -322,13 +319,13 @@ The package is tested against a real MySQL testcontainer
 **MySQL 8.0 LTS** — the only MySQL major currently in Oracle's
 active support window.
 
-| MySQL version | Status         | Notes                                              |
-| ------------- | -------------- | -------------------------------------------------- |
-| 8.0 LTS       | Tested         | The MySQL 8.x line is the only supported major.    |
-| 5.7           | Not supported  | Outside the support window. The `DATETIME(6)` and `JSON` column types used by the bundled schema are 5.7-compatible, but the boundary test pins the tested-version list. |
-| 8.4 LTS       | Best-effort    | Should work; not in the CI matrix yet.             |
-| 9.x           | Not supported  | No 9.x GA at the time of the 0.2.0 cut.            |
-| MariaDB       | Not supported  | The bundled migrations target MySQL 8.0 syntax; MariaDB's `WITH` recursion and `JSON_TABLE` semantics diverge. |
+| MySQL version | Status        | Notes                                                                                                                                                                    |
+| ------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 8.0 LTS       | Tested        | The MySQL 8.x line is the only supported major.                                                                                                                          |
+| 5.7           | Not supported | Outside the support window. The `DATETIME(6)` and `JSON` column types used by the table contract are 5.7-compatible, but the boundary test pins the tested-version list. |
+| 8.4 LTS       | Best-effort   | Should work; not in the CI matrix yet.                                                                                                                                   |
+| 9.x           | Not supported | No 9.x GA at the time of the 0.2.0 cut.                                                                                                                                  |
+| MariaDB       | Not supported | The MySQL shell targets MySQL 8.0 semantics; MariaDB's `WITH` recursion and `JSON_TABLE` semantics diverge.                                                              |
 
 The e2e harness is **gated by `RUN_MYSQL_E2E=1`** so the default
 `pnpm test` run does not start a container. CI runs the gated
@@ -402,10 +399,10 @@ rationale.
 - A transport. Use `@nest-batch/bullmq` or `@nest-batch/kafka`
   to wire an execution strategy. This package is persistence-
   only.
-- A schema migration runner. The package ships the canonical
-  TypeORM migration class + Prisma migration files, but the
-  host picks the runner. Drizzle Kit, Prisma Migrate, raw
-  `mysql` client, and TypeORM CLI are all supported.
+- A schema migration runner or runnable migration artifact. The
+  host picks the runner and owns the generated migration. Drizzle
+  Kit, Prisma Migrate, raw SQL, and TypeORM CLI are all supported
+  as app-level workflows.
 - A SQLite driver. SQLite is on the 0.3.0 roadmap
   ([`@nest-batch/sqlite`](../../docs/RELEASE-0.2.0.md#91-sqlite-nest-batchsqlite)).
 - An admin UI, metrics, tracing, webhook, or job visualization
@@ -438,6 +435,6 @@ pnpm --filter @nest-batch/mysql test -- tests/boundary
 
 The e2e test (`tests/e2e-mysql.test.ts`) requires a Docker
 daemon and is gated by `RUN_MYSQL_E2E=1`. The e2e harness brings
-up a fresh MySQL 8.0 testcontainer, applies the 6-table
-migration, runs the shared `@nest-batch/core` contract suite
+up a fresh MySQL 8.0 testcontainer, applies test-only bootstrap
+DDL, runs the shared `@nest-batch/core` contract suite
 against a real ORM binding, and tears the container down.
