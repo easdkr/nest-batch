@@ -11,6 +11,7 @@ import { ProductEntity } from './entities/product.entity';
 import { ImportProductsJob } from './jobs/import-products/import-products.job';
 import { ProductProcessor } from './jobs/import-products/processor/product.processor';
 import { ProductWriter } from './jobs/import-products/writer/product.writer';
+import { MultiStepDemoJob } from './jobs/multi-step-demo/multi-step-demo.job';
 
 @Module({
   imports: [
@@ -44,6 +45,6 @@ import { ProductWriter } from './jobs/import-products/writer/product.writer';
     }),
   ],
   controllers: [BatchController],
-  providers: [ProductProcessor, ProductWriter, ImportProductsJob],
+  providers: [ProductProcessor, ProductWriter, ImportProductsJob, MultiStepDemoJob],
 })
 export class AppModule {}

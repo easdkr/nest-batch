@@ -5,6 +5,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { BatchController } from './batch.controller';
 import { JobLauncher, JobStatus, JobNotFoundError, type JobExecution, type JobParameters } from '@nest-batch/core';
+import { MultiStepDemoJob } from '../jobs/multi-step-demo/multi-step-demo.job';
 
 function makeJobExecution(id: string, status: JobStatus = JobStatus.COMPLETED): JobExecution {
   return {
@@ -22,14 +23,21 @@ function makeJobExecution(id: string, status: JobStatus = JobStatus.COMPLETED): 
 describe('BatchController — POST /jobs/import-products', () => {
   let app: INestApplication;
   let mockLaunch: ReturnType<typeof vi.fn>;
+  let mockGetEvents: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     mockLaunch = vi.fn(async (jobId: string, _params: JobParameters) => {
-      if (jobId !== 'import-products') {
+      if (jobId !== 'import-products' && jobId !== 'multi-step-demo') {
         throw new JobNotFoundError(jobId);
       }
       return makeJobExecution('exec-test-123');
     });
+    mockGetEvents = vi.fn(() => [
+      'job:start:1,2',
+      'step:prepare:2',
+      'writer:10,20',
+      'job:done:COMPLETED',
+    ]);
 
     const moduleRef: TestingModule = await Test.createTestingModule({
       controllers: [BatchController],
@@ -37,6 +45,10 @@ describe('BatchController — POST /jobs/import-products', () => {
         {
           provide: JobLauncher,
           useValue: { launch: mockLaunch },
+        },
+        {
+          provide: MultiStepDemoJob,
+          useValue: { getEvents: mockGetEvents },
         },
       ],
     }).compile();
@@ -99,6 +111,24 @@ describe('BatchController — POST /jobs/import-products', () => {
     expect(mockLaunch).toHaveBeenCalledWith('import-products', {
       file: 'sample-data/x.csv',
       foo: 'bar',
+    });
+  });
+
+  test('POST /jobs/multi-step-demo launches the demo job and returns events', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/jobs/multi-step-demo')
+      .send({ items: [1, 2], jobParams: { source: 'test' } })
+      .expect(200);
+
+    expect(mockLaunch).toHaveBeenCalledWith('multi-step-demo', {
+      source: 'test',
+      items: [1, 2],
+    });
+    expect(mockGetEvents).toHaveBeenCalledTimes(1);
+    expect(response.body).toMatchObject({
+      executionId: 'exec-test-123',
+      status: JobStatus.COMPLETED,
+      events: ['job:start:1,2', 'step:prepare:2', 'writer:10,20', 'job:done:COMPLETED'],
     });
   });
 
