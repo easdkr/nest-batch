@@ -2,32 +2,40 @@
 
 AWS SQS transport adapter for `@nest-batch/core`.
 
+Korean: [README.ko.md](./README.ko.md)
+
 ## Install
 
 ```bash
-pnpm add @nest-batch/aws-sqs @nest-batch/core
+pnpm add @nest-batch/core @nest-batch/aws-sqs
 ```
 
-Peer dependencies:
+Install and provide the AWS SDK client wrapper used by your application.
 
-- `@nest-batch/core@^0.2.0`
-- `@nestjs/common@^10 || ^11`
-- `@nestjs/core@^10 || ^11`
+## Public Imports
 
-## What this package provides
-
-- `SqsAdapter`
-- `SqsExecutionStrategy`
-- SQS module option types
-
-Use this package when batch execution should be handed off through SQS. The
-package provides the transport bridge only; job definitions, repository
-contracts, status transitions, and chunk semantics stay in `@nest-batch/core`.
-
-## Build and test
-
-```bash
-pnpm --filter @nest-batch/aws-sqs build
-pnpm --filter @nest-batch/aws-sqs test
-pnpm --filter @nest-batch/aws-sqs typecheck
+```ts
+import { SqsAdapter, SqsExecutionStrategy, type SqsModuleOptions } from '@nest-batch/aws-sqs';
 ```
+
+## Wiring
+
+```ts
+import { SqsAdapter } from '@nest-batch/aws-sqs';
+
+NestBatchModule.forRoot({
+  adapters: {
+    persistence: persistenceAdapter,
+    transport: SqsAdapter.forRoot({
+      client: sqsClient,
+      queueUrl: process.env.BATCH_QUEUE_URL,
+      fifo: true,
+      workerCommand: ['node', 'dist/batch-worker.js'],
+    }),
+  },
+});
+```
+
+The adapter serializes a batch work message and sends it to SQS. Your worker
+runtime is responsible for receiving the SQS message and invoking the batch
+worker command.

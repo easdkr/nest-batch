@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/drizzle",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Drizzle ORM adapter SLOT for @nest-batch/core — JobRepository and TransactionManager interface shape, paired with @nest-batch/postgresql (Postgres driver) or @nest-batch/mysql (MySQL driver).",
   "license": "MIT",
   "author": "easdkr",
@@ -26,7 +26,8 @@
   "files": [
     "dist/src",
     "src",
-    "README.md"
+    "README.md",
+    "README.ko.md"
   ],
   "publishConfig": {
     "access": "public"

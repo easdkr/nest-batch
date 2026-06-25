@@ -1,6 +1,8 @@
 # @nest-batch/deployment
 
-Deployment recipes and IaC helper objects for nest-batch runtime adapters.
+Typed deployment recipe helpers for `nest-batch` runtime adapters.
+
+Korean: [README.ko.md](./README.ko.md)
 
 ## Install
 
@@ -8,18 +10,29 @@ Deployment recipes and IaC helper objects for nest-batch runtime adapters.
 pnpm add @nest-batch/deployment
 ```
 
-## What this package provides
+## Public Imports
 
-- Deployment recipe helpers exported from `recipes`
-- Shared typed objects for infrastructure-oriented package examples
-
-Use this package as a small companion for deployment wiring. It does not include
-the core batch runtime and does not deploy cloud resources by itself.
-
-## Build and test
-
-```bash
-pnpm --filter @nest-batch/deployment build
-pnpm --filter @nest-batch/deployment test
-pnpm --filter @nest-batch/deployment typecheck
+```ts
+import {
+  createAwsBatchRecipe,
+  createEcsFargateRecipe,
+  createKubernetesJobRecipe,
+  createSqsEventBridgeRecipe,
+  type DeploymentRecipe,
+} from '@nest-batch/deployment';
 ```
+
+## Usage
+
+```ts
+const recipe = createEcsFargateRecipe({
+  clusterArn: process.env.ECS_CLUSTER_ARN,
+  taskDefinitionArn: process.env.ECS_TASK_DEFINITION_ARN,
+  taskRoleArn: process.env.ECS_TASK_ROLE_ARN,
+  executionRoleArn: process.env.ECS_EXECUTION_ROLE_ARN,
+  subnets: process.env.ECS_SUBNETS.split(','),
+});
+```
+
+The returned object is plain JSON-friendly data you can pass to documentation,
+infrastructure generators, or internal deployment tooling.

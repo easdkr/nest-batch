@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/aws-batch",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "AWS Batch submit-job adapter for @nest-batch/core.",
   "license": "MIT",
   "author": "easdkr",
@@ -24,7 +24,8 @@
   "files": [
     "dist/src",
     "src",
-    "README.md"
+    "README.md",
+    "README.ko.md"
   ],
   "publishConfig": {
     "access": "public"

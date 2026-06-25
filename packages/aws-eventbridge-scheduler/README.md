@@ -2,33 +2,47 @@
 
 AWS EventBridge Scheduler integration for `@nest-batch/core` schedules.
 
+Korean: [README.ko.md](./README.ko.md)
+
 ## Install
 
 ```bash
-pnpm add @nest-batch/aws-eventbridge-scheduler @nest-batch/core
+pnpm add @nest-batch/core @nest-batch/aws-eventbridge-scheduler
 ```
 
-Peer dependencies:
+Provide a client object with a `createSchedule(input)` method. It can wrap the
+AWS SDK EventBridge Scheduler client.
 
-- `@nest-batch/core@^0.2.0`
-- `@nestjs/common@^10 || ^11`
-- `@nestjs/core@^10 || ^11`
+## Public Imports
 
-## What this package provides
+```ts
+import {
+  EventBridgeScheduler,
+  EventBridgeSchedulerModule,
+  type EventBridgeSchedulerModuleOptions,
+} from '@nest-batch/aws-eventbridge-scheduler';
+```
 
-- `EventbridgeSchedulerModule`
-- `EventBridgeScheduler`
-- EventBridge Scheduler module option types
+## Wiring
 
-Use this package when scheduled batch definitions should be represented as AWS
-EventBridge Scheduler resources. The package does not own the batch job
-definition model or persistence layer; those remain in `@nest-batch/core` and
-the selected repository adapter.
+Add the module alongside `NestBatchModule`. It reads discovered
+`@BatchScheduled` entries during application bootstrap.
 
-## Build and test
+```ts
+import { EventBridgeSchedulerModule } from '@nest-batch/aws-eventbridge-scheduler';
 
-```bash
-pnpm --filter @nest-batch/aws-eventbridge-scheduler build
-pnpm --filter @nest-batch/aws-eventbridge-scheduler test
-pnpm --filter @nest-batch/aws-eventbridge-scheduler typecheck
+@Module({
+  imports: [
+    NestBatchModule.forRoot({ adapters }),
+    EventBridgeSchedulerModule.forRoot({
+      client: schedulerClient,
+      groupName: 'orders',
+      target: {
+        Arn: process.env.SCHEDULER_TARGET_ARN,
+        RoleArn: process.env.SCHEDULER_ROLE_ARN,
+      },
+    }),
+  ],
+})
+export class AppModule {}
 ```

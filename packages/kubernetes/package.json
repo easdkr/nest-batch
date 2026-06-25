@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/kubernetes",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Kubernetes Job one-off execution adapter for @nest-batch/core.",
   "license": "MIT",
   "author": "easdkr",
@@ -24,7 +24,8 @@
   "files": [
     "dist/src",
     "src",
-    "README.md"
+    "README.md",
+    "README.ko.md"
   ],
   "publishConfig": {
     "access": "public"

@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/aws-ecs",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "AWS ECS Fargate one-off task adapter for @nest-batch/core.",
   "license": "MIT",
   "author": "easdkr",
@@ -25,7 +25,8 @@
   "files": [
     "dist/src",
     "src",
-    "README.md"
+    "README.md",
+    "README.ko.md"
   ],
   "publishConfig": {
     "access": "public"

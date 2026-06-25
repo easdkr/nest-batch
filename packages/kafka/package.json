@@ -1,6 +1,6 @@
 {
   "name": "@nest-batch/kafka",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Kafka runtime adapter for @nest-batch/core — runs batch jobs and partitioned steps as Kafka messages.",
   "license": "MIT",
   "author": "easdkr",
@@ -24,7 +24,8 @@
   "files": [
     "dist/src",
     "src",
-    "README.md"
+    "README.md",
+    "README.ko.md"
   ],
   "publishConfig": {
     "access": "public"
