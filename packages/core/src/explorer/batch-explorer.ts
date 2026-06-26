@@ -1,15 +1,24 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
-import { DiscoveryService } from '@nestjs/core';
-import type { InstanceWrapper } from '@nestjs/core/injector/instance-wrapper';
-import 'reflect-metadata';
+import { DiscoveryService, Reflector } from '@nestjs/core';
 import {
   BATCH_JOB_METADATA,
   BATCH_STEP_METADATA,
   BATCH_TASKLET_METADATA,
+  BATCH_ITEM_READER_METADATA,
+  BATCH_ITEM_PROCESSOR_METADATA,
+  BATCH_ITEM_WRITER_METADATA,
   BATCH_LISTENER_METADATA,
   BATCH_TRANSITION_METADATA,
 } from '../decorators/constants';
-import type { JobableOptions, StepableOptions } from '../decorators';
+import type {
+  ItemProcessorMetadata,
+  ItemReaderMetadata,
+  ItemWriterMetadata,
+  JobableOptions,
+  OnTransitionOptions,
+  StepableOptions,
+  TaskletMetadata,
+} from '../decorators';
 import type { ListenerKind, ListenerPhase, SkipSubKind } from '../core/ir/listener-definition';
 
 /**
@@ -32,6 +41,8 @@ export interface DiscoveredJob {
   jobOptions: JobableOptions;
   /** Every `@Stepable` method on the class prototype, in declaration order. */
   stepMethods: DiscoveredStep[];
+  /** Every item handler method on the class prototype, in declaration order. */
+  itemMethods: DiscoveredItemMethod[];
   /** Every listener-decorated method on the class prototype, in declaration order. */
   listenerMethods: DiscoveredListener[];
   /** Every `@OnTransition` method on the class prototype, in declaration order. */
@@ -43,6 +54,15 @@ export interface DiscoveredStep {
   methodName: string;
   options: StepableOptions;
   isTasklet: boolean;
+}
+
+export type DiscoveredItemKind = 'reader' | 'processor' | 'writer';
+
+/** A chunk item handler method. Reader methods may be factories. */
+export interface DiscoveredItemMethod {
+  methodName: string;
+  kind: DiscoveredItemKind;
+  factory?: boolean;
 }
 
 /** A listener-decorated method (any of the 7 kinds). */
@@ -98,7 +118,10 @@ export class BatchExplorer implements OnModuleInit {
   private readonly logger = new Logger(BatchExplorer.name);
   private discovered: DiscoveredJob[] = [];
 
-  constructor(private readonly discovery: DiscoveryService) {}
+  constructor(
+    private readonly discovery: DiscoveryService,
+    private readonly reflector: Reflector,
+  ) {}
 
   /** Hook called by Nest once the DI container is ready. */
   onModuleInit(): void {
@@ -126,9 +149,7 @@ export class BatchExplorer implements OnModuleInit {
       const metatype = wrapper.metatype;
       if (!metatype) continue;
 
-      const jobOptions = Reflect.getMetadata(BATCH_JOB_METADATA, metatype) as
-        | JobableOptions
-        | undefined;
+      const jobOptions = this.reflector.get<JobableOptions>(BATCH_JOB_METADATA, metatype);
       if (!jobOptions) continue;
 
       out.push({
@@ -136,6 +157,7 @@ export class BatchExplorer implements OnModuleInit {
         instance: wrapper.instance,
         jobOptions,
         stepMethods: this.collectStepMethods(metatype.prototype),
+        itemMethods: this.collectItemMethods(metatype.prototype),
         listenerMethods: this.collectListenerMethods(metatype.prototype),
         transitionMethods: this.collectTransitionMethods(metatype.prototype),
       });
@@ -161,12 +183,52 @@ export class BatchExplorer implements OnModuleInit {
   private collectStepMethods(prototype: object): DiscoveredStep[] {
     const result: DiscoveredStep[] = [];
     for (const name of this.allMethodNames(prototype)) {
-      const opts = Reflect.getMetadata(BATCH_STEP_METADATA, prototype, name) as
-        | StepableOptions
-        | undefined;
+      const handler = this.getMethodHandler(prototype, name);
+      if (!handler) continue;
+      const opts = this.reflector.get<StepableOptions>(BATCH_STEP_METADATA, handler);
       if (!opts) continue;
-      const isTasklet = Reflect.getMetadata(BATCH_TASKLET_METADATA, prototype, name) === true;
+      const tasklet = this.reflector.get<TaskletMetadata>(BATCH_TASKLET_METADATA, handler);
+      const isTasklet = tasklet?.kind === 'tasklet';
       result.push({ methodName: name, options: opts, isTasklet });
+    }
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // Item methods
+  // -------------------------------------------------------------------------
+
+  /**
+   * Walks the prototype chain and returns every chunk item handler. The
+   * compiler consumes this metadata instead of rescanning raw reflection keys.
+   */
+  private collectItemMethods(prototype: object): DiscoveredItemMethod[] {
+    const result: DiscoveredItemMethod[] = [];
+    for (const name of this.allMethodNames(prototype)) {
+      const handler = this.getMethodHandler(prototype, name);
+      if (!handler) continue;
+
+      const reader = this.reflector.get<ItemReaderMetadata>(BATCH_ITEM_READER_METADATA, handler);
+      if (reader?.kind === 'reader') {
+        result.push({
+          methodName: name,
+          kind: 'reader',
+          ...(reader.factory ? { factory: true } : {}),
+        });
+      }
+
+      const processor = this.reflector.get<ItemProcessorMetadata>(
+        BATCH_ITEM_PROCESSOR_METADATA,
+        handler,
+      );
+      if (processor?.kind === 'processor') {
+        result.push({ methodName: name, kind: 'processor' });
+      }
+
+      const writer = this.reflector.get<ItemWriterMetadata>(BATCH_ITEM_WRITER_METADATA, handler);
+      if (writer?.kind === 'writer') {
+        result.push({ methodName: name, kind: 'writer' });
+      }
     }
     return result;
   }
@@ -179,20 +241,23 @@ export class BatchExplorer implements OnModuleInit {
    * Walks the prototype chain and returns every method decorated with one
    * of the 7 listener kinds (job / step / chunk / item-read / item-process /
    * item-write / skip). The metadata shape is uniform — `{ kind, phase,
-   * nonCritical? }` — because every listener decorator funnels through
-   * the same internal `defineListener` helper.
+   * nonCritical? }` — because every listener decorator stores the same
+   * Nest metadata shape.
    */
   private collectListenerMethods(prototype: object): DiscoveredListener[] {
     const result: DiscoveredListener[] = [];
     for (const name of this.allMethodNames(prototype)) {
-      const opts = Reflect.getMetadata(BATCH_LISTENER_METADATA, prototype, name) as
+      const handler = this.getMethodHandler(prototype, name);
+      if (!handler) continue;
+      const opts = this.reflector.get<
         | {
             kind: ListenerKind;
             phase: ListenerPhase;
             skipKind?: SkipSubKind;
             nonCritical?: boolean;
           }
-        | undefined;
+        | undefined
+      >(BATCH_LISTENER_METADATA, handler);
       if (!opts) continue;
       result.push({
         methodName: name,
@@ -211,9 +276,7 @@ export class BatchExplorer implements OnModuleInit {
 
   /**
    * Walks the prototype chain and returns every method carrying
-   * `BATCH_TRANSITION_METADATA` (written by the `@OnTransition` decorator
-   * added in Task 31). Until Task 31 lands, this method simply returns
-   * an empty array.
+   * `BATCH_TRANSITION_METADATA` (written by the `@OnTransition` decorator).
    *
    * `onStatus` is the *string name* of a `FlowExecutionStatus` value
    * (e.g. `'COMPLETED'`, `'FAILED'`, `'STOPPED'`). It is stored as a string
@@ -223,11 +286,16 @@ export class BatchExplorer implements OnModuleInit {
   private collectTransitionMethods(prototype: object): DiscoveredTransition[] {
     const result: DiscoveredTransition[] = [];
     for (const name of this.allMethodNames(prototype)) {
-      const opts = Reflect.getMetadata(BATCH_TRANSITION_METADATA, prototype, name) as
-        | { fromStep: string; onStatus: string; toStep: string | null }
-        | undefined;
+      const handler = this.getMethodHandler(prototype, name);
+      if (!handler) continue;
+      const opts = this.reflector.get<OnTransitionOptions>(BATCH_TRANSITION_METADATA, handler);
       if (!opts) continue;
-      result.push({ methodName: name, ...opts });
+      result.push({
+        methodName: name,
+        fromStep: opts.fromStep,
+        onStatus: String(opts.onStatus),
+        toStep: opts.toStep,
+      });
     }
     return result;
   }
@@ -253,5 +321,10 @@ export class BatchExplorer implements OnModuleInit {
       proto = Object.getPrototypeOf(proto);
     }
     return names;
+  }
+
+  private getMethodHandler(prototype: object, name: string): Function | undefined {
+    const value = (prototype as Record<string, unknown>)[name];
+    return typeof value === 'function' ? value : undefined;
   }
 }

@@ -1,7 +1,12 @@
 import { Injectable, Inject, Optional, forwardRef, Logger } from '@nestjs/common';
 import type { JobDefinition, ListenerDefinition } from '../core/ir';
 import { RefKind, type ListenerRef } from '../core/ir';
-import { JobRepository, type JobParameters, type JobExecution } from '../core/repository';
+import {
+  JobRepository,
+  type ExecutionContext,
+  type JobParameters,
+  type JobExecution,
+} from '../core/repository';
 import { TransactionManager } from '../core/transaction';
 import { StepStatus, JobStatus, FlowExecutionStatus } from '../core/status';
 import { JobNotRestartableError } from '../core/errors';
@@ -84,11 +89,11 @@ export class JobExecutor {
    *     attempt. We require `jobDef.restartable === true`; otherwise we
    *     throw `JobNotRestartableError` and leave the execution alone.
    *   - For each chunk step, we look up the latest FAILED StepExecution
-   *     for that step in this job execution. If one exists, we read its
-   *     ExecutionContext's `lastChunkIndex` checkpoint and pass it to the
-   *     `ChunkStepExecutor` as `resumeFromChunkIndex`, which then skips
-   *     chunks ≤ that index. Tasklet steps always re-run from scratch
-   *     (they have no chunk-level resume granularity in this MVP).
+   *     for that step in this job execution. If one exists, we copy its
+   *     full step ExecutionContext into the new StepExecution before the
+   *     reader opens. Non-stream readers still receive `lastChunkIndex`
+   *     as `resumeFromChunkIndex` for legacy skip-drain behavior.
+   *     Tasklet steps always re-run from scratch.
    *
    * Partition routing (T8): the optional third argument carries the
    * `partitionIndex` / `partitionCount` pair the transport attached
@@ -161,24 +166,34 @@ export class JobExecutor {
 
         // Restart path: if this is a restart and the current step is a
         // chunk step, locate the latest FAILED step execution for the
-        // same step name and load its `lastChunkIndex` checkpoint. That
-        // value is passed to the chunk executor as `resumeFromChunkIndex`.
-        // For tasklet steps (and chunk steps with no prior failure) we
-        // leave `resumeFromChunkIndex` undefined — the chunk executor
-        // treats undefined as "start from the beginning".
+        // same step name. Its full ExecutionContext is copied into the
+        // new step execution before the chunk executor opens any streams.
+        // The `lastChunkIndex` value is also passed separately for the
+        // legacy non-stream reader skip-drain path.
         //
         // Look this up BEFORE createStepExecution so the just-created
         // STARTING step isn't returned as the "latest" entry.
         let resumeFromChunkIndex: number | undefined;
+        let restartStepContext: ExecutionContext | undefined;
         if (isRestart && step.kind === 'chunk') {
           const priorFailed = await this.repository.findLatestStepExecution(execution.id, step.id);
           if (priorFailed && priorFailed.status === StepStatus.FAILED) {
-            resumeFromChunkIndex = await this.getLastCheckpoint(priorFailed.id);
+            restartStepContext = await this.repository.getExecutionContext({
+              stepExecutionId: priorFailed.id,
+            });
+            resumeFromChunkIndex = this.readLastCheckpoint(restartStepContext);
           }
         }
 
         const stepExecution = await this.repository.createStepExecution(execution.id, step.id);
         currentStepExecutionId = stepExecution.id;
+
+        if (restartStepContext !== undefined) {
+          await this.repository.saveExecutionContext(
+            { stepExecutionId: stepExecution.id },
+            restartStepContext,
+          );
+        }
 
         await this.emit({
           type: BATCH_EVENT.STEP_STARTED,
@@ -513,14 +528,12 @@ export class JobExecutor {
   }
 
   /**
-   * Read the `lastChunkIndex` checkpoint from the step-scoped
-   * ExecutionContext for `stepExecutionId`. Returns `undefined` when the
-   * step has no recorded checkpoint (e.g., the prior run failed on the
-   * very first chunk and never got a chance to write one). The chunk
-   * executor treats `undefined` as "no resume; start from the beginning".
+   * Read the `lastChunkIndex` checkpoint from a step-scoped
+   * ExecutionContext. Returns `undefined` when the step has no recorded
+   * checkpoint (e.g., the prior run failed on the very first chunk and
+   * never got a chance to write one).
    */
-  private async getLastCheckpoint(stepExecutionId: string): Promise<number | undefined> {
-    const ctx = await this.repository.getExecutionContext({ stepExecutionId });
+  private readLastCheckpoint(ctx: ExecutionContext): number | undefined {
     if (ctx.data === null || typeof ctx.data !== 'object' || Array.isArray(ctx.data)) {
       return undefined;
     }

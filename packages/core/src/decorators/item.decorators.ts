@@ -1,24 +1,42 @@
-import 'reflect-metadata';
+import { SetMetadata } from '@nestjs/common';
 import {
   BATCH_ITEM_READER_METADATA,
   BATCH_ITEM_PROCESSOR_METADATA,
   BATCH_ITEM_WRITER_METADATA,
 } from './constants';
 
+export interface ItemReaderOptions {
+  factory?: boolean;
+}
+
+export interface ItemReaderMetadata {
+  kind: 'reader';
+  factory: boolean;
+}
+
+export interface ItemProcessorMetadata {
+  kind: 'processor';
+}
+
+export interface ItemWriterMetadata {
+  kind: 'writer';
+}
+
 /**
  * Marks a method as the `ItemReader.read()` handler for a chunk step.
  *
  * Contract:
- *   - Method may return `Promise<T | null>` (null = EOF) OR
- *     `AsyncIterable<T>` for streaming-style readers.
+ *   - Default mode: method is called for every read and may return
+ *     `Promise<T | null>` (null = EOF).
+ *   - Factory mode (`{ factory: true }`): method is called once at step
+ *     start and must return an `ItemReader`, optionally with `ItemStream`.
  *   - Exactly one `@ItemReader()` per chunk step.
- *   - Metadata stored on the prototype method under `BATCH_ITEM_READER_METADATA`
- *     so the DefinitionCompiler can resolve it to a `ReaderRef`.
  */
-export function ItemReader(): MethodDecorator {
-  return (target: object, propertyKey: string | symbol, _descriptor: PropertyDescriptor) => {
-    Reflect.defineMetadata(BATCH_ITEM_READER_METADATA, true, target, propertyKey);
-  };
+export function ItemReader(options: ItemReaderOptions = {}): MethodDecorator {
+  return SetMetadata(BATCH_ITEM_READER_METADATA, {
+    kind: 'reader',
+    factory: options.factory === true,
+  } satisfies ItemReaderMetadata);
 }
 
 /**
@@ -28,12 +46,11 @@ export function ItemReader(): MethodDecorator {
  *   - Receives a single item, returns the (possibly transformed) item.
  *   - Returning `null` or `undefined` filters the item out of the chunk.
  *   - Exactly one `@ItemProcessor()` per chunk step (or none — processor is optional).
- *   - Metadata stored on the prototype method under `BATCH_ITEM_PROCESSOR_METADATA`.
  */
 export function ItemProcessor(): MethodDecorator {
-  return (target: object, propertyKey: string | symbol, _descriptor: PropertyDescriptor) => {
-    Reflect.defineMetadata(BATCH_ITEM_PROCESSOR_METADATA, true, target, propertyKey);
-  };
+  return SetMetadata(BATCH_ITEM_PROCESSOR_METADATA, {
+    kind: 'processor',
+  } satisfies ItemProcessorMetadata);
 }
 
 /**
@@ -42,10 +59,9 @@ export function ItemProcessor(): MethodDecorator {
  * Contract:
  *   - Receives an array of items for the chunk, returns `Promise<void>`.
  *   - Exactly one `@ItemWriter()` per chunk step.
- *   - Metadata stored on the prototype method under `BATCH_ITEM_WRITER_METADATA`.
  */
 export function ItemWriter(): MethodDecorator {
-  return (target: object, propertyKey: string | symbol, _descriptor: PropertyDescriptor) => {
-    Reflect.defineMetadata(BATCH_ITEM_WRITER_METADATA, true, target, propertyKey);
-  };
+  return SetMetadata(BATCH_ITEM_WRITER_METADATA, {
+    kind: 'writer',
+  } satisfies ItemWriterMetadata);
 }

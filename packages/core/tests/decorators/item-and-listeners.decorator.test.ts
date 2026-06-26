@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { describe, expect, it } from 'vitest';
+import { Reflector } from '@nestjs/core';
 
 import {
   BATCH_ITEM_PROCESSOR_METADATA,
@@ -31,6 +32,12 @@ import {
 } from '../../src/decorators';
 
 import type { ListenerKind, ListenerPhase } from '../../src/core/ir/listener-definition';
+
+const reflector = new Reflector();
+
+function handler(cls: { prototype: object }, name: string): Function {
+  return (cls.prototype as Record<string, unknown>)[name] as Function;
+}
 
 // ---------------------------------------------------------------------------
 // Fixture class that exercises every decorator in a single definition site.
@@ -125,18 +132,37 @@ class Fixtures {
 // ---------------------------------------------------------------------------
 
 describe('item decorator metadata (happy)', () => {
-  it('@ItemReader() sets BATCH_ITEM_READER_METADATA on the method', () => {
-    expect(Reflect.getMetadata(BATCH_ITEM_READER_METADATA, Fixtures.prototype, 'read')).toBe(true);
+  it('@ItemReader() sets BATCH_ITEM_READER_METADATA on the method handler', () => {
+    expect(reflector.get(BATCH_ITEM_READER_METADATA, handler(Fixtures, 'read'))).toEqual({
+      kind: 'reader',
+      factory: false,
+    });
   });
 
-  it('@ItemProcessor() sets BATCH_ITEM_PROCESSOR_METADATA on the method', () => {
-    expect(Reflect.getMetadata(BATCH_ITEM_PROCESSOR_METADATA, Fixtures.prototype, 'process')).toBe(
-      true,
-    );
+  it('@ItemReader({ factory: true }) marks the reader as a factory', () => {
+    class FactoryReader {
+      @ItemReader({ factory: true })
+      createReader(): void {}
+    }
+
+    expect(
+      reflector.get(BATCH_ITEM_READER_METADATA, handler(FactoryReader, 'createReader')),
+    ).toEqual({
+      kind: 'reader',
+      factory: true,
+    });
   });
 
-  it('@ItemWriter() sets BATCH_ITEM_WRITER_METADATA on the method', () => {
-    expect(Reflect.getMetadata(BATCH_ITEM_WRITER_METADATA, Fixtures.prototype, 'write')).toBe(true);
+  it('@ItemProcessor() sets BATCH_ITEM_PROCESSOR_METADATA on the method handler', () => {
+    expect(reflector.get(BATCH_ITEM_PROCESSOR_METADATA, handler(Fixtures, 'process'))).toEqual({
+      kind: 'processor',
+    });
+  });
+
+  it('@ItemWriter() sets BATCH_ITEM_WRITER_METADATA on the method handler', () => {
+    expect(reflector.get(BATCH_ITEM_WRITER_METADATA, handler(Fixtures, 'write'))).toEqual({
+      kind: 'writer',
+    });
   });
 });
 
@@ -146,7 +172,7 @@ describe('item decorator metadata (failure / negative)', () => {
       notReader(): void {}
     }
     expect(
-      Reflect.getMetadata(BATCH_ITEM_READER_METADATA, NoReader.prototype, 'notReader'),
+      reflector.get(BATCH_ITEM_READER_METADATA, handler(NoReader, 'notReader')),
     ).toBeUndefined();
   });
 
@@ -157,12 +183,11 @@ describe('item decorator metadata (failure / negative)', () => {
 
       other(): void {}
     }
-    expect(
-      Reflect.getMetadata(BATCH_ITEM_READER_METADATA, OnlyOne.prototype, 'other'),
-    ).toBeUndefined();
-    expect(Reflect.getMetadata(BATCH_ITEM_READER_METADATA, OnlyOne.prototype, 'onlyOne')).toBe(
-      true,
-    );
+    expect(reflector.get(BATCH_ITEM_READER_METADATA, handler(OnlyOne, 'other'))).toBeUndefined();
+    expect(reflector.get(BATCH_ITEM_READER_METADATA, handler(OnlyOne, 'onlyOne'))).toEqual({
+      kind: 'reader',
+      factory: false,
+    });
   });
 
   it('@ItemReader() applied to a non-method (class position) does not corrupt the class', () => {
@@ -177,7 +202,10 @@ describe('item decorator metadata (failure / negative)', () => {
       }
     }).not.toThrow();
 
-    expect(Reflect.getMetadata(BATCH_ITEM_READER_METADATA, Fixtures.prototype, 'read')).toBe(true);
+    expect(reflector.get(BATCH_ITEM_READER_METADATA, handler(Fixtures, 'read'))).toEqual({
+      kind: 'reader',
+      factory: false,
+    });
     expect(new Fixtures()).toBeInstanceOf(Fixtures);
   });
 });
@@ -225,7 +253,7 @@ const EXPECTED_LISTENERS: readonly ExpectedListener[] = [
 describe('listener decorator metadata (happy)', () => {
   for (const { method, kind, phase, skipKind } of EXPECTED_LISTENERS) {
     it(`@${method.replace(/^./, (c) => c.toUpperCase())}() → kind='${kind}', phase='${phase}'`, () => {
-      const meta = Reflect.getMetadata(BATCH_LISTENER_METADATA, Fixtures.prototype, method);
+      const meta = reflector.get(BATCH_LISTENER_METADATA, handler(Fixtures, method));
       expect(meta).toEqual({
         kind,
         phase,
@@ -259,9 +287,7 @@ describe('listener decorator metadata (failure / negative)', () => {
     class NoListeners {
       plain(): void {}
     }
-    expect(
-      Reflect.getMetadata(BATCH_LISTENER_METADATA, NoListeners.prototype, 'plain'),
-    ).toBeUndefined();
+    expect(reflector.get(BATCH_LISTENER_METADATA, handler(NoListeners, 'plain'))).toBeUndefined();
   });
 
   it('listener metadata on one method does not leak to other methods', () => {
@@ -271,10 +297,8 @@ describe('listener decorator metadata (failure / negative)', () => {
 
       sibling(): void {}
     }
-    expect(
-      Reflect.getMetadata(BATCH_LISTENER_METADATA, OnlyBefore.prototype, 'sibling'),
-    ).toBeUndefined();
-    expect(Reflect.getMetadata(BATCH_LISTENER_METADATA, OnlyBefore.prototype, 'before')).toEqual({
+    expect(reflector.get(BATCH_LISTENER_METADATA, handler(OnlyBefore, 'sibling'))).toBeUndefined();
+    expect(reflector.get(BATCH_LISTENER_METADATA, handler(OnlyBefore, 'before'))).toEqual({
       kind: 'job',
       phase: 'before',
     });

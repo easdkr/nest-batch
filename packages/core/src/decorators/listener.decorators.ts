@@ -1,4 +1,4 @@
-import 'reflect-metadata';
+import { SetMetadata } from '@nestjs/common';
 import { BATCH_LISTENER_METADATA } from './constants';
 import type { ListenerKind, ListenerPhase, SkipSubKind } from '../core/ir/listener-definition';
 
@@ -19,18 +19,8 @@ export interface ListenerOptions {
   nonCritical?: boolean;
 }
 
-function defineListener(
-  target: object,
-  propertyKey: string | symbol,
-  options: ListenerOptions,
-): void {
-  Reflect.defineMetadata(BATCH_LISTENER_METADATA, options, target, propertyKey);
-}
-
 function listenerDecorator(options: ListenerOptions): MethodDecorator {
-  return (target: object, propertyKey: string | symbol, _descriptor: PropertyDescriptor) => {
-    defineListener(target, propertyKey, options);
-  };
+  return SetMetadata(BATCH_LISTENER_METADATA, options);
 }
 
 // ---------------------------------------------------------------------------

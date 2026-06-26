@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { describe, it, expect } from 'vitest';
+import { Reflector } from '@nestjs/core';
 
 import {
   Jobable,
@@ -12,10 +13,7 @@ import {
   AfterJob,
 } from '../../src/decorators';
 import { BatchExplorer, type DiscoveredJob } from '../../src/explorer/batch-explorer';
-import {
-  DefinitionCompiler,
-  ProviderNotFoundError,
-} from '../../src/compiler/definition-compiler';
+import { DefinitionCompiler, ProviderNotFoundError } from '../../src/compiler/definition-compiler';
 import { RefKind } from '../../src/core/ir';
 import { FlowExecutionStatus } from '../../src/core/status';
 import { BatchError, InvalidFlowGraphError } from '../../src/core/errors';
@@ -99,6 +97,22 @@ class MissingWriterJob {
   }
 }
 
+@Jobable({ id: 'factory-reader-job' })
+class FactoryReaderJob {
+  @Stepable({ id: 'c1', chunkSize: 5 })
+  step(): void {}
+
+  @ItemReader({ factory: true })
+  createReader(): { read: () => Promise<unknown | null> } {
+    return { read: async () => null };
+  }
+
+  @ItemWriter()
+  async write(_items: unknown[]): Promise<void> {
+    return;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -107,6 +121,7 @@ function discover(cls: new () => unknown): DiscoveredJob {
   const explorer = new BatchExplorer(
     // Minimal DiscoveryService stand-in.
     { getProviders: () => [] } as never,
+    new Reflector(),
   );
   const result = explorer.discoverFromProviders([
     { metatype: cls as unknown as Function, instance: new cls() },
@@ -141,9 +156,7 @@ describe('DefinitionCompiler.compileFromDiscovered — tasklet step', () => {
       expect(typeof step.tasklet.fn).toBe('function');
     }
 
-    const listenerPhases = job.listeners
-      .map((l) => `${l.kind}/${l.phase}`)
-      .sort();
+    const listenerPhases = job.listeners.map((l) => `${l.kind}/${l.phase}`).sort();
     expect(listenerPhases).toEqual(['job/after', 'job/before']);
   });
 
@@ -220,6 +233,17 @@ describe('DefinitionCompiler.compileFromDiscovered — chunk step', () => {
       expect(step.processor).toBeUndefined();
     }
   });
+
+  it('marks factory readers on the compiled ReaderRef', () => {
+    const job = compiler.compileFromDiscovered(discover(FactoryReaderJob));
+    const step = job.steps['c1']!;
+    expect(step.kind).toBe('chunk');
+    if (step.kind === 'chunk') {
+      expect(step.reader.kind).toBe(RefKind.BuilderLambda);
+      expect(step.reader.factory).toBe(true);
+      expect(typeof step.reader.fn).toBe('function');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -289,9 +313,7 @@ describe('DefinitionCompiler.compileFromBuilderConfig', () => {
     expect(job.startStepId).toBe('s1');
     expect(job.transitions).toEqual([]);
     expect(job.steps['s1']!.kind).toBe('tasklet');
-    const listenerPhases = job.listeners
-      .map((l) => `${l.kind}/${l.phase}`)
-      .sort();
+    const listenerPhases = job.listeners.map((l) => `${l.kind}/${l.phase}`).sort();
     expect(listenerPhases).toEqual(['job/after', 'job/before']);
   });
 
@@ -365,9 +387,7 @@ describe('DefinitionCompiler — decorator ↔ builder parity', () => {
     expect(fromDecorator.id).toBe(fromBuilder.id);
 
     // Step IDs
-    expect(Object.keys(fromDecorator.steps).sort()).toEqual(
-      Object.keys(fromBuilder.steps).sort(),
-    );
+    expect(Object.keys(fromDecorator.steps).sort()).toEqual(Object.keys(fromBuilder.steps).sort());
 
     // Step kinds
     for (const id of Object.keys(fromDecorator.steps)) {
@@ -379,9 +399,7 @@ describe('DefinitionCompiler — decorator ↔ builder parity', () => {
 
     // Job-level flags
     expect(fromDecorator.restartable).toBe(fromBuilder.restartable);
-    expect(fromDecorator.allowDuplicateInstances).toBe(
-      fromBuilder.allowDuplicateInstances,
-    );
+    expect(fromDecorator.allowDuplicateInstances).toBe(fromBuilder.allowDuplicateInstances);
 
     // Listener presence: same (kind, phase) tuples
     expect(fromDecorator.listeners.map((l) => `${l.kind}/${l.phase}`).sort()).toEqual(
@@ -421,10 +439,7 @@ describe('DefinitionCompiler — decorator ↔ builder parity', () => {
 
     expect(fromDecorator.steps['c1']!.kind).toBe('chunk');
     expect(fromBuilder.steps['c1']!.kind).toBe('chunk');
-    if (
-      fromDecorator.steps['c1']!.kind === 'chunk' &&
-      fromBuilder.steps['c1']!.kind === 'chunk'
-    ) {
+    if (fromDecorator.steps['c1']!.kind === 'chunk' && fromBuilder.steps['c1']!.kind === 'chunk') {
       expect(fromBuilder.steps['c1']!.chunkSize).toBe(10);
       expect(fromDecorator.steps['c1']!.chunkSize).toBe(25);
       // Decorator: Method refs, Builder: ProviderToken refs

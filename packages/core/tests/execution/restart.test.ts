@@ -9,7 +9,8 @@ import { FlowEvaluator } from '../../src/flow/flow-evaluator';
 import { InMemoryJobRepository } from '../../src/repository/in-memory/in-memory-job-repository';
 import { InMemoryTransactionManager } from '../../src/transaction/in-memory-transaction-manager';
 import { RefKind, type JobDefinition, type ChunkStepDefinition } from '../../src/core/ir';
-import type { ItemReader, ItemWriter } from '../../src/core/item';
+import type { ItemReader, ItemStream, ItemWriter } from '../../src/core/item';
+import type { ExecutionContext } from '../../src/core/repository';
 import { JobStatus, StepStatus } from '../../src/core/status';
 import { JobNotRestartableError } from '../../src/core/errors';
 
@@ -30,6 +31,38 @@ class RecordingWriter implements ItemWriter<number> {
   async write(items: number[]): Promise<void> {
     this.chunks.push([...items]);
   }
+}
+
+class RestartableArrayReader implements ItemReader<number>, ItemStream {
+  private i = 0;
+  public readonly openContexts: ExecutionContext[] = [];
+  constructor(private readonly items: number[]) {}
+  async open(context: ExecutionContext): Promise<void> {
+    this.openContexts.push(context);
+    const data =
+      context.data !== null && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    const cursor = (data as { cursor?: unknown }).cursor;
+    this.i = typeof cursor === 'number' ? cursor : 0;
+  }
+  async read(): Promise<number | null> {
+    return this.i < this.items.length ? (this.items[this.i++] as number) : null;
+  }
+  async update(context: ExecutionContext): Promise<ExecutionContext> {
+    const data =
+      context.data !== null && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    return {
+      ...context,
+      data: {
+        ...data,
+        cursor: this.i,
+      },
+    };
+  }
+  async close(): Promise<void> {}
 }
 
 /** A writer that fails on the 0-based call index `failOnCall` (0 = first call). */
@@ -264,5 +297,80 @@ describe('JobExecutor restart support', () => {
     expect(lastStep).not.toBeNull();
     const ctx = await repository.getExecutionContext({ stepExecutionId: lastStep!.id });
     expect(ctx.data).toEqual({ lastChunkIndex: 3 });
+  });
+
+  test('5) restart copies prior failed step ExecutionContext before stream reader open', async () => {
+    const reader = new RestartableArrayReader([1, 2, 3, 4, 5]);
+    const writer = new RecordingWriter();
+    const repository = new InMemoryJobRepository();
+    const transactionManager = new InMemoryTransactionManager();
+    const listenerInvoker = new ListenerInvoker();
+    const taskletExecutor = new TaskletStepExecutor();
+    const chunkExecutor = new ChunkStepExecutor();
+    const flowEvaluator = new FlowEvaluator();
+    const jobExecutor = new JobExecutor(
+      repository,
+      transactionManager,
+      taskletExecutor,
+      chunkExecutor,
+      listenerInvoker,
+      flowEvaluator,
+    );
+    const registry = new JobRegistry();
+    const launcher = new JobLauncher(registry, repository, jobExecutor);
+
+    const { executionId } = await makeFailedExecution(repository, 'restart-stream-context');
+    const priorStep = await repository.createStepExecution(executionId, 's1');
+    await repository.updateStepExecution(priorStep.id, {
+      status: StepStatus.FAILED,
+      exitCode: 'FAILED',
+      exitMessage: 'prior run failed after first chunk',
+      endTime: new Date(),
+    });
+    await repository.saveExecutionContext(
+      { stepExecutionId: priorStep.id },
+      { data: { lastChunkIndex: 0, cursor: 2, custom: 'preserved' }, version: 0 },
+    );
+
+    const jobDef: JobDefinition = {
+      id: 'restart-stream-context',
+      steps: {
+        s1: {
+          kind: 'chunk',
+          id: 's1',
+          chunkSize: 2,
+          reader: { kind: RefKind.BuilderLambda, fn: () => reader },
+          writer: { kind: RefKind.BuilderLambda, fn: () => writer },
+          listeners: [],
+        },
+      },
+      startStepId: 's1',
+      transitions: [],
+      listeners: [],
+      restartable: true,
+      allowDuplicateInstances: false,
+    };
+    const execution = await repository.getJobExecution(executionId);
+    expect(execution).not.toBeNull();
+
+    const result = await launcher.run(execution!, jobDef);
+
+    expect(result.status).toBe(JobStatus.COMPLETED);
+    expect(reader.openContexts).toHaveLength(1);
+    expect(reader.openContexts[0]!.data).toEqual({
+      lastChunkIndex: 0,
+      cursor: 2,
+      custom: 'preserved',
+    });
+    expect(writer.chunks).toEqual([[3, 4], [5]]);
+
+    const newStep = await repository.findLatestStepExecution(result.id, 's1');
+    expect(newStep).not.toBeNull();
+    const copiedContext = await repository.getExecutionContext({ stepExecutionId: newStep!.id });
+    expect(copiedContext.data).toEqual({
+      lastChunkIndex: 2,
+      cursor: 5,
+      custom: 'preserved',
+    });
   });
 });

@@ -41,8 +41,7 @@ describe('CsvProductReader', () => {
   test('BOM character is handled in header', async () => {
     const bom = '﻿';
     const file = makeCsv(
-      bom +
-        'id,name,sku,price,category\n10,Widget,SKU-10,1.50,books\n20,Gadget,SKU-20,2.50,food\n',
+      bom + 'id,name,sku,price,category\n10,Widget,SKU-10,1.50,books\n20,Gadget,SKU-20,2.50,food\n',
     );
     const reader = new CsvProductReader(file);
     const r1 = await reader.read();
@@ -66,5 +65,18 @@ describe('CsvProductReader', () => {
     for (let i = 0; i < 10; i++) {
       expect(await reader.read()).toBeNull();
     }
+  });
+
+  test('open/update restore and persist row index checkpoints', async () => {
+    const file = makeCsv(
+      'id,name,sku,price,category\n1,W,SKU-1,9.99,books\n2,G,SKU-2,19.99,food\n3,B,SKU-3,5.00,clothing\n',
+    );
+    const reader = new CsvProductReader(file);
+
+    await reader.open({ data: { 'csvProductReader.index': 1 }, version: 0 });
+    expect((await reader.read())?.id).toBe('2');
+    const updated = await reader.update({ data: { lastChunkIndex: 0 }, version: 0 });
+    expect(updated.data).toEqual({ lastChunkIndex: 0, 'csvProductReader.index': 2 });
+    expect((await reader.read())?.id).toBe('3');
   });
 });

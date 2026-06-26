@@ -162,6 +162,60 @@ export class ImportUsersJob {
 job class를 Nest provider로 등록하면 application bootstrap 시점에
 `NestBatchModule`이 `@Batch.Jobable` provider를 찾아 job definition으로 등록합니다.
 
+## 재시작 안전 Reader
+
+decorator 기반 job에서 상태가 있는 reader 객체가 필요하면
+`@Batch.ItemReader({ factory: true })`를 사용하세요. factory method는 step 시작 시 한
+번 호출되며, `ItemReader`와 선택적으로 `ItemStream`을 함께 구현한 객체를 반환할 수
+있습니다.
+
+```ts
+import {
+  Batch,
+  type ExecutionContext,
+  type ItemExecutionContext,
+  type ItemReader,
+  type ItemStream,
+} from '@nest-batch/core';
+
+class CursorReader implements ItemReader<InputRow>, ItemStream {
+  private cursor: string | null = null;
+
+  async open(context: ExecutionContext) {
+    const data =
+      context.data && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? (context.data as { cursor?: string })
+        : {};
+    this.cursor = data.cursor ?? null;
+  }
+
+  async read() {
+    const row = await findNextRow({ after: this.cursor });
+    this.cursor = row?.id ?? this.cursor;
+    return row;
+  }
+
+  async update(context: ExecutionContext) {
+    const data =
+      context.data && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    return { ...context, data: { ...data, cursor: this.cursor } };
+  }
+
+  async close() {}
+}
+
+@Batch.ItemReader({ factory: true })
+createReader(_ctx?: ItemExecutionContext) {
+  return new CursorReader();
+}
+```
+
+재시작 시 실패한 step의 전체 `ExecutionContext`가 새 step execution에 복사된 뒤
+`open()`이 호출됩니다. stream reader는 자체 checkpoint에서 재개하고, 일반 method
+reader는 기존 `lastChunkIndex` skip-drain 동작을 유지합니다.
+
 ## Job 실행
 
 애플리케이션에서 `JobLauncher`를 주입해 작업을 시작합니다.

@@ -10,6 +10,7 @@ export interface ReaderRef {
   fn?: (...args: any[]) => unknown;
   classToken?: string;
   methodName?: string;
+  factory?: boolean;
 }
 export interface ProcessorRef {
   kind: RefKind;

@@ -30,7 +30,6 @@ const DEFAULT_IMPORT_FILE = 'sample-data/products-valid.csv';
 @Batch.Jobable({ id: 'import-products', restartable: true })
 export class ImportProductsJob {
   private readonly logger = new Logger(ImportProductsJob.name);
-  private readonly readers = new Map<string, CsvProductReader>();
   private readonly stepStartTimes = new Map<string, number>();
 
   constructor(
@@ -69,10 +68,10 @@ export class ImportProductsJob {
     // Marker method for decorator metadata.
   }
 
-  @Batch.ItemReader()
-  async read(ctx?: ItemExecutionContext): Promise<RawProductRow | null> {
+  @Batch.ItemReader({ factory: true })
+  createReader(ctx?: ItemExecutionContext): CsvProductReader {
     const itemContext = this.requireItemContext(ctx);
-    return this.requireReader(itemContext).read(itemContext);
+    return new CsvProductReader(this.resolveFilePath(itemContext.jobParameters));
   }
 
   @Batch.ItemProcessor()
@@ -103,7 +102,6 @@ export class ImportProductsJob {
 
   @Batch.AfterJob()
   afterJob(ctx: ListenerContext, result?: { status?: string }): void {
-    this.readers.clear();
     this.stepStartTimes.clear();
     this.logger.log(
       `Finished import-products jobExecutionId=${ctx.jobExecutionId} status=${result?.status ?? 'UNKNOWN'}`,
@@ -135,9 +133,6 @@ export class ImportProductsJob {
 
     if (ctx.stepExecutionId !== undefined) {
       this.stepStartTimes.delete(ctx.stepExecutionId);
-      if (ctx.stepName === 'import-products') {
-        this.readers.delete(ctx.stepExecutionId);
-      }
     }
 
     this.logger.log(
@@ -230,14 +225,6 @@ export class ImportProductsJob {
   @Batch.OnSkipWrite()
   onSkipWrite(items: ProductEntity[], error: unknown): void {
     this.logger.warn(`Skip write count=${items.length}: ${this.formatError(error)}`);
-  }
-
-  private requireReader(ctx: ItemExecutionContext): CsvProductReader {
-    const existing = this.readers.get(ctx.stepExecutionId);
-    if (existing) return existing;
-    const reader = new CsvProductReader(this.resolveFilePath(ctx.jobParameters));
-    this.readers.set(ctx.stepExecutionId, reader);
-    return reader;
   }
 
   private requireItemContext(ctx: ItemExecutionContext | undefined): ItemExecutionContext {

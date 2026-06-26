@@ -165,6 +165,60 @@ Register the job class as a Nest provider. At application bootstrap,
 `NestBatchModule` discovers `@Batch.Jobable` providers and registers their
 compiled job definitions.
 
+## Restart-Safe Readers
+
+Use `@Batch.ItemReader({ factory: true })` when a decorator-discovered job needs
+a stateful reader object. The factory is called once when the step starts and
+may return an `ItemReader` that also implements `ItemStream`.
+
+```ts
+import {
+  Batch,
+  type ExecutionContext,
+  type ItemExecutionContext,
+  type ItemReader,
+  type ItemStream,
+} from '@nest-batch/core';
+
+class CursorReader implements ItemReader<InputRow>, ItemStream {
+  private cursor: string | null = null;
+
+  async open(context: ExecutionContext) {
+    const data =
+      context.data && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? (context.data as { cursor?: string })
+        : {};
+    this.cursor = data.cursor ?? null;
+  }
+
+  async read() {
+    const row = await findNextRow({ after: this.cursor });
+    this.cursor = row?.id ?? this.cursor;
+    return row;
+  }
+
+  async update(context: ExecutionContext) {
+    const data =
+      context.data && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    return { ...context, data: { ...data, cursor: this.cursor } };
+  }
+
+  async close() {}
+}
+
+@Batch.ItemReader({ factory: true })
+createReader(_ctx?: ItemExecutionContext) {
+  return new CursorReader();
+}
+```
+
+On restart, the prior failed step's full `ExecutionContext` is copied to the new
+step execution before `open()` runs. Stream readers resume from their own
+checkpoint; plain method readers keep the legacy `lastChunkIndex` skip-drain
+behavior.
+
 ## Launching Jobs
 
 Inject `JobLauncher` where your application wants to start work.

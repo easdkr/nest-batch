@@ -1,7 +1,7 @@
 # Concepts
 
-`nest-batch` follows the same high-level model as Spring Batch while staying
-native to NestJS dependency injection.
+`nest-batch` provides durable batch jobs, chunk processing, restart state, and
+runtime adapters while staying native to NestJS dependency injection.
 
 ## Job
 
@@ -55,6 +55,52 @@ write(items: User[]) {}
 
 The chunk is the transaction boundary. If a write fails, the current chunk can
 roll back without replaying completed chunks.
+
+## Restart-Safe Readers
+
+Chunk steps always persist `lastChunkIndex` in the step `ExecutionContext`.
+Stateful readers can persist their own cursor in that same context by returning
+an object that implements both `ItemReader` and `ItemStream`.
+
+```ts
+class CursorReader implements ItemReader<UserRow>, ItemStream {
+  private cursor: string | null = null;
+
+  async open(context: ExecutionContext) {
+    const data =
+      context.data && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? (context.data as { cursor?: string })
+        : {};
+    this.cursor = data?.cursor ?? null;
+  }
+
+  async read() {
+    const row = await findNextUser({ after: this.cursor });
+    this.cursor = row?.id ?? this.cursor;
+    return row;
+  }
+
+  async update(context: ExecutionContext) {
+    const data =
+      context.data && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    return { ...context, data: { ...data, cursor: this.cursor } };
+  }
+
+  async close() {}
+}
+
+@Batch.ItemReader({ factory: true })
+createReader(ctx?: ItemExecutionContext) {
+  return new CursorReader(ctx?.jobParameters.tenantId);
+}
+```
+
+On restart, the failed step's full `ExecutionContext` is copied to the new step
+execution before `open()` runs. If the reader is an `ItemStream`, the executor
+trusts that checkpoint and does not drain already-committed chunks. Plain method
+readers keep the legacy `lastChunkIndex` skip behavior.
 
 ## Job Parameters
 

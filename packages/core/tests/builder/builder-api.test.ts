@@ -1,14 +1,11 @@
 import 'reflect-metadata';
 import { describe, it, expect } from 'vitest';
+import { Reflector } from '@nestjs/core';
 
 import { BatchBuilder } from '../../src/builder/batch-builder';
 import { JobBuilder } from '../../src/builder/job-builder';
 import { StepBuilder } from '../../src/builder/step-builder';
-import {
-  FlowBuilder,
-  defineDecider,
-  defineReusableFlow,
-} from '../../src/builder/flow-builder';
+import { FlowBuilder, defineDecider, defineReusableFlow } from '../../src/builder/flow-builder';
 import { RefKind } from '../../src/core/ir';
 import { FlowExecutionStatus } from '../../src/core/status';
 import {
@@ -36,9 +33,12 @@ const noop = (): null => null;
 
 /** Discover a @Jobable class with a noop instance, for parity tests. */
 function discover(cls: new () => unknown): DiscoveredJob {
-  const explorer = new BatchExplorer({
-    getProviders: () => [],
-  } as never);
+  const explorer = new BatchExplorer(
+    {
+      getProviders: () => [],
+    } as never,
+    new Reflector(),
+  );
   const result = explorer.discoverFromProviders([
     { metatype: cls as unknown as Function, instance: new cls() },
   ]);
@@ -335,18 +335,16 @@ describe('Builder API — decorator ↔ builder parity', () => {
 
     // id, step ids, step kind, start step, flags, listener kinds/phases, transitions
     expect(fromBuilder.id).toBe(fromDecorator.id);
-    expect(Object.keys(fromBuilder.steps).sort()).toEqual(
-      Object.keys(fromDecorator.steps).sort(),
-    );
+    expect(Object.keys(fromBuilder.steps).sort()).toEqual(Object.keys(fromDecorator.steps).sort());
     for (const id of Object.keys(fromBuilder.steps)) {
       expect(fromBuilder.steps[id]!.kind).toBe(fromDecorator.steps[id]!.kind);
     }
     expect(fromBuilder.startStepId).toBe(fromDecorator.startStepId);
     expect(fromBuilder.restartable).toBe(fromDecorator.restartable);
     expect(fromBuilder.allowDuplicateInstances).toBe(fromDecorator.allowDuplicateInstances);
-    expect(
-      fromBuilder.listeners.map((l) => `${l.kind}/${l.phase}`).sort(),
-    ).toEqual(fromDecorator.listeners.map((l) => `${l.kind}/${l.phase}`).sort());
+    expect(fromBuilder.listeners.map((l) => `${l.kind}/${l.phase}`).sort()).toEqual(
+      fromDecorator.listeners.map((l) => `${l.kind}/${l.phase}`).sort(),
+    );
     expect(fromBuilder.transitions).toEqual(fromDecorator.transitions);
   });
 
@@ -384,13 +382,8 @@ describe('Builder API — decorator ↔ builder parity', () => {
 
     expect(fromBuilder.steps['c1']!.kind).toBe('chunk');
     expect(fromDecorator.steps['c1']!.kind).toBe('chunk');
-    if (
-      fromBuilder.steps['c1']!.kind === 'chunk' &&
-      fromDecorator.steps['c1']!.kind === 'chunk'
-    ) {
-      expect(fromBuilder.steps['c1']!.chunkSize).toBe(
-        fromDecorator.steps['c1']!.chunkSize,
-      );
+    if (fromBuilder.steps['c1']!.kind === 'chunk' && fromDecorator.steps['c1']!.kind === 'chunk') {
+      expect(fromBuilder.steps['c1']!.chunkSize).toBe(fromDecorator.steps['c1']!.chunkSize);
     }
     expect(fromBuilder.startStepId).toBe('c1');
   });
@@ -462,11 +455,7 @@ describe('Builder API — step shape validation at build time', () => {
 
 describe('FlowBuilder — standalone transition builder', () => {
   it('builds a TransitionDefinition via .from().on().to()', () => {
-    const t = new FlowBuilder()
-      .from('s1')
-      .on(FlowExecutionStatus.FAILED)
-      .to('s2')
-      .build();
+    const t = new FlowBuilder().from('s1').on(FlowExecutionStatus.FAILED).to('s2').build();
 
     expect(t).toEqual({
       fromStepId: 's1',
@@ -476,11 +465,7 @@ describe('FlowBuilder — standalone transition builder', () => {
   });
 
   it('builds an END transition via .end()', () => {
-    const t = new FlowBuilder()
-      .from('s1')
-      .on(FlowExecutionStatus.STOPPED)
-      .end()
-      .build();
+    const t = new FlowBuilder().from('s1').on(FlowExecutionStatus.STOPPED).end().build();
 
     expect(t.toStepId).toBeNull();
   });
@@ -498,10 +483,7 @@ describe('FlowBuilder — standalone transition builder', () => {
   });
 
   it('FlowBuilder.from(stepId) static helper starts the chain', () => {
-    const t = FlowBuilder.from('s1')
-      .on(FlowExecutionStatus.COMPLETED)
-      .to('s2')
-      .build();
+    const t = FlowBuilder.from('s1').on(FlowExecutionStatus.COMPLETED).to('s2').build();
     expect(t.fromStepId).toBe('s1');
     expect(t.onStatus).toBe(FlowExecutionStatus.COMPLETED);
     expect(t.toStepId).toBe('s2');

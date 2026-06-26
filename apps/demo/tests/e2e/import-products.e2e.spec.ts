@@ -14,10 +14,6 @@
  * batch_* and product tables to ensure test isolation.
  *
  * Known limitations of the current demo that are exercised here:
- *   - `MikroORMJobRepository.findLatestStepExecution` is a stub
- *     (always returns null), so the restart path (scenario 6) cannot
- *     locate a prior FAILED step execution's checkpoint. The test is
- *     structured to demonstrate the contract anyway.
  *   - `MikroORMJobRepository.getRunningJobExecution` is a stub (always
  *     returns null), so the concurrency check in `JobLauncher.launch`
  *     (scenario 7) will not reject parallel launches against the
@@ -29,6 +25,7 @@ import 'reflect-metadata';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Logger } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { join } from 'path';
 import { readFileSync, writeFileSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
@@ -186,6 +183,14 @@ function readCsv(file: string): string {
   return readFileSync(file, 'utf8');
 }
 
+function makeValidProductsCsv(count: number): string {
+  const rows = Array.from({ length: count }, (_, i) => {
+    const id = i + 1;
+    return `${id},Product ${id},SKU-R${String(id).padStart(3, '0')},${id + 0.99},books`;
+  });
+  return makeTempCsv(`id,name,sku,price,category\n${rows.join('\n')}\n`);
+}
+
 /** Build a JobBuilderConfig for `import-products` with the given file
  *  and an OPTIONAL custom writer. The default writer is the real
  *  `ProductWriter` bound to the per-test `EntityManager` so committed
@@ -201,7 +206,7 @@ function buildImportJobDefinition(
   const processor = overrides.processor ?? (() => new ProductProcessor());
   const writer = overrides.writer ?? (() => new ProductWriter(em));
   const job = new ImportProductsJob(processor() as ProductProcessor, writer() as ProductWriter);
-  const explorer = new BatchExplorer({ getProviders: () => [] } as never);
+  const explorer = new BatchExplorer({ getProviders: () => [] } as never, new Reflector());
   const [discovered] = explorer.discoverFromProviders([
     { metatype: ImportProductsJob, instance: job },
   ]);
@@ -545,28 +550,39 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
   // 6. Restart after crash
   // -------------------------------------------------------------------------
   testIfPostgres(
-    '6. Restart after crash: 1st run fails on chunk 1, 2nd run with working writer → COMPLETED',
+    '6. Restart after crash: stream reader resumes after committed chunk without duplicate writes',
     async () => {
-      // ---- 1st launch: failing writer, no products committed ----
-      const alwaysFailingWriter = (): import('@nest-batch/core').ItemWriter => ({
-        async write(_items) {
-          throw new Error('synthetic crash on every chunk');
+      const restartCsv = makeValidProductsCsv(25);
+      let writeCalls = 0;
+
+      // ---- 1st launch: first chunk commits, second chunk fails ----
+      const failOnSecondChunkWriter = (): import('@nest-batch/core').ItemWriter => ({
+        async write(items) {
+          writeCalls += 1;
+          if (writeCalls === 2) {
+            throw new Error('synthetic crash on second chunk');
+          }
+          return new ProductWriter(em).write(items);
         },
       });
-      const failingConfig = buildImportJobDefinition(VALID_CSV, em, {
-        writer: alwaysFailingWriter,
+      const failingConfig = buildImportJobDefinition(restartCsv, em, {
+        writer: failOnSecondChunkWriter,
       });
       registry.register(failingConfig);
 
       const failedExecution = await launcher.launch('import-products', {
-        file: VALID_CSV,
+        file: restartCsv,
       });
       expect(failedExecution.status).toBe(JobStatus.FAILED);
+      expect(writeCalls).toBe(2);
 
-      // The failing writer rolled back every chunk's transaction → no
-      // products in the DB.
+      // The first chunk committed and checkpointed index 10; the second
+      // chunk rolled back.
       const productsAfterFailure = await em.find(ProductEntity, {});
-      expect(productsAfterFailure).toHaveLength(0);
+      expect(productsAfterFailure).toHaveLength(10);
+      expect(productsAfterFailure.map((p) => p.sku).sort()).toEqual(
+        Array.from({ length: 10 }, (_, i) => `SKU-R${String(i + 1).padStart(3, '0')}`),
+      );
 
       // ---- 2nd launch: tear down, rebuild module, register working job,
       // then call `JobLauncher.run()` on the FAILED execution. ----
@@ -577,7 +593,7 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
       registry = ctx2.registry;
       em = ctx2.em;
 
-      const workingConfig = buildImportJobDefinition(VALID_CSV, em);
+      const workingConfig = buildImportJobDefinition(restartCsv, em);
       registry.register(workingConfig);
 
       // Re-fetch the FAILED execution from the DB (it has status FAILED
@@ -599,18 +615,21 @@ describe('ImportProducts E2E (live PostgreSQL)', () => {
           endTime: persistedFailed!.endTime,
           exitCode: persistedFailed!.exitCode,
           exitMessage: persistedFailed!.exitMessage,
-          params: { file: VALID_CSV },
+          params: { file: restartCsv },
         },
         workingConfig,
       );
 
       expect(restarted.status).toBe(JobStatus.COMPLETED);
 
-      // No duplicates, all 3 products in the DB.
+      // No duplicates: restart imports rows 11-25 from the copied reader
+      // checkpoint instead of re-reading rows 1-10.
       const products = await em.find(ProductEntity, {});
-      expect(products).toHaveLength(3);
+      expect(products).toHaveLength(25);
       const skus = products.map((p) => p.sku).sort();
-      expect(skus).toEqual(['SKU-001', 'SKU-002', 'SKU-003']);
+      expect(skus).toEqual(
+        Array.from({ length: 25 }, (_, i) => `SKU-R${String(i + 1).padStart(3, '0')}`),
+      );
     },
   );
 

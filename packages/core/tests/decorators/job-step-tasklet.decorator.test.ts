@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { describe, it, expect } from 'vitest';
+import { Reflector } from '@nestjs/core';
 import {
   BATCH_JOB_METADATA,
   BATCH_STEP_METADATA,
@@ -8,6 +9,12 @@ import {
   Stepable,
   Tasklet,
 } from '../../src/decorators';
+
+const reflector = new Reflector();
+
+function handler(cls: { prototype: object }, name: string): Function {
+  return (cls.prototype as Record<string, unknown>)[name] as Function;
+}
 
 describe('@Jobable', () => {
   it('attaches BATCH_JOB_METADATA with the given options on the class (id only)', () => {
@@ -48,7 +55,7 @@ describe('@Stepable', () => {
       bar() {}
     }
 
-    const meta = Reflect.getMetadata(BATCH_STEP_METADATA, FooJob.prototype, 'bar');
+    const meta = reflector.get(BATCH_STEP_METADATA, handler(FooJob, 'bar'));
     expect(meta).toEqual({ id: 'bar' });
   });
 
@@ -58,20 +65,20 @@ describe('@Stepable', () => {
       bar() {}
     }
 
-    const meta = Reflect.getMetadata(BATCH_STEP_METADATA, FooJob.prototype, 'bar');
+    const meta = reflector.get(BATCH_STEP_METADATA, handler(FooJob, 'bar'));
     expect(meta).toEqual({ id: 'bar', chunkSize: 10 });
   });
 });
 
 describe('@Tasklet', () => {
-  it('attaches BATCH_TASKLET_METADATA flag = true on the method', () => {
+  it('attaches BATCH_TASKLET_METADATA object on the method', () => {
     class FooJob {
       @Tasklet()
       bar() {}
     }
 
-    const meta = Reflect.getMetadata(BATCH_TASKLET_METADATA, FooJob.prototype, 'bar');
-    expect(meta).toBe(true);
+    const meta = reflector.get(BATCH_TASKLET_METADATA, handler(FooJob, 'bar'));
+    expect(meta).toEqual({ kind: 'tasklet' });
   });
 });
 
@@ -83,10 +90,10 @@ describe('@Stepable + @Tasklet combination', () => {
       bar() {}
     }
 
-    const stepMeta = Reflect.getMetadata(BATCH_STEP_METADATA, FooJob.prototype, 'bar');
-    const taskletMeta = Reflect.getMetadata(BATCH_TASKLET_METADATA, FooJob.prototype, 'bar');
+    const stepMeta = reflector.get(BATCH_STEP_METADATA, handler(FooJob, 'bar'));
+    const taskletMeta = reflector.get(BATCH_TASKLET_METADATA, handler(FooJob, 'bar'));
 
     expect(stepMeta).toEqual({ id: 'bar' });
-    expect(taskletMeta).toBe(true);
+    expect(taskletMeta).toEqual({ kind: 'tasklet' });
   });
 });

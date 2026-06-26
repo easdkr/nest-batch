@@ -214,12 +214,13 @@ export class ChunkStepExecutor {
       // Resolve inside the try block so a missing provider-token ref
       // surfaces as FAILED/{exitMessage: <err>}, matching the tasklet
       // executor's contract — not as a propagated throw.
-      const reader = this.resolveReader(step.reader, context);
+      const reader = await this.resolveReader(step.reader, context, step);
       const processor = step.processor ? this.resolveProcessor(step.processor, context) : null;
       const writer = this.resolveWriter(step.writer, context);
 
       const streams: ItemStream[] = [];
-      if (isItemStream(reader)) streams.push(reader);
+      const readerIsStream = isItemStream(reader);
+      if (readerIsStream) streams.push(reader);
       if (isItemStream(writer)) streams.push(writer);
       streamContext = await context.jobRepository.getExecutionContext({
         stepExecutionId: context.stepExecutionId,
@@ -227,6 +228,9 @@ export class ChunkStepExecutor {
       for (const stream of streams) {
         await stream.open(streamContext);
         openedStreams.push(stream);
+      }
+      if (readerIsStream && context.resumeFromChunkIndex !== undefined) {
+        chunkIndex = context.resumeFromChunkIndex + 1;
       }
 
       // Outer loop: keep reading chunks until reader returns null
@@ -239,6 +243,7 @@ export class ChunkStepExecutor {
         // run) and no checkpoint is written (the prior run owns it).
         if (
           context.resumeFromChunkIndex !== undefined &&
+          !readerIsStream &&
           chunkIndex <= context.resumeFromChunkIndex
         ) {
           let drained = 0;
@@ -705,9 +710,17 @@ export class ChunkStepExecutor {
     );
   }
 
-  private resolveReader(ref: ReaderRef, context: ChunkExecutionContext): ItemReader {
+  private async resolveReader(
+    ref: ReaderRef,
+    context: ChunkExecutionContext,
+    step: ChunkStepDefinition,
+  ): Promise<ItemReader> {
+    const factoryContext = this.buildItemContext(step, context, 0);
     if (ref.kind === RefKind.BuilderLambda && ref.fn) {
       const result = ref.fn();
+      if (ref.factory === true) {
+        return this.invokeReaderFactory(result, factoryContext);
+      }
       if (typeof result === 'function') {
         return { read: result as ItemReader['read'] };
       }
@@ -721,15 +734,44 @@ export class ChunkStepExecutor {
       return { read: ref.fn as ItemReader['read'] };
     }
     if (ref.kind === RefKind.ProviderToken) {
-      return resolveProviderToken<ItemReader>('reader', ref, context.providerResolvers);
+      const resolved = resolveProviderToken<ItemReader | ((ctx?: ItemExecutionContext) => unknown)>(
+        'reader',
+        ref,
+        context.providerResolvers,
+      );
+      if (ref.factory === true) {
+        return this.invokeReaderFactory(resolved, factoryContext);
+      }
+      return resolved as ItemReader;
     }
     if (ref.kind === RefKind.Method && ref.classToken && ref.methodName) {
       const key = `${context.jobExecutionId2}::reader::${ref.classToken}::${ref.methodName}`;
       const fn = context.resolvers.get(key);
       if (!fn) throw new Error(`Reader not resolved: ${ref.classToken}.${ref.methodName}`);
+      if (ref.factory === true) {
+        return this.invokeReaderFactory(fn, factoryContext);
+      }
       return { read: fn as ItemReader['read'] };
     }
     throw new Error(`Unsupported reader ref kind: ${ref.kind}`);
+  }
+
+  private async invokeReaderFactory(
+    factory: unknown,
+    ctx: ItemExecutionContext,
+  ): Promise<ItemReader> {
+    const reader =
+      typeof factory === 'function'
+        ? await (factory as (ctx?: ItemExecutionContext) => unknown | Promise<unknown>)(ctx)
+        : factory;
+    if (
+      reader !== null &&
+      typeof reader === 'object' &&
+      typeof (reader as ItemReader).read === 'function'
+    ) {
+      return reader as ItemReader;
+    }
+    throw new Error('@ItemReader({ factory: true }) must return an ItemReader');
   }
 
   private resolveProcessor(ref: ProcessorRef, context: ChunkExecutionContext): ItemProcessor {

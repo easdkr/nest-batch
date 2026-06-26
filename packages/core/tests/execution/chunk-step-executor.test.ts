@@ -150,6 +150,42 @@ class StreamArrayReader implements ItemReader<number>, ItemStream {
   }
 }
 
+class CheckpointArrayReader implements ItemReader<number>, ItemStream {
+  private i = 0;
+  constructor(
+    private readonly items: number[],
+    private readonly events: string[],
+  ) {}
+  async open(context: ExecutionContext): Promise<void> {
+    const data =
+      context.data !== null && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    const index = (data as { readerIndex?: unknown }).readerIndex;
+    this.i = typeof index === 'number' ? index : 0;
+    this.events.push(`reader.open.${this.i}`);
+  }
+  async read(): Promise<number | null> {
+    return this.i < this.items.length ? (this.items[this.i++] as number) : null;
+  }
+  async update(context: ExecutionContext): Promise<ExecutionContext> {
+    const data =
+      context.data !== null && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    return {
+      ...context,
+      data: {
+        ...data,
+        readerIndex: this.i,
+      },
+    };
+  }
+  async close(): Promise<void> {
+    this.events.push('reader.close');
+  }
+}
+
 class StreamRecordingWriter implements ItemWriter<number>, ItemStream {
   public readonly chunks: number[][] = [];
   public updateCount = 0;
@@ -359,6 +395,69 @@ describe('ChunkStepExecutor', () => {
       readerUpdateCount: 2,
       writerUpdateCount: 2,
     });
+  });
+
+  test('factory reader is called once and returned stream receives lifecycle hooks', async () => {
+    const events: string[] = [];
+    const reader = new StreamArrayReader([1, 2, 3], events);
+    const writer = new RecordingWriter();
+    const factory = vi.fn((_ctx?: ItemExecutionContext) => reader);
+    const step: ChunkStepDefinition = {
+      kind: 'chunk',
+      id: 'factory-stream-step',
+      chunkSize: 2,
+      reader: { kind: RefKind.BuilderLambda, fn: () => factory, factory: true },
+      writer: { kind: RefKind.BuilderLambda, fn: () => writer },
+      listeners: [],
+    };
+    const ctx = buildContext({ reader, writer });
+
+    const result = await new ChunkStepExecutor().execute(step, ctx);
+
+    expect(result.status).toBe(StepStatus.COMPLETED);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(factory.mock.calls[0]?.[0]).toMatchObject({
+      jobExecutionId: 'job-1',
+      stepExecutionId: 'step-1',
+      stepName: 'factory-stream-step',
+    });
+    expect(writer.chunks).toEqual([[1, 2], [3]]);
+    expect(events).toEqual(['reader.open', 'reader.update.1', 'reader.update.2', 'reader.close']);
+  });
+
+  test('stream reader restart trusts copied ExecutionContext and does not skip-drain', async () => {
+    const events: string[] = [];
+    const reader = new CheckpointArrayReader([1, 2, 3, 4, 5], events);
+    const writer = new RecordingWriter();
+    const repository = new InMemoryJobRepository();
+    await repository.saveExecutionContext(
+      { stepExecutionId: 'stream-restart-step-execution' },
+      { data: { lastChunkIndex: 0, readerIndex: 2 }, version: 0 },
+    );
+    const step: ChunkStepDefinition = {
+      kind: 'chunk',
+      id: 'stream-restart-step',
+      chunkSize: 2,
+      reader: { kind: RefKind.BuilderLambda, fn: () => reader },
+      writer: { kind: RefKind.BuilderLambda, fn: () => writer },
+      listeners: [],
+    };
+    const ctx: ChunkExecutionContext = {
+      ...buildContext({ reader, writer }),
+      stepExecutionId: 'stream-restart-step-execution',
+      jobRepository: repository,
+      resumeFromChunkIndex: 0,
+    };
+
+    const result = await new ChunkStepExecutor().execute(step, ctx);
+    const persisted = await repository.getExecutionContext({
+      stepExecutionId: 'stream-restart-step-execution',
+    });
+
+    expect(result.status).toBe(StepStatus.COMPLETED);
+    expect(events).toEqual(['reader.open.2', 'reader.close']);
+    expect(writer.chunks).toEqual([[3, 4], [5]]);
+    expect(persisted.data).toEqual({ lastChunkIndex: 2, readerIndex: 5 });
   });
 
   test('empty reader → 0 reads, 0 writes, status COMPLETED, commitCount=0', async () => {
