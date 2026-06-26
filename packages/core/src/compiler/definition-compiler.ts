@@ -1,4 +1,3 @@
-import 'reflect-metadata';
 import { Injectable, Logger } from '@nestjs/common';
 import {
   RefKind,
@@ -18,12 +17,11 @@ import { FlowExecutionStatus } from '../core/status';
 import { BatchError, InvalidFlowGraphError } from '../core/errors';
 import { DefinitionValidator } from '../core/validation/definition-validator';
 import { validatePartitions, InvalidPartitionsError } from '../partition-helpers';
-import type { DiscoveredJob } from '../explorer/batch-explorer';
-import {
-  BATCH_ITEM_READER_METADATA,
-  BATCH_ITEM_PROCESSOR_METADATA,
-  BATCH_ITEM_WRITER_METADATA,
-} from '../decorators/constants';
+import type {
+  DiscoveredItemKind,
+  DiscoveredItemMethod,
+  DiscoveredJob,
+} from '../explorer/batch-explorer';
 import type { JobBuilderConfig } from './builder-types';
 
 /**
@@ -221,9 +219,9 @@ export class DefinitionCompiler {
     classToken: string,
     step: DiscoveredJob['stepMethods'][number],
   ): ChunkStepDefinition {
-    const reader = this.findItemMethod(discovered, BATCH_ITEM_READER_METADATA);
-    const processor = this.findItemMethod(discovered, BATCH_ITEM_PROCESSOR_METADATA);
-    const writer = this.findItemMethod(discovered, BATCH_ITEM_WRITER_METADATA);
+    const reader = this.findItemMethod(discovered, 'reader');
+    const processor = this.findItemMethod(discovered, 'processor');
+    const writer = this.findItemMethod(discovered, 'writer');
 
     if (!reader) {
       throw new ProviderNotFoundError(
@@ -236,8 +234,8 @@ export class DefinitionCompiler {
       );
     }
 
-    const readerRef: ReaderRef = this.buildItemMethodRef(discovered, classToken, reader);
-    const writerRef: WriterRef = this.buildItemMethodRef(discovered, classToken, writer);
+    const readerRef = this.buildReaderMethodRef(discovered, classToken, reader);
+    const writerRef: WriterRef = this.buildItemMethodRef(discovered, classToken, writer.methodName);
 
     // Validate the partition config at compile time so a typo
     // (e.g. `count: 0`) fails at module load rather than at
@@ -278,11 +276,20 @@ export class DefinitionCompiler {
             processor: this.buildItemMethodRef(
               discovered,
               classToken,
-              processor,
+              processor.methodName,
             ) satisfies ProcessorRef,
           }
         : {}),
     };
+  }
+
+  private buildReaderMethodRef(
+    discovered: DiscoveredJob,
+    classToken: string,
+    method: DiscoveredItemMethod,
+  ): ReaderRef {
+    const ref = this.buildItemMethodRef(discovered, classToken, method.methodName) as ReaderRef;
+    return method.factory === true ? { ...ref, factory: true } : ref;
   }
 
   private buildItemMethodRef(
@@ -308,25 +315,13 @@ export class DefinitionCompiler {
   }
 
   /**
-   * Walks the prototype chain (including inherited prototypes, stopping
-   * at `Object.prototype`) looking for a method carrying the given
-   * `BATCH_ITEM_*` metadata key.
-   *
-   * Returns the method name or `undefined`. The explorer only records
-   * `@Stepable` / listener / transition methods; item handlers are
-   * resolved here at compile time.
+   * Returns the first item handler of the requested kind. The explorer owns
+   * metadata discovery; the compiler only binds the discovered method.
    */
-  private findItemMethod(discovered: DiscoveredJob, metadataKey: string): string | undefined {
-    const proto = discovered.classRef.prototype as object | undefined;
-    if (!proto) return undefined;
-    let p: object | null = proto;
-    while (p && p !== Object.prototype) {
-      for (const name of Object.getOwnPropertyNames(p)) {
-        if (name === 'constructor') continue;
-        if (Reflect.getMetadata(metadataKey, p, name) === true) return name;
-      }
-      p = Object.getPrototypeOf(p);
-    }
-    return undefined;
+  private findItemMethod(
+    discovered: DiscoveredJob,
+    kind: DiscoveredItemKind,
+  ): DiscoveredItemMethod | undefined {
+    return discovered.itemMethods.find((method) => method.kind === kind);
   }
 }

@@ -233,13 +233,16 @@ describe('ImportProductsJob', () => {
     });
   });
 
-  describe('read(ctx)', () => {
-    test('throws when item handlers are called without runtime context', async () => {
-      await expect(job.read()).rejects.toThrow(/ItemExecutionContext/);
+  describe('createReader(ctx)', () => {
+    test('throws when the reader factory is called without runtime context', () => {
+      expect(() => job.createReader()).toThrow(/ItemExecutionContext/);
     });
 
-    test('returns the first data row from jobParameters.file', async () => {
-      const row = await job.read(itemContext(csv(VALID_CSV)));
+    test('returns a reader for jobParameters.file', async () => {
+      const reader = job.createReader(itemContext(csv(VALID_CSV)));
+      await reader.open({ data: null, version: 0 });
+
+      const row = await reader.read();
       expect(row).toEqual({
         id: '1',
         name: 'Widget',
@@ -249,25 +252,42 @@ describe('ImportProductsJob', () => {
       });
     });
 
-    test('keeps reader cursor state per stepExecutionId', async () => {
-      const file = csv(VALID_CSV);
-      const ctx = itemContext(file, 'step-a');
+    test('returned reader tracks cursor state and writes checkpoints', async () => {
+      const file = csv(`${VALID_HEADER}\n1,Widget,SKU-1,9.99,books\n2,Gadget,SKU-2,19.99,food\n`);
+      const reader = job.createReader(itemContext(file, 'step-a'));
+      await reader.open({ data: null, version: 0 });
 
-      const r1 = await job.read(ctx);
-      const r2 = await job.read(ctx);
-      const r3 = await job.read(ctx);
+      const r1 = await reader.read();
+      const r2 = await reader.read();
+      const updated = await reader.update({ data: null, version: 0 });
+      const r3 = await reader.read();
 
       expect(r1?.id).toBe('1');
-      expect(r2).toBeNull();
+      expect(r2?.id).toBe('2');
+      expect(updated.data).toEqual({ 'csvProductReader.index': 2 });
       expect(r3).toBeNull();
     });
 
-    test('uses a separate reader for a different stepExecutionId', async () => {
+    test('returned reader resumes from a checkpointed row index', async () => {
+      const file = csv(`${VALID_HEADER}\n1,Widget,SKU-1,9.99,books\n2,Gadget,SKU-2,19.99,food\n`);
+      const reader = job.createReader(itemContext(file, 'step-a'));
+      await reader.open({ data: { 'csvProductReader.index': 1 }, version: 0 });
+
+      const row = await reader.read();
+
+      expect(row?.id).toBe('2');
+    });
+
+    test('factory creates separate readers for different job parameter files', async () => {
       const firstFile = csv(`${VALID_HEADER}\n1,Widget,SKU-1,9.99,books\n`);
       const secondFile = csv(`${VALID_HEADER}\n2,Gadget,SKU-2,19.99,food\n`);
 
-      const r1 = await job.read(itemContext(firstFile, 'step-a'));
-      const r2 = await job.read(itemContext(secondFile, 'step-b'));
+      const firstReader = job.createReader(itemContext(firstFile, 'step-a'));
+      const secondReader = job.createReader(itemContext(secondFile, 'step-b'));
+      await firstReader.open({ data: null, version: 0 });
+      await secondReader.open({ data: null, version: 0 });
+      const r1 = await firstReader.read();
+      const r2 = await secondReader.read();
 
       expect(r1?.id).toBe('1');
       expect(r2?.id).toBe('2');

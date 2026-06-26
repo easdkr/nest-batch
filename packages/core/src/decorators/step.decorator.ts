@@ -1,4 +1,4 @@
-import 'reflect-metadata';
+import { SetMetadata } from '@nestjs/common';
 import { BATCH_STEP_METADATA } from './constants';
 import type { ChunkPartitionConfig, RetryPolicyConfig, SkipPolicyConfig } from '../core/ir';
 
@@ -25,9 +25,5 @@ export interface StepableOptions {
  * class-level `@ItemReader`/`@ItemProcessor`/`@ItemWriter` methods.
  */
 export function Stepable(options: StepableOptions): MethodDecorator {
-  return (target: object, propertyKey: string | symbol, descriptor: PropertyDescriptor) => {
-    Reflect.defineMetadata(BATCH_STEP_METADATA, options, target, propertyKey);
-    // Also stash on the function itself so explorer can read both
-    Reflect.defineMetadata(BATCH_STEP_METADATA, options, descriptor.value as object);
-  };
+  return SetMetadata(BATCH_STEP_METADATA, options);
 }

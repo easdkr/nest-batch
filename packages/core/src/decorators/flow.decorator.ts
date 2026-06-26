@@ -1,4 +1,4 @@
-import 'reflect-metadata';
+import { SetMetadata } from '@nestjs/common';
 import { BATCH_TRANSITION_METADATA } from './constants';
 import type { FlowExecutionStatus } from '../core/status';
 
@@ -25,7 +25,5 @@ export interface OnTransitionOptions {
  * ```
  */
 export function OnTransition(options: OnTransitionOptions): MethodDecorator {
-  return (target: object, propertyKey: string | symbol, _descriptor: PropertyDescriptor) => {
-    Reflect.defineMetadata(BATCH_TRANSITION_METADATA, options, target, propertyKey);
-  };
+  return SetMetadata(BATCH_TRANSITION_METADATA, options);
 }

@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { describe, it, expect } from 'vitest';
+import { Reflector } from '@nestjs/core';
 
 import {
   BATCH_TRANSITION_METADATA,
@@ -62,6 +63,7 @@ function discover(cls: new () => unknown): DiscoveredJob {
   const explorer = new BatchExplorer(
     // Minimal DiscoveryService stand-in.
     { getProviders: () => [] } as never,
+    new Reflector(),
   );
   const result = explorer.discoverFromProviders([
     { metatype: cls as unknown as Function, instance: new cls() },
@@ -71,6 +73,11 @@ function discover(cls: new () => unknown): DiscoveredJob {
 }
 
 const compiler = new DefinitionCompiler();
+const reflector = new Reflector();
+
+function handler(cls: { prototype: object }, name: string): Function {
+  return (cls.prototype as Record<string, unknown>)[name] as Function;
+}
 
 // ---------------------------------------------------------------------------
 // Test 1: @OnTransition sets correct metadata
@@ -78,11 +85,7 @@ const compiler = new DefinitionCompiler();
 
 describe('@OnTransition metadata (happy)', () => {
   it('@OnTransition attaches BATCH_TRANSITION_METADATA with the given options', () => {
-    const meta = Reflect.getMetadata(
-      BATCH_TRANSITION_METADATA,
-      FlowDecoratorJob.prototype,
-      'onFail',
-    );
+    const meta = reflector.get(BATCH_TRANSITION_METADATA, handler(FlowDecoratorJob, 'onFail'));
     expect(meta).toEqual({
       fromStep: 's1',
       onStatus: FlowExecutionStatus.FAILED,
@@ -91,11 +94,7 @@ describe('@OnTransition metadata (happy)', () => {
   });
 
   it('@OnTransition with toStep=null stores the literal null (END transition)', () => {
-    const meta = Reflect.getMetadata(
-      BATCH_TRANSITION_METADATA,
-      FlowDecoratorEndJob.prototype,
-      'onDone',
-    );
+    const meta = reflector.get(BATCH_TRANSITION_METADATA, handler(FlowDecoratorEndJob, 'onDone'));
     expect(meta).toEqual({
       fromStep: 's1',
       onStatus: FlowExecutionStatus.COMPLETED,
@@ -108,7 +107,7 @@ describe('@OnTransition metadata (happy)', () => {
       notATransition(): void {}
     }
     expect(
-      Reflect.getMetadata(BATCH_TRANSITION_METADATA, NoTransition.prototype, 'notATransition'),
+      reflector.get(BATCH_TRANSITION_METADATA, handler(NoTransition, 'notATransition')),
     ).toBeUndefined();
   });
 });
@@ -164,11 +163,7 @@ describe('DefinitionCompiler — decorator ↔ builder parity (transitions)', ()
     const fromDecorator = compiler.compileFromDiscovered(discover(FlowDecoratorJob));
 
     // Builder-driven path
-    const transition = new FlowBuilder()
-      .from('s1')
-      .on(FlowExecutionStatus.FAILED)
-      .to('s2')
-      .build();
+    const transition = new FlowBuilder().from('s1').on(FlowExecutionStatus.FAILED).to('s2').build();
 
     const fromBuilder = compiler.compileFromBuilderConfig({
       id: 'flow-decorator-job',
@@ -207,11 +202,7 @@ describe('DefinitionCompiler — decorator ↔ builder parity (transitions)', ()
   it('parity also holds for END transitions (toStep=null)', () => {
     const fromDecorator = compiler.compileFromDiscovered(discover(FlowDecoratorEndJob));
 
-    const transition = new FlowBuilder()
-      .from('s1')
-      .on(FlowExecutionStatus.COMPLETED)
-      .end()
-      .build();
+    const transition = new FlowBuilder().from('s1').on(FlowExecutionStatus.COMPLETED).end().build();
 
     const fromBuilder = compiler.compileFromBuilderConfig({
       id: 'flow-decorator-end-job',

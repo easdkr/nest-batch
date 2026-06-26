@@ -1,15 +1,8 @@
 import 'reflect-metadata';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DiscoveryService, ModulesContainer } from '@nestjs/core';
+import { DiscoveryService, ModulesContainer, Reflector } from '@nestjs/core';
 
 import {
-  BATCH_JOB_METADATA,
-  BATCH_STEP_METADATA,
-  BATCH_TASKLET_METADATA,
-  BATCH_ITEM_READER_METADATA,
-  BATCH_ITEM_PROCESSOR_METADATA,
-  BATCH_ITEM_WRITER_METADATA,
-  BATCH_LISTENER_METADATA,
   BATCH_TRANSITION_METADATA,
   Jobable,
   Stepable,
@@ -36,8 +29,10 @@ import {
   OnSkipRead,
   OnSkipProcess,
   OnSkipWrite,
+  OnTransition,
 } from '../../src/decorators';
 import type {
+  DiscoveredItemMethod,
   DiscoveredJob,
   DiscoveredListener,
   DiscoveredStep,
@@ -183,24 +178,19 @@ class ListenersJob {
   onSkipWrite(): void {}
 }
 
-/** A job that synthesizes a transition directly on the prototype (the
- *  actual @OnTransition decorator is added in Task 31, but the metadata
- *  key already exists so the explorer can already discover it). */
+/** A job with declarative transition methods. */
 @Jobable({ id: 'transition-job' })
 class TransitionJob {
   run(): void {}
 
-  // Simulate @OnTransition: write the metadata key directly via the
-  // built-in `Reflect.metadata` decorator. This is what the real
-  // @OnTransition decorator (Task 31) will do under the hood.
-  @Reflect.metadata(BATCH_TRANSITION_METADATA, {
+  @OnTransition({
     fromStep: 'a',
     onStatus: 'COMPLETED',
     toStep: 'b',
   })
   onDone(): void {}
 
-  @Reflect.metadata(BATCH_TRANSITION_METADATA, {
+  @OnTransition({
     fromStep: 'a',
     onStatus: 'FAILED',
     toStep: null,
@@ -239,7 +229,7 @@ function makeExplorer(providers: ProviderLike[]): BatchExplorer {
   const discovery = new DiscoveryService(new ModulesContainer());
   // Patch the discovery service to return our test providers.
   discovery.getProviders = (() => providers) as DiscoveryService['getProviders'];
-  return new BatchExplorer(discovery);
+  return new BatchExplorer(discovery, new Reflector());
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +269,7 @@ describe('BatchExplorer — discoverFromProviders (pure)', () => {
     expect(out[0]!.classRef).toBe(SimpleJob);
     expect(out[0]!.jobOptions).toEqual({ id: 'simple-job' });
     expect(out[0]!.stepMethods).toEqual([]);
+    expect(out[0]!.itemMethods).toEqual([]);
     expect(out[0]!.listenerMethods).toEqual([]);
     expect(out[0]!.transitionMethods).toEqual([]);
   });
@@ -387,21 +378,44 @@ describe('BatchExplorer — step method discovery', () => {
   });
 });
 
-describe('BatchExplorer — item handler metadata (compiler feeds here)', () => {
+describe('BatchExplorer — item handler discovery (compiler feeds here)', () => {
   let explorer: BatchExplorer;
 
   beforeEach(() => {
     explorer = makeExplorer([]);
   });
 
-  it('leaves @ItemReader / @ItemProcessor / @ItemWriter metadata intact on the prototype', () => {
+  it('collects @ItemReader / @ItemProcessor / @ItemWriter methods', () => {
     const providers = providersOf([{ classRef: ChunkWithItemsJob }]);
     const out = explorer.discoverFromProviders(providers);
     expect(out).toHaveLength(1);
-    const proto = ChunkWithItemsJob.prototype;
-    expect(Reflect.getMetadata(BATCH_ITEM_READER_METADATA, proto, 'read')).toBe(true);
-    expect(Reflect.getMetadata(BATCH_ITEM_PROCESSOR_METADATA, proto, 'process')).toBe(true);
-    expect(Reflect.getMetadata(BATCH_ITEM_WRITER_METADATA, proto, 'write')).toBe(true);
+    expect(out[0]!.itemMethods).toEqual<DiscoveredItemMethod[]>([
+      { methodName: 'read', kind: 'reader' },
+      { methodName: 'process', kind: 'processor' },
+      { methodName: 'write', kind: 'writer' },
+    ]);
+  });
+
+  it('collects reader factory metadata', () => {
+    @Jobable({ id: 'factory-reader-job' })
+    class FactoryReaderJob {
+      @ItemReader({ factory: true })
+      createReader(): unknown {
+        return null;
+      }
+
+      @ItemWriter()
+      write(): void {}
+
+      @Stepable({ id: 'pipeline', chunkSize: 5 })
+      pipeline(): void {}
+    }
+
+    const out = explorer.discoverFromProviders(providersOf([{ classRef: FactoryReaderJob }]));
+    expect(out[0]!.itemMethods).toEqual<DiscoveredItemMethod[]>([
+      { methodName: 'createReader', kind: 'reader', factory: true },
+      { methodName: 'write', kind: 'writer' },
+    ]);
   });
 
   it('co-exists with @Stepable on a different method (chunk step + class-level item handlers)', () => {
@@ -411,11 +425,7 @@ describe('BatchExplorer — item handler metadata (compiler feeds here)', () => 
     expect(job.stepMethods).toHaveLength(1);
     expect(job.stepMethods[0]!.methodName).toBe('pipeline');
     expect(job.stepMethods[0]!.isTasklet).toBe(false);
-    // The class-level item metadata is still readable by the compiler:
-    const proto = ChunkWithItemsJob.prototype;
-    expect(Reflect.getMetadata(BATCH_ITEM_READER_METADATA, proto, 'read')).toBe(true);
-    expect(Reflect.getMetadata(BATCH_ITEM_PROCESSOR_METADATA, proto, 'process')).toBe(true);
-    expect(Reflect.getMetadata(BATCH_ITEM_WRITER_METADATA, proto, 'write')).toBe(true);
+    expect(job.itemMethods.map((item) => item.methodName)).toEqual(['read', 'process', 'write']);
   });
 });
 
@@ -539,14 +549,15 @@ describe('BatchExplorer — transition discovery', () => {
     expect(out[0]!.transitionMethods).toEqual([]);
   });
 
-  it('leaves BATCH_TRANSITION_METADATA intact on the prototype (Task 31 will formalize the decorator)', () => {
-    // Sanity check: the metadata key the explorer reads is the same one
-    // Task 31's @OnTransition decorator will write to.
+  it('leaves BATCH_TRANSITION_METADATA readable through Reflector on the method handler', () => {
     const providers = providersOf([{ classRef: TransitionJob }]);
     explorer.discoverFromProviders(providers);
-    expect(
-      Reflect.getMetadata(BATCH_TRANSITION_METADATA, TransitionJob.prototype, 'onDone'),
-    ).toEqual({ fromStep: 'a', onStatus: 'COMPLETED', toStep: 'b' });
+    const reflector = new Reflector();
+    expect(reflector.get(BATCH_TRANSITION_METADATA, TransitionJob.prototype.onDone)).toEqual({
+      fromStep: 'a',
+      onStatus: 'COMPLETED',
+      toStep: 'b',
+    });
   });
 });
 
@@ -561,7 +572,7 @@ describe('BatchExplorer — OnModuleInit hook', () => {
       return providers as ReturnType<typeof discovery.getProviders>;
     }) as DiscoveryService['getProviders'];
 
-    const explorer = new BatchExplorer(discovery);
+    const explorer = new BatchExplorer(discovery, new Reflector());
     expect(explorer.getDiscovered()).toEqual([]);
 
     explorer.onModuleInit();
@@ -577,7 +588,7 @@ describe('BatchExplorer — OnModuleInit hook', () => {
     discovery.getProviders = (() =>
       providers as ReturnType<typeof discovery.getProviders>) as DiscoveryService['getProviders'];
 
-    const explorer = new BatchExplorer(discovery);
+    const explorer = new BatchExplorer(discovery, new Reflector());
     explorer.onModuleInit();
     const discovered = explorer.getDiscovered();
     // The returned array is typed as readonly; we also verify it is the

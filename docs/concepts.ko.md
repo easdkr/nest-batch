@@ -1,6 +1,7 @@
 # 개념
 
-`nest-batch`는 Spring Batch의 모델을 NestJS DI에 맞게 옮긴 패키지입니다.
+`nest-batch`는 durable batch job, chunk 처리, 재시작 상태, runtime adapter를
+NestJS DI에 맞게 제공하는 패키지입니다.
 
 ## Job
 
@@ -53,6 +54,52 @@ write(items: User[]) {}
 
 chunk가 transaction boundary입니다. write가 실패하면 완료된 chunk를 다시 실행하지
 않고 현재 chunk만 rollback할 수 있습니다.
+
+## 재시작 안전 Reader
+
+chunk step은 step `ExecutionContext`에 `lastChunkIndex`를 저장합니다. 상태가 있는
+reader는 같은 context에 자체 cursor를 저장하려면 `ItemReader`와 `ItemStream`을 함께
+구현한 객체를 반환하면 됩니다.
+
+```ts
+class CursorReader implements ItemReader<UserRow>, ItemStream {
+  private cursor: string | null = null;
+
+  async open(context: ExecutionContext) {
+    const data =
+      context.data && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? (context.data as { cursor?: string })
+        : {};
+    this.cursor = data.cursor ?? null;
+  }
+
+  async read() {
+    const row = await findNextUser({ after: this.cursor });
+    this.cursor = row?.id ?? this.cursor;
+    return row;
+  }
+
+  async update(context: ExecutionContext) {
+    const data =
+      context.data && typeof context.data === 'object' && !Array.isArray(context.data)
+        ? context.data
+        : {};
+    return { ...context, data: { ...data, cursor: this.cursor } };
+  }
+
+  async close() {}
+}
+
+@Batch.ItemReader({ factory: true })
+createReader(ctx?: ItemExecutionContext) {
+  return new CursorReader(ctx?.jobParameters.tenantId);
+}
+```
+
+재시작 시 실패한 step의 전체 `ExecutionContext`가 새 step execution에 복사된 뒤
+`open()`이 호출됩니다. reader가 `ItemStream`이면 executor는 그 checkpoint를 신뢰하고
+이미 commit된 chunk를 drain하지 않습니다. 일반 method reader는 기존
+`lastChunkIndex` skip 동작을 유지합니다.
 
 ## Job Parameters
 
