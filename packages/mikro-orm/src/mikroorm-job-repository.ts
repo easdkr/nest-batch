@@ -300,7 +300,11 @@ export class MikroORMJobRepository extends JobRepository {
   async updateStepExecution(stepExecutionId: string, patch: StepExecutionPatch): Promise<void> {
     return RequestContext.create(this.em, async () => {
       const em = this.em;
-      const s = await em.findOne(StepExecutionEntity, { id: stepExecutionId });
+      const s = await em.findOne(
+        StepExecutionEntity,
+        { id: stepExecutionId },
+        { connectionType: 'write' },
+      );
       if (!s) throw new Error(`StepExecution not found: ${stepExecutionId}`);
       if (patch.status !== undefined) s.status = patch.status;
       if (patch.readCount !== undefined) s.readCount = patch.readCount;
