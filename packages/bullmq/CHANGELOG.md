@@ -1,5 +1,11 @@
 # @nest-batch/bullmq
 
+## 0.2.3
+
+### Patch Changes
+
+- 660f02e: Wait for Redis readiness before installing BullMQ job schedulers and record only successful registrations.
+
 ## 0.2.2
 
 ### Patch Changes
