@@ -115,15 +115,16 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
    * schedules are logged and skipped — the runtime keeps running
    * for the valid ones.
    */
-  onApplicationBootstrap(): void {
+  async onApplicationBootstrap(): Promise<void> {
     this.scheduleQueue = this.buildScheduleQueue();
     if (this.options.autoStartWorker) {
       this.scheduleWorker = this.buildScheduleWorker();
     }
+    await this.scheduleQueue.waitUntilReady();
     const entries = this.scheduleRegistry.getAll();
     for (const entry of entries) {
       try {
-        this.installSchedule(entry);
+        await this.installSchedule(entry);
       } catch (err) {
         this.logger.warn(
           `Failed to install schedule for "${entry.jobId}::${entry.scheduleName}": ` +
@@ -171,7 +172,7 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
    * calling `upsertJobScheduler` for them). Throws on
    * installation failure so the caller can log + continue.
    */
-  private installSchedule(entry: BatchScheduleEntry): void {
+  private async installSchedule(entry: BatchScheduleEntry): Promise<void> {
     if (entry.inert) {
       this.logger.log(
         `Skipping inert schedule: ${entry.jobId}::${entry.scheduleName} ` +
@@ -205,7 +206,7 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
         removeOnFail: { count: 1000 },
       },
     };
-    void this.scheduleQueue.upsertJobScheduler(
+    await this.scheduleQueue.upsertJobScheduler(
       schedulerKey,
       { pattern: entry.cron, tz: entry.timezone },
       template,
