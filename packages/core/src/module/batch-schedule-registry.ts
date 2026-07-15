@@ -58,10 +58,8 @@ function registryKey(jobId: string, scheduleName: string): string {
  * Lifecycle:
  *   1. The registry is constructed once at module init (Nest DI
  *      singleton).
- *   2. `BatchExplorer.onModuleInit` walks every provider, and
- *      `BatchBootstrapper.onApplicationBootstrap` walks the discovered
- *      jobs, calling `register(entry)` once per `@BatchScheduled`
- *      method.
+ *   2. `BatchExplorer.onModuleInit` walks every provider and calls
+ *      `register(entry)` once per discovered `@BatchScheduled` method.
  *   3. A scheduler adapter reads from the registry at app start to
  *      install the actual timers or external schedules.
  *

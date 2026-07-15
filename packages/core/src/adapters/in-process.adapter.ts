@@ -89,7 +89,7 @@ export class InProcessModule {}
  * ## Scheduling
  *
  * `InProcessSchedule` is registered as a transport global provider.
- * It consumes `BatchScheduleRegistry` after discovery/bootstrap and
+ * It consumes `BatchScheduleRegistry` after module-init discovery and
  * turns non-inert `@BatchScheduled` cron ticks into
  * `JobLauncher.launch(...)` calls in this same process. That gives
  * single-process apps a real cron path without Redis or another

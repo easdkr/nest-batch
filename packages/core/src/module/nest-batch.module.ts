@@ -25,9 +25,7 @@ import {
   IN_PROCESS_EXECUTION_STRATEGY_PROVIDER,
 } from '../execution/in-process-execution-strategy';
 import { FlowEvaluator } from '../flow/flow-evaluator';
-import { BATCH_SCHEDULED_OPTIONS } from '../decorators/constants';
-import type { BatchScheduledMetadata } from '../scheduling/batch-scheduled';
-import { BatchScheduleRegistry, type BatchScheduleEntry } from './batch-schedule-registry';
+import { BatchScheduleRegistry } from './batch-schedule-registry';
 import {
   BATCH_SCHEDULE_REGISTRY,
   JOB_REPOSITORY_TOKEN,
@@ -156,16 +154,13 @@ const OPTIONS_FACTORY: symbol = Symbol.for('@nest-batch/core/OPTIONS_FACTORY');
  *     before the app actually starts handling requests, so all of:
  *     `forRoot` / `forRootAsync` providers, custom `useFactory` results,
  *     and user-supplied job classes, are guaranteed to be live.
- *   - Keeping the wire-up in a dedicated `BatchBootstrapper` means the
- *     explorer/compiler/registry stay pure (no `onApplicationBootstrap`
- *     coupling) and are independently testable.
+ *   - Keeping job compilation in a dedicated `BatchBootstrapper` means
+ *     the compiler and job registry remain independently testable.
  *
- * The bootstrapper also walks every discovered job for
- * `@BatchScheduled` metadata and registers the corresponding entries
- * into the `BatchScheduleRegistry` so scheduler adapters have a single,
- * stable place to read them from. Core itself remains metadata-only —
- * runtime adapters install timers and bridge schedule fires into job
- * launches.
+ * Schedule metadata is registered earlier by
+ * `BatchExplorer.onModuleInit()`. That guarantees scheduler adapters can
+ * read a complete `BatchScheduleRegistry` regardless of imported-module
+ * bootstrap ordering.
  */
 @Injectable()
 export class BatchBootstrapper implements OnApplicationBootstrap {
@@ -175,11 +170,10 @@ export class BatchBootstrapper implements OnApplicationBootstrap {
     private readonly explorer: BatchExplorer,
     private readonly compiler: DefinitionCompiler,
     private readonly registry: JobRegistry,
-    private readonly scheduleRegistry: BatchScheduleRegistry,
   ) {}
 
   onApplicationBootstrap(): void {
-    // 1. Compile + register every discovered job.
+    // Compile + register every discovered job.
     for (const discovered of this.explorer.getDiscovered()) {
       const jobId = discovered.jobOptions.id;
       try {
@@ -191,71 +185,6 @@ export class BatchBootstrapper implements OnApplicationBootstrap {
         throw err;
       }
     }
-
-    // 2. Walk the same discovered set for @BatchScheduled metadata
-    //    and populate BatchScheduleRegistry. The metadata is stamped
-    //    by the decorator via `SetMetadata(KEY, value)`, which Nest
-    //    writes to the *function reference* of the decorated method
-    //    (not to the prototype+name slot). We therefore read it from
-    //    `prototype[name]` (the function), not from the (proto, name)
-    //    tuple.
-    for (const discovered of this.explorer.getDiscovered()) {
-      const jobId = discovered.jobOptions.id;
-      const prototype = discovered.classRef.prototype as Record<string, unknown>;
-      for (const name of this.allMethodNames(prototype)) {
-        const fn = prototype[name];
-        if (typeof fn !== 'function') continue;
-        const meta = Reflect.getMetadata(BATCH_SCHEDULED_OPTIONS, fn) as
-          | BatchScheduledMetadata
-          | undefined;
-        if (!meta) continue;
-        const entry: BatchScheduleEntry = {
-          jobId,
-          scheduleName: meta.options.name,
-          methodName: name,
-          cron: meta.cron,
-          timezone: meta.options.timezone,
-          overlap: meta.options.overlap,
-          startAt: meta.options.startAt,
-          endAt: meta.options.endAt,
-          inert: meta.inert,
-        };
-        try {
-          this.scheduleRegistry.register(entry);
-          this.logger.log(
-            `Registered schedule for job "${jobId}"::${meta.options.name} ` +
-              `(method="${name}", cron="${meta.cron}", tz="${meta.options.timezone}")`,
-          );
-        } catch (err) {
-          this.logger.error(
-            `Failed to register schedule for job "${jobId}"::${meta.options.name}: ${
-              (err as Error).message
-            }`,
-          );
-          throw err;
-        }
-      }
-    }
-  }
-
-  /**
-   * Walk the prototype chain and return every own method name
-   * (excluding `constructor`) up to (but not including)
-   * `Object.prototype`. Same shape as `BatchExplorer.allMethodNames` —
-   * we duplicate the walker here so the bootstrapper remains
-   * independent of the explorer's internals.
-   */
-  private allMethodNames(prototype: object): Set<string> {
-    const names = new Set<string>();
-    let proto: object | null = prototype;
-    while (proto && proto !== Object.prototype) {
-      for (const name of Object.getOwnPropertyNames(proto)) {
-        if (name === 'constructor') continue;
-        names.add(name);
-      }
-      proto = Object.getPrototypeOf(proto);
-    }
-    return names;
   }
 }
 

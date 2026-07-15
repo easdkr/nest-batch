@@ -1,6 +1,7 @@
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { DiscoveryService, Reflector } from '@nestjs/core';
 import {
+  BATCH_SCHEDULED_OPTIONS,
   BATCH_JOB_METADATA,
   BATCH_STEP_METADATA,
   BATCH_TASKLET_METADATA,
@@ -20,6 +21,8 @@ import type {
   TaskletMetadata,
 } from '../decorators';
 import type { ListenerKind, ListenerPhase, SkipSubKind } from '../core/ir/listener-definition';
+import type { BatchScheduledMetadata } from '../scheduling/batch-scheduled';
+import { BatchScheduleRegistry, type BatchScheduleEntry } from '../module/batch-schedule-registry';
 
 /**
  * Raw shape of a discovered batch job, as it appears immediately after the
@@ -104,7 +107,9 @@ export interface ProviderLike {
  * `BatchExplorer` is a Nest `OnModuleInit` provider that walks every
  * provider registered in the application, looks for classes carrying
  * `@Jobable(...)` metadata, and records every `@Stepable` / `@Tasklet` /
- * listener / `@OnTransition` method on each discovered class.
+ * listener / `@OnTransition` method on each discovered class. It also
+ * records `@BatchScheduled` metadata in `BatchScheduleRegistry` during
+ * the same module-init hook, before runtime adapters bootstrap.
  *
  * The actual `JobDefinition` IR is produced downstream by the
  * `DefinitionCompiler` (Task 8). The explorer only collects the raw
@@ -121,12 +126,15 @@ export class BatchExplorer implements OnModuleInit {
   constructor(
     private readonly discovery: DiscoveryService,
     private readonly reflector: Reflector,
+    @Optional()
+    private readonly scheduleRegistry?: BatchScheduleRegistry,
   ) {}
 
   /** Hook called by Nest once the DI container is ready. */
   onModuleInit(): void {
     const providers = this.discovery.getProviders();
     this.discovered = this.discoverFromProviders(providers as ProviderLike[]);
+    this.registerSchedules(this.discovered);
   }
 
   /**
@@ -165,6 +173,53 @@ export class BatchExplorer implements OnModuleInit {
       this.logger.log(`Discovered job: ${jobOptions.id}`);
     }
     return out;
+  }
+
+  /**
+   * Populate the schedule registry during module initialization so every
+   * scheduler adapter sees a complete snapshot from its later
+   * `OnApplicationBootstrap` hook, regardless of module import order.
+   */
+  private registerSchedules(discoveredJobs: readonly DiscoveredJob[]): void {
+    if (this.scheduleRegistry === undefined) return;
+
+    for (const discovered of discoveredJobs) {
+      const jobId = discovered.jobOptions.id;
+      const prototype = discovered.classRef.prototype as Record<string, unknown>;
+      for (const name of this.allMethodNames(prototype)) {
+        const fn = prototype[name];
+        if (typeof fn !== 'function') continue;
+        const meta = this.reflector.get<BatchScheduledMetadata>(BATCH_SCHEDULED_OPTIONS, fn);
+        if (!meta) continue;
+
+        const entry: BatchScheduleEntry = {
+          jobId,
+          scheduleName: meta.options.name,
+          methodName: name,
+          cron: meta.cron,
+          timezone: meta.options.timezone,
+          overlap: meta.options.overlap,
+          startAt: meta.options.startAt,
+          endAt: meta.options.endAt,
+          inert: meta.inert,
+        };
+
+        try {
+          this.scheduleRegistry.register(entry);
+          this.logger.log(
+            `Registered schedule for job "${jobId}"::${meta.options.name} ` +
+              `(method="${name}", cron="${meta.cron}", tz="${meta.options.timezone}")`,
+          );
+        } catch (err) {
+          this.logger.error(
+            `Failed to register schedule for job "${jobId}"::${meta.options.name}: ${
+              (err as Error).message
+            }`,
+          );
+          throw err;
+        }
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
