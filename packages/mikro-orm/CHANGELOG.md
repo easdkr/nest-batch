@@ -1,5 +1,11 @@
 # @nest-batch/mikro-orm
 
+## 0.3.4
+
+### Patch Changes
+
+- 4641cce: Read step executions from the primary connection before updating them to avoid read-replica lag races after creation.
+
 ## 0.3.3
 
 ### Patch Changes
