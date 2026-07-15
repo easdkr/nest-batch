@@ -1,5 +1,11 @@
 # @nest-batch/bullmq
 
+## 0.2.5
+
+### Patch Changes
+
+- 8066dd9: Wait for the Redis connection to become ready before installing BullMQ job schedulers.
+
 ## 0.2.4
 
 ### Patch Changes
