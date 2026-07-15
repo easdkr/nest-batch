@@ -104,11 +104,9 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
 
   /**
    * Walk the registry and install every non-inert entry as a
-   * BullMQ repeating job. Runs AFTER the `BatchBootstrapper` has
-   * populated the registry (both hooks are on
-   * `OnApplicationBootstrap`, but Nest calls them in
-   * provider-registration order; the bootstrapper is registered
-   * before this service by `BullmqBatchModule.forRoot()`).
+   * BullMQ repeating job. `BatchExplorer.onModuleInit()` has already
+   * populated the registry before Nest starts any application-bootstrap
+   * hooks, so this does not depend on imported-module provider order.
    *
    * Each entry is wrapped in a per-entry `try` so a single bad
    * schedule does not abort the rest of the installation. Bad

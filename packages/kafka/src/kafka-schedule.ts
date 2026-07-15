@@ -82,8 +82,9 @@ export class KafkaSchedule implements OnApplicationBootstrap, OnApplicationShutd
 
   /**
    * Walk the registry and install every non-inert entry as a
-   * cron-based interval. Runs AFTER the `BatchBootstrapper` has
-   * populated the registry.
+   * cron-based interval. `BatchExplorer.onModuleInit()` has already
+   * populated the registry before Nest starts any application-bootstrap
+   * hooks, so this does not depend on imported-module provider order.
    *
    * Each entry is wrapped in a per-entry `try` so a single bad
    * schedule does not abort the rest of the installation. Bad
