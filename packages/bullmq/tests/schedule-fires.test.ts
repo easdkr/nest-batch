@@ -32,11 +32,11 @@
  *     @BatchScheduled stamps inert from BATCH_SCHEDULED_DISABLE
  */
 
+import { BatchScheduleRegistry, type JobLauncher } from '@nest-batch/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { BatchScheduleRegistry, type JobLauncher } from '@nest-batch/core';
-
 import { BULLMQ_SCHEDULE_QUEUE_NAME, BullmqSchedule } from '../src/bullmq-schedule';
+
 import type { ResolvedBullMqModuleOptions } from '../src/module-options';
 
 // ---------------------------------------------------------------------------
@@ -174,6 +174,26 @@ describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
     await bootstrap;
 
     expect(bullmqMock.upsertJobScheduler).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not wait for the schedule queue when there are no schedules to install', async () => {
+    let releaseReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      releaseReady = resolve;
+    });
+    bullmqMock.waitUntilReady.mockImplementationOnce(() => ready);
+
+    const service = new BullmqSchedule(new BatchScheduleRegistry(), baseOptions, fakeLauncher());
+
+    const bootstrap = service.onApplicationBootstrap();
+    await Promise.resolve();
+    const readinessCalls = bullmqMock.waitUntilReady.mock.calls.length;
+
+    releaseReady();
+    await bootstrap;
+
+    expect(readinessCalls).toBe(0);
+    expect(service.installedSchedulerKeys()).toEqual([]);
   });
 
   it('records a scheduler key only after upsertJobScheduler succeeds', async () => {

@@ -1,7 +1,17 @@
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import swc from 'unplugin-swc';
 import { defineConfig } from 'vitest/config';
 
+const here = dirname(fileURLToPath(import.meta.url));
+
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@nest-batch/core': resolve(here, '../core/src/index.ts'),
+    },
+  },
   plugins: [
     swc.vite({
       module: { type: 'es6' },
@@ -16,7 +26,9 @@ export default defineConfig({
   test: {
     globals: false,
     environment: 'node',
-    include: ['tests/**/*.test.ts', 'tests/**/*.spec.ts', 'src/**/*.spec.ts'],
-    exclude: ['tests/**/*.e2e.test.ts'],
+    testTimeout: 60_000,
+    hookTimeout: 120_000,
+    include: ['tests/**/*.e2e.test.ts'],
+    passWithNoTests: false,
   },
 });
