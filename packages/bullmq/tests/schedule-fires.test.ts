@@ -52,12 +52,14 @@ import type { ResolvedBullMqModuleOptions } from '../src/module-options';
 // exercise but the impl references).
 
 const bullmqMock = vi.hoisted(() => {
+  const waitUntilReady = vi.fn(async () => undefined);
   const upsertJobScheduler = vi.fn(async () => undefined);
   const removeJobScheduler = vi.fn(async () => undefined);
   const queueClose = vi.fn(async () => undefined);
   const workerClose = vi.fn(async () => undefined);
   let workerProcessor: ((job: unknown) => Promise<unknown>) | null = null;
   const Queue = vi.fn().mockImplementation(() => ({
+    waitUntilReady,
     upsertJobScheduler,
     removeJobScheduler,
     close: queueClose,
@@ -67,6 +69,7 @@ const bullmqMock = vi.hoisted(() => {
     return { close: workerClose };
   });
   return {
+    waitUntilReady,
     upsertJobScheduler,
     removeJobScheduler,
     queueClose,
@@ -129,6 +132,7 @@ describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
   beforeEach(() => {
     bullmqMock.Queue.mockClear();
     bullmqMock.Worker.mockClear();
+    bullmqMock.waitUntilReady.mockClear();
     bullmqMock.upsertJobScheduler.mockClear();
     bullmqMock.removeJobScheduler.mockClear();
     bullmqMock.queueClose.mockClear();
@@ -144,14 +148,48 @@ describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
     delete process.env.BATCH_SCHEDULED_DISABLE;
   });
 
-  it("installs an upsertJobScheduler with the entry's pattern + tz when inert=false", () => {
+  it('waits for the schedule queue to be ready before installing schedules', async () => {
+    let releaseReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      releaseReady = resolve;
+    });
+    bullmqMock.waitUntilReady.mockImplementationOnce(() => ready);
+
+    const registry = buildRegistry('*/1 * * * * *', 'UTC', /* inert */ false);
+    const service = new BullmqSchedule(registry, baseOptions, fakeLauncher());
+
+    const bootstrap = service.onApplicationBootstrap();
+    await Promise.resolve();
+
+    expect(bullmqMock.waitUntilReady).toHaveBeenCalledTimes(1);
+    expect(bullmqMock.upsertJobScheduler).not.toHaveBeenCalled();
+
+    releaseReady();
+    await bootstrap;
+
+    expect(bullmqMock.upsertJobScheduler).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a scheduler key only after upsertJobScheduler succeeds', async () => {
+    bullmqMock.upsertJobScheduler.mockRejectedValueOnce(new Error('Redis connection is closed'));
+
+    const registry = buildRegistry('*/1 * * * * *', 'UTC', /* inert */ false);
+    const service = new BullmqSchedule(registry, baseOptions, fakeLauncher());
+
+    await service.onApplicationBootstrap();
+
+    expect(bullmqMock.upsertJobScheduler).toHaveBeenCalledTimes(1);
+    expect(service.installedSchedulerKeys()).toEqual([]);
+  });
+
+  it("installs an upsertJobScheduler with the entry's pattern + tz when inert=false", async () => {
     // Sanity: make sure the env is in the "active" state for this test.
     process.env.BATCH_SCHEDULED_DISABLE = '0';
 
     const registry = buildRegistry('*/1 * * * * *', 'UTC', /* inert */ false);
     const service = new BullmqSchedule(registry, baseOptions, fakeLauncher());
 
-    service.onApplicationBootstrap();
+    await service.onApplicationBootstrap();
 
     // 1. The schedule queue was constructed exactly once, with the
     //    documented queue name and a connection record derived from
@@ -197,7 +235,7 @@ describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
     expect(service.installedSchedulerKeys()).toEqual(['jobA::hourly']);
   });
 
-  it('skips upsertJobScheduler when the entry is inert (BATCH_SCHEDULED_DISABLE=1)', () => {
+  it('skips upsertJobScheduler when the entry is inert (BATCH_SCHEDULED_DISABLE=1)', async () => {
     process.env.BATCH_SCHEDULED_DISABLE = '1';
 
     // Mirror what the decorator stamps: when the env is set, the
@@ -208,7 +246,7 @@ describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
     const registry = buildRegistry('*/1 * * * * *', 'UTC', /* inert */ true);
     const service = new BullmqSchedule(registry, baseOptions, fakeLauncher());
 
-    service.onApplicationBootstrap();
+    await service.onApplicationBootstrap();
 
     // The schedule queue IS still built — the service constructs it
     // unconditionally before iterating the registry. What changes is
@@ -228,7 +266,7 @@ describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
     };
     const service = new BullmqSchedule(registry, options, launcher);
 
-    service.onApplicationBootstrap();
+    await service.onApplicationBootstrap();
 
     expect(bullmqMock.Worker).toHaveBeenCalledTimes(1);
     const [name, _processor, workerOpts] = bullmqMock.Worker.mock.calls[0] ?? [];
