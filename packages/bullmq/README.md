@@ -51,3 +51,13 @@ BATCH_WORKER=1 node dist/main.js
 
 When `autoStartWorker` is enabled, this package can also bridge discovered
 `@BatchScheduled` entries into job launches.
+
+Scheduler definitions are shared Redis/Valkey state. Each application instance
+upserts the desired schedules on startup, but shutdown closes only that
+instance's worker and connections. Removing or renaming a schedule therefore
+requires explicit cleanup or a separate desired-state reconciliation process.
+
+When upgrading from `0.2.3`, an old task can still remove scheduler definitions
+during shutdown. Use a one-time stop-before-start rollout (`0 -> 1`) or explicitly
+re-register schedules after the rollout. Normal rolling deployments are safe
+once every running task uses the fixed version.

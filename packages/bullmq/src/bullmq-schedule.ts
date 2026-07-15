@@ -21,8 +21,7 @@ import { BULLMQ_MODULE_OPTIONS, type ResolvedBullMqModuleOptions } from './modul
  * intentionally use a DIFFERENT queue from the runtime service's
  * `BULLMQ_QUEUE_NAME` so cron-triggered jobs and ad-hoc
  * `launch()`-triggered jobs are inspectable in isolation (and so
- * the schedule-removal path on shutdown can tear them down
- * without touching the runtime work queue).
+ * schedule traffic stays separate from the runtime work queue).
  *
  * BullMQ 5 rejects queue names that contain a colon (`:`) because
  * it is the path separator in the key layout. We use a hyphen
@@ -54,10 +53,11 @@ export interface BullmqSchedulePayload {
  *      service also starts a schedule-queue worker that bridges
  *      `{ jobId, scheduleName, methodName }` into
  *      `JobLauncher.launch(jobId, params)`.
- *   3. `OnApplicationShutdown` removes every installed scheduler
- *      (via `queue.removeJobScheduler`) and closes the queue.
- *      Removal is best-effort: a partial failure logs a warning
- *      but does not block the rest of the shutdown.
+ *   3. `OnApplicationShutdown` closes only this process's worker
+ *      and queue connection. Job schedulers are shared resources
+ *      stored in Redis/Valkey, so they remain registered for other
+ *      application instances. Deleted or renamed schedules require
+ *      explicit cleanup or desired-state reconciliation.
  *
  * Why a dedicated service (not a method on `BullmqRuntime`)?
  *   - The runtime service is `IExecutionStrategy`-facing; it
@@ -85,10 +85,10 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
   private scheduleWorker: Worker<BullmqSchedulePayload> | null = null;
 
   /**
-   * Every schedule key installed during `onApplicationBootstrap`.
-   * Tracked so the shutdown path can `removeJobScheduler` for
-   * each one deterministically. A `Set` keeps the test assertions
-   * order-independent.
+   * Every schedule key successfully upserted during
+   * `onApplicationBootstrap`. Retained for diagnostics; ownership
+   * is shared through Redis/Valkey rather than tied to this process.
+   * A `Set` keeps the test assertions order-independent.
    */
   private readonly installedKeys = new Set<string>();
 
@@ -141,9 +141,10 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
   }
 
   /**
-   * Tear down every installed scheduler and close the schedule
-   * queue. Idempotent: a second `onApplicationShutdown` short-
-   * circuits to the first close's promise.
+   * Close this process's schedule worker and queue connection.
+   * Shared scheduler definitions remain registered in Redis/Valkey.
+   * Idempotent: a second `onApplicationShutdown` short-circuits to
+   * the first close's promise.
    */
   async onApplicationShutdown(): Promise<void> {
     if (this.closePromise !== null) {
@@ -318,11 +319,9 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
   // -------------------------------------------------------------------------
 
   /**
-   * Close the schedule queue. `removeJobScheduler` is called
-   * first for every installed key so the next run of the host
-   * app does not inherit leftover schedulers. Each removal is
-   * best-effort: a failure on one key does not prevent the
-   * others from being removed.
+   * Close only resources owned by this process. Scheduler keys are
+   * shared Redis/Valkey desired state and must not be removed when a
+   * single application instance shuts down.
    */
   private async close(): Promise<void> {
     if (this.scheduleWorker !== null) {
@@ -336,17 +335,6 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
       this.scheduleWorker = null;
     }
     if (this.scheduleQueue !== null) {
-      for (const key of this.installedKeys) {
-        try {
-          await this.scheduleQueue.removeJobScheduler(key);
-        } catch (err) {
-          this.logger.warn(
-            `removeJobScheduler("${key}") failed: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
       try {
         await this.scheduleQueue.close();
       } catch (err) {
