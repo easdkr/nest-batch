@@ -1,5 +1,11 @@
 # @nest-batch/core
 
+## 0.2.6
+
+### Patch Changes
+
+- fcd7318: Register `@BatchScheduled` metadata during module initialization so scheduler adapters always see the complete registry regardless of Nest module bootstrap order.
+
 ## 0.2.5
 
 ### Patch Changes
