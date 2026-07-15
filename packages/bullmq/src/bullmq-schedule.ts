@@ -1,4 +1,10 @@
 import {
+  BatchScheduleRegistry,
+  JobLauncher,
+  type BatchScheduleEntry,
+  type JobParameters,
+} from '@nest-batch/core';
+import {
   Inject,
   Injectable,
   Logger,
@@ -6,13 +12,6 @@ import {
   OnApplicationShutdown,
 } from '@nestjs/common';
 import { Queue, Worker, type Job, type JobsOptions } from 'bullmq';
-
-import {
-  BatchScheduleRegistry,
-  JobLauncher,
-  type BatchScheduleEntry,
-  type JobParameters,
-} from '@nest-batch/core';
 
 import { BULLMQ_MODULE_OPTIONS, type ResolvedBullMqModuleOptions } from './module-options';
 
@@ -118,8 +117,10 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
     if (this.options.autoStartWorker) {
       this.scheduleWorker = this.buildScheduleWorker();
     }
-    await this.scheduleQueue.waitUntilReady();
     const entries = this.scheduleRegistry.getAll();
+    if (entries.length > 0) {
+      await this.scheduleQueue.waitUntilReady();
+    }
     for (const entry of entries) {
       try {
         await this.installSchedule(entry);
@@ -237,10 +238,10 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
         removeOnFail: { count: 1000 },
       },
       prefix: this.options.connection.keyPrefix,
-      skipWaitingForReady: true,
-      // Mirrors the runtime service: skip the constructor-time
-      // version probe so the queue does not throw on a Redis
-      // client that is not yet ready.
+      // Skip version compatibility enforcement, but keep BullMQ's
+      // default readiness wait. The producer disables ioredis's
+      // offline queue, so scheduler commands must not run before
+      // the connection becomes writable.
       skipVersionCheck: true,
     });
   }
