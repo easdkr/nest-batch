@@ -1,5 +1,11 @@
 # @nest-batch/bullmq
 
+## 0.2.4
+
+### Patch Changes
+
+- dbeeaf6: Preserve shared BullMQ job schedulers when an application instance shuts down.
+
 ## 0.2.3
 
 ### Patch Changes
