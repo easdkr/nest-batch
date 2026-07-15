@@ -47,14 +47,18 @@ import type { ResolvedBullMqModuleOptions } from '../src/module-options';
 // share the spied `upsertJobScheduler` across the mock factory and the
 // test body. The fake `Queue` exposes the same surface `BullmqSchedule`
 // touches: a constructor (spied for name + connection assertion),
-// `upsertJobScheduler` (the call under test), `removeJobScheduler`,
-// and `close` (used by the shutdown path, which the test does not
-// exercise but the impl references).
+// `upsertJobScheduler` (the call under test), `removeJobScheduler`
+// (used to model the destructive legacy shutdown), and `close`.
 
 const bullmqMock = vi.hoisted(() => {
+  const sharedSchedulers = new Set<string>();
   const waitUntilReady = vi.fn(async () => undefined);
-  const upsertJobScheduler = vi.fn(async () => undefined);
-  const removeJobScheduler = vi.fn(async () => undefined);
+  const upsertJobScheduler = vi.fn(async (key: string) => {
+    sharedSchedulers.add(key);
+  });
+  const removeJobScheduler = vi.fn(async (key: string) => {
+    sharedSchedulers.delete(key);
+  });
   const queueClose = vi.fn(async () => undefined);
   const workerClose = vi.fn(async () => undefined);
   let workerProcessor: ((job: unknown) => Promise<unknown>) | null = null;
@@ -69,6 +73,7 @@ const bullmqMock = vi.hoisted(() => {
     return { close: workerClose };
   });
   return {
+    sharedSchedulers,
     waitUntilReady,
     upsertJobScheduler,
     removeJobScheduler,
@@ -130,6 +135,7 @@ function fakeLauncher(): JobLauncher {
 
 describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
   beforeEach(() => {
+    bullmqMock.sharedSchedulers.clear();
     bullmqMock.Queue.mockClear();
     bullmqMock.Worker.mockClear();
     bullmqMock.waitUntilReady.mockClear();
@@ -292,6 +298,45 @@ describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
       scheduleName: 'hourly',
       scheduledAt: '2026-01-02T03:04:05.000Z',
       scheduleQueueJobId: 'repeat:jobA::hourly:1',
+    });
+  });
+
+  it('keeps a shared scheduler active when one of two instances shuts down', async () => {
+    const registryA = buildRegistry('*/1 * * * * *', 'UTC', /* inert */ false);
+    const registryB = buildRegistry('*/1 * * * * *', 'UTC', /* inert */ false);
+    const launcherA = fakeLauncher();
+    const launcherB = fakeLauncher();
+    const options: ResolvedBullMqModuleOptions = {
+      ...baseOptions,
+      autoStartWorker: true,
+    };
+    const instanceA = new BullmqSchedule(registryA, options, launcherA);
+    const instanceB = new BullmqSchedule(registryB, options, launcherB);
+
+    await instanceA.onApplicationBootstrap();
+    await instanceB.onApplicationBootstrap();
+
+    expect(bullmqMock.upsertJobScheduler).toHaveBeenCalledTimes(2);
+    expect(bullmqMock.sharedSchedulers).toEqual(new Set(['jobA::hourly']));
+
+    await instanceA.onApplicationShutdown();
+
+    expect(bullmqMock.removeJobScheduler).not.toHaveBeenCalled();
+    expect(bullmqMock.sharedSchedulers).toEqual(new Set(['jobA::hourly']));
+
+    const instanceBProcessor = bullmqMock.getWorkerProcessor();
+    await instanceBProcessor?.({
+      id: 'repeat:jobA::hourly:2',
+      timestamp: Date.UTC(2026, 0, 2, 3, 4, 6),
+      data: { jobId: 'jobA', scheduleName: 'hourly', methodName: 'method' },
+    });
+
+    expect(launcherA.launch).not.toHaveBeenCalled();
+    expect(launcherB.launch).toHaveBeenCalledWith('jobA', {
+      scheduled: true,
+      scheduleName: 'hourly',
+      scheduledAt: '2026-01-02T03:04:06.000Z',
+      scheduleQueueJobId: 'repeat:jobA::hourly:2',
     });
   });
 });

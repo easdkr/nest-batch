@@ -50,3 +50,13 @@ BATCH_WORKER=1 node dist/main.js
 
 `autoStartWorker`가 활성화되면 이 패키지는 발견된 `@BatchScheduled` entry를 job
 launch로 연결할 수 있습니다.
+
+Scheduler 정의는 Redis/Valkey에 저장되는 공유 상태입니다. 각 application instance는
+부팅할 때 원하는 scheduler를 upsert하지만, 종료할 때는 해당 instance의 worker와
+connection만 닫습니다. 삭제되거나 이름이 바뀐 schedule은 명시적 cleanup 또는 별도의
+desired-state reconciliation으로 정리해야 합니다.
+
+`0.2.3`에서 업그레이드할 때는 기존 task가 종료되며 scheduler 정의를 마지막으로 삭제할
+수 있습니다. 최초 한 번은 stop-before-start 방식(`0 -> 1`)으로 배포하거나 배포 완료 후
+schedule을 명시적으로 재등록해야 합니다. 모든 실행 task가 수정 버전을 사용한 이후에는
+일반 rolling deployment가 안전합니다.
