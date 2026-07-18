@@ -52,15 +52,15 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+        uses: actions/checkout@v5
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -110,18 +110,18 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
