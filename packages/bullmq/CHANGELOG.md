@@ -1,5 +1,13 @@
 # @nest-batch/bullmq
 
+## 0.2.6
+
+### Patch Changes
+
+- 209418c: Prevent BullMQ schedules with `overlap: 'skip'` from creating a new execution while the previous scheduled execution is still active, without dropping volatile schedule parameters such as `scheduledAt`.
+- Updated dependencies [209418c]
+  - @nest-batch/core@0.2.7
+
 ## 0.2.5
 
 ### Patch Changes
