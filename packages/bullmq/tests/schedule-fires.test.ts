@@ -32,7 +32,17 @@
  *     @BatchScheduled stamps inert from BATCH_SCHEDULED_DISABLE
  */
 
-import { BatchScheduleRegistry, type JobLauncher } from '@nest-batch/core';
+import {
+  BatchScheduleRegistry,
+  InMemoryJobRepository,
+  JobExecutor,
+  JobLauncher,
+  JobRegistry,
+  JobStatus,
+  RefKind,
+  type BatchOverlapPolicy,
+  type IExecutionStrategy,
+} from '@nest-batch/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BULLMQ_SCHEDULE_QUEUE_NAME, BullmqSchedule } from '../src/bullmq-schedule';
@@ -107,7 +117,12 @@ const baseOptions: ResolvedBullMqModuleOptions = {
   autoStartWorker: false,
 };
 
-function buildRegistry(cron: string, timezone: string, inert: boolean): BatchScheduleRegistry {
+function buildRegistry(
+  cron: string,
+  timezone: string,
+  inert: boolean,
+  overlap?: BatchOverlapPolicy,
+): BatchScheduleRegistry {
   const registry = new BatchScheduleRegistry();
   registry.register({
     jobId: 'jobA',
@@ -116,6 +131,7 @@ function buildRegistry(cron: string, timezone: string, inert: boolean): BatchSch
     cron,
     timezone,
     inert,
+    overlap,
   });
   return registry;
 }
@@ -127,6 +143,39 @@ function fakeLauncher(): JobLauncher {
       status: 'STARTING',
     })),
   } as unknown as JobLauncher;
+}
+
+function fireAndForgetLauncher(): {
+  launcher: JobLauncher;
+  repository: InMemoryJobRepository;
+} {
+  const jobRegistry = new JobRegistry();
+  jobRegistry.register({
+    id: 'jobA',
+    steps: {
+      step: {
+        kind: 'tasklet',
+        id: 'step',
+        tasklet: { kind: RefKind.BuilderLambda, fn: async () => 'ok' },
+        listeners: [],
+      },
+    },
+    startStepId: 'step',
+    transitions: [],
+    listeners: [],
+    restartable: false,
+    allowDuplicateInstances: false,
+  });
+  const repository = new InMemoryJobRepository();
+  const strategy: IExecutionStrategy = {
+    name: 'fire-and-forget',
+    launch: vi.fn(async (_job, _params, ctx) => ({
+      kind: 'enqueued' as const,
+      queueJobId: ctx.executionId,
+    })),
+  };
+  const launcher = new JobLauncher(jobRegistry, repository, {} as JobExecutor, strategy);
+  return { launcher, repository };
 }
 
 // ---------------------------------------------------------------------------
@@ -313,12 +362,57 @@ describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
     });
 
     expect(launcher.launch).toHaveBeenCalledTimes(1);
-    expect(launcher.launch).toHaveBeenCalledWith('jobA', {
-      scheduled: true,
-      scheduleName: 'hourly',
-      scheduledAt: '2026-01-02T03:04:05.000Z',
-      scheduleQueueJobId: 'repeat:jobA::hourly:1',
+    expect(launcher.launch).toHaveBeenCalledWith(
+      'jobA',
+      {
+        scheduled: true,
+        scheduleName: 'hourly',
+        scheduledAt: '2026-01-02T03:04:05.000Z',
+        scheduleQueueJobId: 'repeat:jobA::hourly:1',
+      },
+      {
+        identifyingParams: {
+          scheduled: true,
+          scheduleName: 'hourly',
+        },
+      },
+    );
+  });
+
+  it('does not create a new execution for overlap=skip while the previous BullMQ execution is still active', async () => {
+    const registry = buildRegistry('*/1 * * * * *', 'UTC', false, 'skip');
+    const { launcher, repository } = fireAndForgetLauncher();
+    const options: ResolvedBullMqModuleOptions = {
+      ...baseOptions,
+      autoStartWorker: true,
+    };
+    const service = new BullmqSchedule(registry, options, launcher);
+
+    await service.onApplicationBootstrap();
+
+    const processor = bullmqMock.getWorkerProcessor();
+    expect(processor).toBeTypeOf('function');
+    await processor?.({
+      id: 'repeat:jobA::hourly:1',
+      timestamp: Date.UTC(2026, 0, 2, 3, 4, 5),
+      data: { jobId: 'jobA', scheduleName: 'hourly', methodName: 'method' },
     });
+    await processor?.({
+      id: 'repeat:jobA::hourly:2',
+      timestamp: Date.UTC(2026, 0, 2, 3, 5, 5),
+      data: { jobId: 'jobA', scheduleName: 'hourly', methodName: 'method' },
+    });
+
+    const executions = await repository.findJobExecutions();
+    expect(executions).toHaveLength(1);
+    expect(executions[0]).toEqual(
+      expect.objectContaining({
+        status: JobStatus.STARTING,
+        params: expect.objectContaining({
+          scheduledAt: '2026-01-02T03:04:05.000Z',
+        }),
+      }),
+    );
   });
 
   it('keeps a shared scheduler active when one of two instances shuts down', async () => {
@@ -352,11 +446,20 @@ describe('BullmqSchedule — T-AC-4 cron-firing acceptance', () => {
     });
 
     expect(launcherA.launch).not.toHaveBeenCalled();
-    expect(launcherB.launch).toHaveBeenCalledWith('jobA', {
-      scheduled: true,
-      scheduleName: 'hourly',
-      scheduledAt: '2026-01-02T03:04:06.000Z',
-      scheduleQueueJobId: 'repeat:jobA::hourly:2',
-    });
+    expect(launcherB.launch).toHaveBeenCalledWith(
+      'jobA',
+      {
+        scheduled: true,
+        scheduleName: 'hourly',
+        scheduledAt: '2026-01-02T03:04:06.000Z',
+        scheduleQueueJobId: 'repeat:jobA::hourly:2',
+      },
+      {
+        identifyingParams: {
+          scheduled: true,
+          scheduleName: 'hourly',
+        },
+      },
+    );
   });
 });
