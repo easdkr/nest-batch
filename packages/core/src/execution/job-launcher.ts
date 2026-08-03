@@ -6,25 +6,33 @@ import { JobNotFoundError, JobExecutionAlreadyRunningError } from '../core/error
 import { JobRepository, type JobParameters, type JobExecution } from '../core/repository';
 import { JobRegistry } from '../registry/job-registry';
 
-import {
-  EXECUTION_STRATEGY,
-  type IExecutionStrategy,
-} from './execution-strategy';
+import { EXECUTION_STRATEGY, type IExecutionStrategy } from './execution-strategy';
 import { JobExecutor } from './job-executor';
 import { canonicalJobKey } from './job-key';
 
 import type { JobDefinition } from '../core/ir';
 
-
+/**
+ * Optional launch-time controls that do not become part of the persisted
+ * `JobExecution.params` payload.
+ *
+ * `identifyingParams` lets a caller keep volatile execution inputs (for
+ * example a schedule fire's `scheduledAt`) while deriving the stable
+ * `JobInstance.jobKey` from a smaller identifying subset.
+ */
+export interface JobLaunchOptions {
+  readonly identifyingParams?: JobParameters;
+}
 
 /**
  * JobLauncher — public entry point for starting a new JobExecution.
  *
  * Flow (pre-strategy, kept unchanged for backwards compat):
  *   1. Look up the `JobDefinition` from the registry. Missing → `JobNotFoundError`.
- *   2. Canonicalize `params` into a stable `jobKey` hash. Object key order,
- *      `null/undefined` omission, `Date → ISO` are all normalized so that
- *      semantically-identical params yield the same key.
+ *   2. Canonicalize `options.identifyingParams ?? params` into a stable
+ *      `jobKey` hash. Object key order, `null/undefined` omission, and
+ *      `Date → ISO` are all normalized so that semantically-identical
+ *      identifying params yield the same key.
  *   3. `createExecutionAtomic(jobId, jobKey, params)` — idempotent
  *      instance get-or-create + `SELECT ... FOR UPDATE SKIP LOCKED` to
  *      serialize concurrent launches + running-execution check + insert,
@@ -79,9 +87,13 @@ export class JobLauncher {
    * Throws `JobExecutionAlreadyRunningError` if a previous launch of the
    * same `jobName + jobKey` is still in flight.
    */
-  async launch(jobId: string, params: JobParameters = {}): Promise<JobExecution> {
+  async launch(
+    jobId: string,
+    params: JobParameters = {},
+    options: JobLaunchOptions = {},
+  ): Promise<JobExecution> {
     const jobDef = this.registry.get(jobId); // throws JobNotFoundError on miss
-    const canonical = canonicalJobKey(params);
+    const canonical = canonicalJobKey(options.identifyingParams ?? params);
     const jobKey = jobDef.allowDuplicateInstances ? `${canonical}::${randomUUID()}` : canonical;
 
     // Atomic get-or-create + lock + check + insert. The repository's

@@ -1,5 +1,6 @@
 import {
   BatchScheduleRegistry,
+  JobExecutionAlreadyRunningError,
   JobLauncher,
   type BatchScheduleEntry,
   type JobParameters,
@@ -280,11 +281,37 @@ export class BullmqSchedule implements OnApplicationBootstrap, OnApplicationShut
       scheduledAt,
       scheduleQueueJobId: String(job.id ?? ''),
     };
-    const execution = await this.launcher.launch(jobId, params);
-    this.logger.log(
-      `Fired schedule ${jobId}::${scheduleName} ` +
-        `(method=${methodName}) -> execution=${execution.id} status=${execution.status}`,
-    );
+    // `scheduledAt` and the BullMQ fire id must stay on the execution, but
+    // they must not create a fresh JobInstance for every tick under `skip`.
+    // A stable schedule identity lets createExecutionAtomic enforce the
+    // overlap guard across workers/processes without a race-prone pre-read.
+    const overlap = this.scheduleRegistry.get(jobId, scheduleName)?.overlap ?? 'skip';
+    try {
+      const execution = await this.launcher.launch(
+        jobId,
+        params,
+        overlap === 'skip'
+          ? {
+              identifyingParams: {
+                scheduled: true,
+                scheduleName,
+              },
+            }
+          : undefined,
+      );
+      this.logger.log(
+        `Fired schedule ${jobId}::${scheduleName} ` +
+          `(method=${methodName}) -> execution=${execution.id} status=${execution.status}`,
+      );
+    } catch (err) {
+      if (overlap === 'skip' && err instanceof JobExecutionAlreadyRunningError) {
+        this.logger.log(
+          `Skipped overlapping schedule ${jobId}::${scheduleName} (method=${methodName})`,
+        );
+        return;
+      }
+      throw err;
+    }
   }
 
   private producerConnectionOptions(): Record<string, unknown> {

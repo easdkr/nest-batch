@@ -100,6 +100,37 @@ describe('JobLauncher', () => {
     expect(exec2.status).toBe(JobStatus.COMPLETED);
   });
 
+  it('uses identifying params for JobInstance identity while preserving full execution params', async () => {
+    const registry = new JobRegistry();
+    registry.register(makeTaskletJob('job-identifying-params'));
+    const { launcher } = buildLauncher(registry);
+    const identifyingParams = {
+      scheduled: true,
+      scheduleName: 'hourly',
+    };
+
+    const exec1 = await launcher.launch(
+      'job-identifying-params',
+      { ...identifyingParams, scheduledAt: '2026-01-01T00:00:00.000Z' },
+      { identifyingParams },
+    );
+    const exec2 = await launcher.launch(
+      'job-identifying-params',
+      { ...identifyingParams, scheduledAt: '2026-01-01T01:00:00.000Z' },
+      { identifyingParams },
+    );
+
+    expect(exec2.jobInstanceId).toBe(exec1.jobInstanceId);
+    expect(exec1.params).toEqual({
+      ...identifyingParams,
+      scheduledAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(exec2.params).toEqual({
+      ...identifyingParams,
+      scheduledAt: '2026-01-01T01:00:00.000Z',
+    });
+  });
+
   it('different param key order but same values → same JobInstance.id', async () => {
     const registry = new JobRegistry();
     registry.register(makeTaskletJob('job-canonical-order'));
